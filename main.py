@@ -54,7 +54,7 @@ def speak(data):
     # Wait for command to finish
 
 
-    print("Generating audio file in path {}\data.mp3".format(os.path.abspath(os.getcwd())))
+    print("Generating audio file in path {}\\data.mp3".format(os.path.abspath(os.getcwd())))
 
     if return_code != 0:
         print("Error")
@@ -69,7 +69,7 @@ def speak(data):
 # read txt and put it in a speak function 
 def read_txt(book_name="data.txt"):
     with open(book_name, 'r', encoding="utf-8") as f:
-        print("Reading book...")
+        print("Reading...")
         data = f.read()
         print(data[0:100])
         if data:
