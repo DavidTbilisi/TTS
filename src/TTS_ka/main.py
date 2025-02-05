@@ -31,7 +31,7 @@ def text_to_speech(text, language):
 
 def main():
     parser = argparse.ArgumentParser(description='Text to Speech CLI')
-    parser.add_argument('text', type=str, default="I have nothing to read." help='Text to convert to speech')
+    parser.add_argument('text', type=str, default="I have nothing to read.", help='Text to convert to speech')
     parser.add_argument('--lang', type=str, default='en', help='Language of the text')
     args = parser.parse_args()
 
