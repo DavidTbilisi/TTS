@@ -1,2 +1,2 @@
 [console_scripts]
-tts-ka = TTS_ka.main:main
+david_ka = tts_ka.main:main

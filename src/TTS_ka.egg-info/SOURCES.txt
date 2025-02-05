@@ -9,3 +9,6 @@ src/TTS_ka.egg-info/dependency_links.txt
 src/TTS_ka.egg-info/entry_points.txt
 src/TTS_ka.egg-info/requires.txt
 src/TTS_ka.egg-info/top_level.txt
+src/tts_ka/__init__.py
+src/tts_ka/__main__.py
+src/tts_ka/main.py
