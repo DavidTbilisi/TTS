@@ -1,3 +1,17 @@
+Metadata-Version: 2.2
+Name: text-to-speech
+Version: 0.1.2
+Summary: A simple text to speech program using edge-tts library
+Author-email: David Chincharashvili <davidchincharashvili@gmail.com>
+Project-URL: Homepage, https://github.com/DavidTbilisi/TTS.git
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.6
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: edge-tts
+
 # Text to Speech 
 This is a simple text to speech program that uses the `edge-tts` library to convert text to speech.
 

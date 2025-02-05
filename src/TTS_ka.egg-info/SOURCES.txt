@@ -1,0 +1,11 @@
+LICENSE
+README.md
+pyproject.toml
+src/TTS_ka/__init__.py
+src/TTS_ka/main.py
+src/TTS_ka.egg-info/PKG-INFO
+src/TTS_ka.egg-info/SOURCES.txt
+src/TTS_ka.egg-info/dependency_links.txt
+src/TTS_ka.egg-info/entry_points.txt
+src/TTS_ka.egg-info/requires.txt
+src/TTS_ka.egg-info/top_level.txt

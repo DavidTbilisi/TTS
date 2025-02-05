@@ -1,0 +1,2 @@
+[console_scripts]
+text-to-speech = TTS_ka.main:main

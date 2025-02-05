@@ -1,0 +1,2 @@
+[console_scripts]
+tts-ka = TTS_ka.main:main
