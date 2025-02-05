@@ -1,6 +1,6 @@
 import argparse
 import os
-from tkinter import Tk
+from edge_tts import Communicate
 
 def text_to_speech(text, language):
     """
