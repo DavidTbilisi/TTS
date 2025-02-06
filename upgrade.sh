@@ -2,8 +2,10 @@
 
 set -e  # Exit on error
 
-git add . 
-git commit -m "Upgrade package"
+if ! git diff-index --quiet HEAD --; then
+    git add .
+    git commit -m "Upgrade package"
+fi
 
 # Check and install dependencies
 for package in bumpversion twine build; do
