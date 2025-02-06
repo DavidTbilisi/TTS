@@ -2,7 +2,7 @@ import argparse
 import os
 from edge_tts import Communicate
 
-def text_to_speech(text, language):
+async def text_to_speech(text, language):
     """
     Converts the given text to speech in the specified language.
     
@@ -20,8 +20,17 @@ def text_to_speech(text, language):
         'en-US': 'en-US-SteffanNeural'
     }.get(language, 'en-GB-SoniaNeural')
 
-    command = f'edge-tts --voice "{voice}" --text "{text}" --write-media "data.mp3"'
-    return_code = os.system(command)
+
+
+  
+    communicate = Communicate(text, voice)
+    try:
+        await communicate.save("data.mp3")
+        return_code = 0
+    except Exception as e:
+        return_code = 1
+    
+    
 
     if return_code != 0:
         print("Error generating audio file.")
@@ -35,7 +44,8 @@ def main():
     parser.add_argument('--lang', type=str, default='en', help='Language of the text')
     args = parser.parse_args()
 
-    text_to_speech(args.text, args.lang)
+    import asyncio
+    asyncio.run(text_to_speech(args.text, args.lang))
 
 if __name__ == "__main__":
     main()

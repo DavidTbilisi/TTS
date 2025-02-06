@@ -2,6 +2,9 @@
 
 set -e  # Exit on error
 
+git add . 
+git commit -m "Upgrade package"
+
 # Check and install dependencies
 for package in bumpversion twine build; do
     if ! py -m pip show $package &> /dev/null; then

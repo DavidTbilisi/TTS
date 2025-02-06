@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "TTS_ka"
-version = "0.1.6"
+version = "0.1.7"
 authors = [
   { name="David Chincharashvili", email="davidchincharashvili@gmail.com" },
 ]
@@ -25,4 +25,4 @@ dependencies = [
 "Homepage" = "https://github.com/DavidTbilisi/TTS.git"
 
 [project.scripts]
-david_ka = "tts_ka.main:main"
+TTS_ka = "TTS_ka.main:main"
