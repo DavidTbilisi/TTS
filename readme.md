@@ -1,4 +1,4 @@
-# Text to Speech 
+# TTS_ka
 This is a simple text to speech program that uses the `edge-tts` library to convert text to speech.
 
 ## Languages Supported
@@ -12,18 +12,11 @@ This is a simple text to speech program that uses the `edge-tts` library to conv
 ## Installation and Usage
 1. Install the package from PyPI:
     ```sh
-    pip install text-to-speech
+    pip install TTS_ka
     ```
-2. Use the package in your Python code:
-    ```python
-    from text_to_speech import text_to_speech
-
-    text = "Hello, this is a text to speech conversion."
-    text_to_speech(text, 'en')
+2. Usage 
+    ```sh
+    TTS_ka --lang ka "გამარჯობა. როგორ ხარ?"
     ```
 
-## Running Tests
-To run the tests, navigate to the `tests` directory and execute:
-```sh
-python -m unittest discover
-```
+

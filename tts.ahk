@@ -2,20 +2,23 @@
 ^!r::Reload  ; Ctrl+Alt+R
 
 ; Python path 
-pathToPython := "C:\laragon\www\python\TTS\venv\Scripts\python.exe"
-pathToMain := "C:\laragon\www\python\TTS\main.py"
+; pathToPython := "C:\laragon\www\python\TTS\venv\Scripts\python.exe"
+; pathToMain := "C:\laragon\www\python\TTS\main.py"
 
 Vocalize(lang:="ka"){
+    global
     Send "{CtrlDown}{c}{Ctrlup}"
-    
+    ClipWait
+    text := Clipboard
+    text := StrReplace(text, "`r`n", "`n")
+
     if lang == "ka" {
-        Run pathToPython " " pathToMain " ka"
+        Run "py -m  TTS_ka " text " ka"
     } else if lang == "ru" {
-        Run pathToPython " " pathToMain " ru"
+        Run "py -m  TTS_ka " text " ru"
     } else {
-        Run pathToPython " " pathToMain " en"
+        Run "py -m  TTS_ka " text " en"
     }
-    return  
 }
 
 
