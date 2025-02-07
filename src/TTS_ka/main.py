@@ -1,5 +1,6 @@
 import argparse
 import os
+import pyperclip
 from edge_tts import Communicate
 
 async def text_to_speech(text, language):
@@ -40,10 +41,16 @@ async def text_to_speech(text, language):
 
 def main():
     parser = argparse.ArgumentParser(description='Text to Speech CLI')
-    parser.add_argument('text', type=str, default="I have nothing to read.", help='Text to convert to speech')
+    parser.add_argument('text', help='Text to convert to speech')
     parser.add_argument('--lang', type=str, default='en', help='Language of the text')
     args = parser.parse_args()
 
+    if args.text == "clipboard":
+        args.text = pyperclip.paste().replace('\r\n', '\n')
+        if not args.text.strip():
+            print("No text was copied from the clipboard.")
+            return
+        
     import asyncio
     asyncio.run(text_to_speech(args.text, args.lang))
 
