@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "TTS_ka"
-version = "0.1.9"
+version = "0.1.10"
 authors = [
   { name="David Chincharashvili", email="davidchincharashvili@gmail.com" },
 ]
@@ -20,10 +20,7 @@ license = { file = "LICENSE" }
 dependencies = [
     "edge-tts",
     "pyperclip",
-    "keyboard",
-    "pywin32"
-
-]
+   ]
 
 [project.urls]
 "Homepage" = "https://github.com/DavidTbilisi/TTS.git"

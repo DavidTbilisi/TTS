@@ -1,6 +1,6 @@
 Metadata-Version: 2.2
 Name: TTS_ka
-Version: 0.1.9
+Version: 0.1.10
 Summary: A simple text to speech program using edge-tts library
 Author-email: David Chincharashvili <davidchincharashvili@gmail.com>
 Project-URL: Homepage, https://github.com/DavidTbilisi/TTS.git
@@ -11,6 +11,9 @@ Requires-Python: >=3.6
 Description-Content-Type: text/markdown
 License-File: LICENSE
 Requires-Dist: edge-tts
+Requires-Dist: pyperclip
+Requires-Dist: keyboard
+Requires-Dist: pywin32
 
 # TTS_ka
 This is a simple text to speech program that uses the `edge-tts` library to convert text to speech.
