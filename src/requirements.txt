@@ -1,1 +1,6 @@
 edge-tts==6.1.9
+	# optional / recommended runtime helpers
+pydub>=0.25.1
+tqdm>=4.65.0
+pyperclip>=1.8.2
+	# ffmpeg must be installed on the system (not a pip package)

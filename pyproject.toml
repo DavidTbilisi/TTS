@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "TTS_ka"
-version = "0.2.0"
+version = "0.3.0"
 authors = [
   { name="David Chincharashvili", email="davidchincharashvili@gmail.com" },
 ]
@@ -18,9 +18,12 @@ classifiers = [
 ]
 license = { file = "LICENSE" }
 dependencies = [
-    "edge-tts",
-    "pyperclip",
-   ]
+    "edge-tts>=6.1.9",
+    "pydub>=0.25.1",  # optional / recommended runtime helpers
+    "tqdm>=4.65.0",
+    "pyperclip>=1.8.2",
+    # ffmpeg must be installed on the system (not a pip package)
+]
 
 [project.urls]
 "Homepage" = "https://github.com/DavidTbilisi/TTS.git"
