@@ -4,6 +4,8 @@ import shutil
 import hashlib
 import concurrent.futures
 from typing import List
+AudioSegment = None
+tqdm = None
 try:
     from pydub import AudioSegment
     _HAS_PYDUB = True
@@ -17,6 +19,7 @@ except Exception:
 import sys
 import pyperclip
 from edge_tts import Communicate
+import time
 
 
 def _cache_filename(text: str, voice: str) -> str:
@@ -28,12 +31,12 @@ def _cache_filename(text: str, voice: str) -> str:
     return f".tts_cache_{h.hexdigest()}.mp3"
 
 
-def _generate_sync(text: str, language: str, out_path: str = 'data.mp3') -> None:
+def _generate_sync(text: str, language: str, out_path: str = 'data.mp3', use_cache: bool = True) -> None:
     """Synchronous wrapper to run the async text_to_speech in a thread or sequentially."""
     try:
         import asyncio
         # run quietly when used as a worker
-        asyncio.run(text_to_speech(text, language, out_path, quiet=True))
+        asyncio.run(text_to_speech(text, language, out_path, quiet=True, use_cache=use_cache))
     except Exception as e:
         print(f"Error generating '{text[:30]}...': {e}")
 
@@ -58,15 +61,17 @@ def _merge_mp3_files(parts: List[str], out_path: str) -> None:
         raise ValueError("no parts to merge")
 
     if _HAS_PYDUB:
+        # import locally so static analyzers don't complain when pydub is absent
+        from pydub import AudioSegment as _AudioSegment
         # ensure we will overwrite without prompt
         try:
             if os.path.exists(out_path):
                 os.remove(out_path)
         except Exception:
             pass
-        combined = AudioSegment.from_mp3(parts[0])
+        combined = _AudioSegment.from_mp3(parts[0])
         for p in parts[1:]:
-            combined += AudioSegment.from_mp3(p)
+            combined += _AudioSegment.from_mp3(p)
         combined.export(out_path, format='mp3')
     else:
         # create a temporary concat file for ffmpeg
@@ -85,12 +90,15 @@ def _merge_mp3_files(parts: List[str], out_path: str) -> None:
             raise RuntimeError('ffmpeg concat failed')
 
 
-def generate_long_text(text: str, language: str, chunk_seconds: int = 60, parallel: int = 2, out_path: str = 'data.mp3', keep_parts: bool = False):
+def generate_long_text(text: str, language: str, chunk_seconds: int = 60, parallel: int = 2, out_path: str = 'data.mp3', keep_parts: bool = False, use_cache: bool = True):
     """Split long text, generate parts (parallel), show progress, and merge into out_path."""
+    start = time.perf_counter()
     chunks = _split_text_into_chunks(text, approx_seconds=chunk_seconds)
     if len(chunks) == 1:
         # short enough
-        _generate_sync(text, language, out_path)
+        _generate_sync(text, language, out_path, use_cache=use_cache)
+        elapsed = time.perf_counter() - start
+        print(f"Completed generation in {elapsed:.2f} seconds.")
         return
 
     parts = []
@@ -105,23 +113,42 @@ def generate_long_text(text: str, language: str, chunk_seconds: int = 60, parall
         parts.append(part_name)
 
     total = len(chunks)
-    # submit tasks
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, parallel)) as ex:
-        futures = {ex.submit(_generate_sync, chunks[i], language, parts[i]): i for i in range(total)}
+
+    # Run all chunk generation coroutines inside a single asyncio event loop.
+    # Use a semaphore to bound concurrent requests to `parallel`.
+    async def _run_parts_async():
+        import asyncio as _asyncio
+
+        sem = _asyncio.Semaphore(max(1, parallel))
+
+        async def _worker(i: int, txt: str, outp: str):
+            async with sem:
+                try:
+                    await text_to_speech(txt, language, outp, quiet=True, use_cache=use_cache)
+                except Exception as e:
+                    # surface part-level errors but keep going
+                    print(f"Error generating part {i}: {e}")
+
+        tasks = [_asyncio.create_task(_worker(i, chunks[i], parts[i])) for i in range(total)]
+
         if _HAS_TQDM:
-            pbar = tqdm(total=total, desc='Generating')
-            for fut in concurrent.futures.as_completed(futures):
+            from tqdm import tqdm as _tqdm
+            pbar = _tqdm(total=total, desc='Generating')
+            for coro in _asyncio.as_completed(tasks):
+                await coro
                 pbar.update(1)
             pbar.close()
         else:
-            # simple single-line progress update
             completed = 0
-            for fut in concurrent.futures.as_completed(futures):
+            for coro in _asyncio.as_completed(tasks):
+                await coro
                 completed += 1
                 sys.stdout.write(f"\rGenerating: {completed}/{total}")
                 sys.stdout.flush()
-            # finish line
             sys.stdout.write("\n")
+
+    import asyncio
+    asyncio.run(_run_parts_async())
 
     # merge
     # remove existing output to avoid prompts
@@ -137,9 +164,11 @@ def generate_long_text(text: str, language: str, chunk_seconds: int = 60, parall
                 os.remove(p)
             except Exception:
                 pass
+    elapsed = time.perf_counter() - start
+    print(f"Completed generation in {elapsed:.2f} seconds.")
 
 
-async def text_to_speech(text, language, out_path: str = 'data.mp3', quiet: bool = False):
+async def text_to_speech(text, language, out_path: str = 'data.mp3', quiet: bool = False, use_cache: bool = True):
     """
     Converts the given text to speech in the specified language.
     
@@ -162,7 +191,7 @@ async def text_to_speech(text, language, out_path: str = 'data.mp3', quiet: bool
   
     # try cache
     cache_file = _cache_filename(text, voice)
-    if os.path.exists(cache_file):
+    if use_cache and os.path.exists(cache_file):
         # copy to data.mp3 quickly (overwrite)
         try:
             if os.path.abspath(cache_file) != os.path.abspath(out_path):
@@ -175,12 +204,13 @@ async def text_to_speech(text, language, out_path: str = 'data.mp3', quiet: bool
         try:
             await communicate.save(out_path)
             # save copy to cache (best-effort)
-            try:
-                if os.path.abspath(cache_file) != os.path.abspath(out_path):
-                    shutil.copyfile(out_path, cache_file)
-            except Exception:
-                # ignore cache save failures
-                pass
+            if use_cache:
+                try:
+                    if os.path.abspath(cache_file) != os.path.abspath(out_path):
+                        shutil.copyfile(out_path, cache_file)
+                except Exception:
+                    # ignore cache save failures
+                    pass
             return_code = 0
         except Exception:
             return_code = 1
@@ -227,12 +257,75 @@ def play_file(out_path: str) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description='Text to Speech CLI')
-    parser.add_argument('text', help='Text to convert to speech')
+    parser.add_argument('text', nargs='?', help='Text to convert to speech (optional when using --clear-cache)')
     parser.add_argument('--lang', type=str, default='en', help='Language of the text')
     parser.add_argument('--chunk-seconds', type=int, default=0, help='Split long texts into chunks of approx this many seconds (0=disabled)')
     parser.add_argument('--parallel', type=int, default=1, help='Number of workers for parallel generation')
     parser.add_argument('--no-play', action='store_true', help='Do not auto-play the generated file')
+    parser.add_argument('--no-cache', action='store_true', help='Do not use or save cache during this run')
+    parser.add_argument('--clear-cache', action='store_true', help='Clear cache files before running')
+    parser.add_argument('--cache-age-days', type=int, default=0, help='If >0 and used without text, delete cache files older than this many days and exit')
+    parser.add_argument('--dry', action='store_true', help='With --clear-cache or --cache-age-days, only report how much would be removed')
+    parser.add_argument('--clear-all-artifacts', action='store_true', help='When clearing cache, also remove part files and output')
     args = parser.parse_args()
+
+    # If user only asked to clear cache (no text given), do it and exit
+    if args.clear_cache and not args.text:
+        import glob
+        removed = []
+        total_bytes = 0
+        for f in glob.glob('.tts_cache_*.mp3'):
+            try:
+                sz = os.path.getsize(f)
+                total_bytes += sz
+                if not args.dry:
+                    os.remove(f)
+                    removed.append(f)
+            except Exception:
+                pass
+        if args.clear_all_artifacts:
+            for f in glob.glob('.part_*.mp3') + glob.glob('data*.mp3'):
+                try:
+                    sz = os.path.getsize(f)
+                    total_bytes += sz
+                    if not args.dry:
+                        os.remove(f)
+                        removed.append(f)
+                except Exception:
+                    pass
+        mb = total_bytes / (1024*1024)
+        if args.dry:
+            print(f"Cache + artifacts would free {mb:.2f} MB ({total_bytes} bytes) and {len(glob.glob('.tts_cache_*.mp3'))} cache files match.")
+        else:
+            print(f"Cleared {len(removed)} files, freed {mb:.2f} MB ({total_bytes} bytes).")
+            for r in removed:
+                print(' -', r)
+        return
+
+    # NOTE: automatic startup deletion removed. Use --cache-age-days to delete old caches on demand.
+    if args.cache_age_days > 0 and not args.text:
+        import glob, time as _time
+        cutoff = _time.time() - (args.cache_age_days * 24 * 60 * 60)
+        removed = []
+        total_bytes = 0
+        for f in glob.glob('.tts_cache_*.mp3'):
+            try:
+                if os.path.getmtime(f) < cutoff:
+                    sz = os.path.getsize(f)
+                    total_bytes += sz
+                    if not args.dry:
+                        os.remove(f)
+                        removed.append(f)
+            except Exception:
+                pass
+        mb = total_bytes / (1024*1024)
+        if args.dry:
+            print(f"Cache older than {args.cache_age_days} days would free {mb:.2f} MB ({total_bytes} bytes) and {len([1 for _ in glob.glob('.tts_cache_*.mp3') if os.path.getmtime(_)<cutoff])} matching files.")
+        else:
+            print(f"Cleared {len(removed)} files, freed {mb:.2f} MB ({total_bytes} bytes).")
+            for r in removed:
+                print(' -', r)
+        return
 
     if args.text == "clipboard":
         args.text = pyperclip.paste().replace('\r\n', '\n')
@@ -246,14 +339,28 @@ def main():
         
     # Decide whether to chunk
     words = args.text.split()
+    # cache control
+    if args.clear_cache:
+        import glob
+        for f in glob.glob('.tts_cache_*.mp3'):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
+    use_cache = not args.no_cache
     if args.chunk_seconds > 0 or len(words) > 1000:
         # use chunking
-        generate_long_text(args.text, args.lang, chunk_seconds=(args.chunk_seconds or 60), parallel=args.parallel, out_path='data.mp3')
+        generate_long_text(args.text, args.lang, chunk_seconds=(args.chunk_seconds or 60), parallel=args.parallel, out_path='data.mp3', use_cache=use_cache)
         if not args.no_play:
             play_file('data.mp3')
     else:
         import asyncio
-        asyncio.run(text_to_speech(args.text, args.lang, 'data.mp3'))
+        start = time.perf_counter()
+        asyncio.run(text_to_speech(args.text, args.lang, 'data.mp3', use_cache=use_cache))
+        elapsed = time.perf_counter() - start
+        print(f"Completed generation in {elapsed:.2f} seconds.")
+        if not args.no_play:
+            play_file('data.mp3')
 
 if __name__ == "__main__":
     main()

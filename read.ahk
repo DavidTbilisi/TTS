@@ -7,7 +7,7 @@ readClipboardAndSpeak(lang) {
         Sleep(50)
         TrayTip()
     ; Run the TTS CLI inside cmd /k so the terminal stays open after completion
-    cmd := "cmd /k py -m TTS_ka --lang " . lang . " clipboard --chunk-seconds 45 --parallel 3 --no-play"
+    cmd := "cmd /k py -m TTS_ka --lang " . lang . " clipboard --chunk-seconds 45 --parallel 6 --no-cache"
     Run(cmd)
     } else {
         TrayTip("Clipboard", "Failed to copy text to clipboard")
