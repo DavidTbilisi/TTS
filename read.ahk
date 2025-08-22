@@ -62,9 +62,6 @@ AutoClickTimer() {
 
 
 
-
-
-
 Alt & e::readClipboardAndSpeak("en")
 Alt & r::readClipboardAndSpeak("ru")
 Alt & x::readClipboardAndSpeak("ka")
