@@ -8,6 +8,7 @@ src/TTS_ka/chunking.py
 src/TTS_ka/fast_audio.py
 src/TTS_ka/help_system.py
 src/TTS_ka/main.py
+src/TTS_ka/not_reading.py
 src/TTS_ka/parallel.py
 src/TTS_ka/rich_progress.py
 src/TTS_ka/simple_help.py
@@ -34,6 +35,7 @@ tests/test_integration.py
 tests/test_main.py
 tests/test_main_simple.py
 tests/test_minimal_coverage.py
+tests/test_not_readable.py
 tests/test_rich_progress.py
 tests/test_simple_help.py
 tests/test_simple_help_simple.py
