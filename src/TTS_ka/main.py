@@ -38,10 +38,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 EXAMPLES:
-  %(prog)s "Hello world" --turbo --lang en          # Quick English generation
-  %(prog)s "გამარჯობა" --turbo --lang ka            # Georgian with maximum speed  
-  %(prog)s file.txt --turbo --lang ru               # Russian from file
-  %(prog)s clipboard --turbo                        # From clipboard (fastest workflow)
+  %(prog)s "Hello world" --lang en                  # Quick English generation
+  %(prog)s "გამარჯობა" --lang ka                    # Georgian with auto-optimization
+  %(prog)s file.txt --lang ru                       # Russian from file
+  %(prog)s clipboard                                 # From clipboard (fastest workflow)
 
 LANGUAGES: 🇬🇪 ka (Georgian) | 🇷🇺 ru (Russian) | 🇬🇧 en (English)
 For comprehensive help with examples: %(prog)s --help-full
@@ -55,8 +55,8 @@ For comprehensive help with examples: %(prog)s --help-full
     parser.add_argument('--parallel', type=int, default=0, 
                        help=f'Parallel workers (0=auto, 2-8 recommended, max={OPTIMAL_WORKERS})')
     parser.add_argument('--no-play', action='store_true', help='Skip automatic audio playback')
-    parser.add_argument('--turbo', action='store_true', 
-                       help='🚀 MAXIMUM SPEED mode (auto-optimizes everything - RECOMMENDED)')
+    parser.add_argument('--no-turbo', action='store_true', 
+                       help='Disable auto-optimization (legacy mode)')
     parser.add_argument('--help-full', action='store_true', 
                        help='Show comprehensive help with examples and workflows')
     
@@ -72,7 +72,7 @@ For comprehensive help with examples: %(prog)s --help-full
     if not args.text:
         show_simple_help()
         print("ERROR: No text provided")
-        print("Try: python -m TTS_ka 'your text' --turbo --lang en")
+        print("Try: python -m TTS_ka 'your text' --lang en")
         return
     
     text = get_input_text(args.text)
@@ -80,8 +80,8 @@ For comprehensive help with examples: %(prog)s --help-full
         return
     output_path = 'data.mp3'
     
-    # Auto-optimize settings in turbo mode
-    if args.turbo:
+    # Auto-optimize settings by default (turbo mode is now default)
+    if not args.no_turbo:
         optimal = get_optimal_settings(text)
         if args.chunk_seconds == 0:
             args.chunk_seconds = optimal['chunk_seconds']
@@ -91,7 +91,7 @@ For comprehensive help with examples: %(prog)s --help-full
         # Language-specific optimization messages
         lang_names = {'ka': 'Georgian', 'ru': 'Russian', 'en': 'English'}
         lang_name = lang_names.get(args.lang, 'Unknown')
-        print(f"TURBO MODE ENGAGED - {lang_name}")
+        print(f"OPTIMIZED MODE - {lang_name}")
         print(f"Strategy: {optimal['method']} generation, {args.parallel} workers")
         print(f"Processing: {len(text.split())} words, {len(text)} characters")
     
