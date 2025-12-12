@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: TTS_ka
-Version: 1.1.0
+Version: 1.1.1
 Summary: A simple text to speech program using edge-tts library
 Author-email: David Chincharashvili <davidchincharashvili@gmail.com>
 Project-URL: Homepage, https://github.com/DavidTbilisi/TTS.git
@@ -33,7 +33,9 @@ Dynamic: license-file
 
 # TTS_ka 🚀 Ultra-Fast Text-to-Speech
 
-**Ultra-Fast Text-to-Speech CLI tool** with maximum speed generation, smart chunking, and parallel processing. Converts text to high-quality speech in **Georgian (🇬🇪)**, **Russian (🇷🇺)**, and **English (🇬🇧)** languages.
+**Ultra-Fast Text-to-Speech CLI tool** with maximum speed generation, smart chunking, and parallel processing. **Auto-optimized by default** - no complex flags needed! Converts text to high-quality speech in **Georgian (🇬🇪)**, **Russian (🇷🇺)**, and **English (🇬🇧)** languages.
+
+> ✨ **Simplified UX**: Auto-optimization is now enabled by default. Just specify `--lang` and go!
 
 [![Python 3.6+](https://img.shields.io/badge/python-3.6+-blue.svg)](https://www.python.org/downloads/)
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -63,38 +65,38 @@ cd TTS
 pip install -e .
 ```
 
-### 2. Basic Usage (RECOMMENDED)
+### 2. Basic Usage (Auto-Optimized by Default)
 
 ```bash
-# Ultra-fast generation with auto-optimization (RECOMMENDED)
-python -m TTS_ka "Hello, how are you today?" --turbo --lang en
+# Ultra-fast generation with auto-optimization (default behavior)
+python -m TTS_ka "Hello, how are you today?" --lang en
 
-# Georgian text with maximum speed
-python -m TTS_ka "გამარჯობა, როგორ ხართ?" --turbo --lang ka
+# Georgian text with automatic optimization
+python -m TTS_ka "გამარჯობა, როგორ ხართ?" --lang ka
 
-# Russian text with turbo mode
-python -m TTS_ka "Привет, как дела?" --turbo --lang ru
+# Russian text with smart chunking
+python -m TTS_ka "Привет, как дела?" --lang ru
 ```
 
 ### 3. Clipboard Workflow (FASTEST)
 
 ```bash
 # Copy any text, then run (fastest workflow):
-python -m TTS_ka clipboard --turbo --lang en
+python -m TTS_ka clipboard --lang en
 
 # For different languages:
-python -m TTS_ka clipboard --turbo --lang ka  # Georgian
-python -m TTS_ka clipboard --turbo --lang ru  # Russian
+python -m TTS_ka clipboard --lang ka  # Georgian
+python -m TTS_ka clipboard --lang ru  # Russian
 ```
 
 ### 4. File Processing
 
 ```bash
-# Process text files directly
-python -m TTS_ka document.txt --turbo --lang en
+# Process text files directly (auto-optimized)
+python -m TTS_ka document.txt --lang en
 
 # Long files with custom settings
-python -m TTS_ka large_file.txt --turbo --chunk-seconds 30 --parallel 6 --lang ru
+python -m TTS_ka large_file.txt --chunk-seconds 30 --parallel 6 --lang ru
 ```
 
 ## 📖 Complete Usage Guide
@@ -113,11 +115,11 @@ python -m TTS_ka [TEXT_SOURCE] [OPTIONS]
 
 | Option | Description | Examples |
 |--------|-------------|----------|
-| `--turbo` | 🚀 **RECOMMENDED**: Maximum speed with auto-optimization | `--turbo` |
 | `--lang` | Language: `ka` (Georgian), `ru` (Russian), `en` (English) | `--lang ka` |
 | `--chunk-seconds` | Chunk size in seconds (0=auto, 20-60 optimal) | `--chunk-seconds 30` |
 | `--parallel` | Workers (0=auto, 2-8 recommended) | `--parallel 6` |
 | `--no-play` | Skip automatic audio playback | `--no-play` |
+| `--no-turbo` | Disable auto-optimization (legacy mode) | `--no-turbo` |
 | `--help-full` | Show comprehensive help with examples | `--help-full` |
 
 ## 🏃‍♂️ Performance Examples
@@ -132,21 +134,21 @@ python -m TTS_ka [TEXT_SOURCE] [OPTIONS]
 
 ```bash
 # 1. Quick phrases (instant generation)
-python -m TTS_ka "Thank you very much!" --turbo --lang en
-# ⚡ Completed in 2.3s
+python -m TTS_ka "Thank you very much!" --lang en
+# ⚡ Completed in 2.3s (optimized)
 
 # 2. Medium text (paragraph)
-python -m TTS_ka "Lorem ipsum dolor sit amet..." --turbo --lang en  
+python -m TTS_ka "Lorem ipsum dolor sit amet..." --lang en  
 # ⚡ Completed in 5.7s (direct)
 
 # 3. Long document (chunked processing)
-python -m TTS_ka large_document.txt --turbo --lang en
+python -m TTS_ka large_document.txt --lang en
 # Strategy: chunked generation, 6 workers
 # ⚡ Completed in 12.4s (chunked)
 
 # 4. Clipboard workflow (daily usage)
-python -m TTS_ka clipboard --turbo --lang ka
-# TURBO MODE ENGAGED - Georgian
+python -m TTS_ka clipboard --lang ka
+# OPTIMIZED MODE - Georgian
 # Processing: 45 words, 287 characters
 # ⚡ Completed in 4.1s
 ```
@@ -173,25 +175,28 @@ python -m TTS_ka clipboard --turbo --lang ka
 python -m TTS_ka book_chapter.txt --chunk-seconds 45 --parallel 4 --lang en
 
 # Maximum parallelization (for powerful systems)
-python -m TTS_ka large_text.txt --turbo --parallel 8 --lang ru
+python -m TTS_ka large_text.txt --parallel 8 --lang ru
 
 # Batch processing (no audio playback)  
-python -m TTS_ka document.txt --turbo --no-play --lang ka
+python -m TTS_ka document.txt --no-play --lang ka
+
+# Legacy mode (disable auto-optimization)
+python -m TTS_ka "text" --no-turbo --lang en
 ```
 
 ### Workflow Integration
 
 ```bash
 # Create alias for daily use
-alias speak='python -m TTS_ka clipboard --turbo --lang en'
+alias speak='python -m TTS_ka clipboard --lang en'
 
 # Windows batch file (speak.bat)
 @echo off
-python -m TTS_ka clipboard --turbo --lang en
+python -m TTS_ka clipboard --lang en
 
 # Read web articles (with browser copy)
 # 1. Copy article text
-# 2. Run: python -m TTS_ka clipboard --turbo --lang en
+# 2. Run: python -m TTS_ka clipboard --lang en
 ```
 
 ## 🔧 Installation & Requirements
@@ -246,17 +251,17 @@ python -m TTS_ka "Installation successful!" --turbo --lang en
 ; Ultra-fast TTS hotkeys
 !e::  ; Alt+E - English
 {
-    Run("cmd /k python -m TTS_ka clipboard --turbo --lang en")
+    Run("cmd /k python -m TTS_ka clipboard --lang en")
 }
 
 !r::  ; Alt+R - Russian  
 {
-    Run("cmd /k python -m TTS_ka clipboard --turbo --lang ru")
+    Run("cmd /k python -m TTS_ka clipboard --lang ru")
 }
 
 !x::  ; Alt+X - Georgian
 {
-    Run("cmd /k python -m TTS_ka clipboard --turbo --lang ka")
+    Run("cmd /k python -m TTS_ka clipboard --lang ka")
 }
 ```
 
@@ -288,11 +293,14 @@ pip install edge-tts>=6.1.9
 
 **3. Slow generation**
 ```bash
-# Always use --turbo flag
-python -m TTS_ka "text" --turbo --lang en
+# Auto-optimization is enabled by default
+python -m TTS_ka "text" --lang en
 
 # Reduce parallel workers if network issues
-python -m TTS_ka "text" --turbo --parallel 2 --lang en
+python -m TTS_ka "text" --parallel 2 --lang en
+
+# Use legacy mode only if needed
+python -m TTS_ka "text" --no-turbo --lang en
 ```
 
 **4. Empty clipboard**
@@ -305,14 +313,14 @@ python -m TTS_ka "text" --turbo --parallel 2 --lang en
 
 **For Maximum Speed:**
 ```bash
-# Use these exact settings for best performance
-python -m TTS_ka clipboard --turbo --chunk-seconds 30 --parallel 6 --lang en
+# Use these exact settings for best performance (auto-optimized by default)
+python -m TTS_ka clipboard --chunk-seconds 30 --parallel 6 --lang en
 ```
 
 **For System with Limited Resources:**
 ```bash
 # Reduce workers and chunk size
-python -m TTS_ka text --turbo --parallel 2 --chunk-seconds 60 --lang en
+python -m TTS_ka text --parallel 2 --chunk-seconds 60 --lang en
 ```
 
 ## 📊 Performance Benchmarks
@@ -329,14 +337,14 @@ python -m TTS_ka text --turbo --parallel 2 --chunk-seconds 60 --lang en
 ### Optimal Settings by Text Length
 
 ```bash
-# Short text (< 100 words): Direct generation  
-python -m TTS_ka "short text" --turbo --lang en
+# Short text (< 100 words): Direct generation (auto-optimized)
+python -m TTS_ka "short text" --lang en
 
-# Medium text (100-500 words): Turbo mode
-python -m TTS_ka medium_text.txt --turbo --lang en  
+# Medium text (100-500 words): Auto-optimized mode
+python -m TTS_ka medium_text.txt --lang en  
 
-# Long text (500+ words): Chunked processing
-python -m TTS_ka long_text.txt --turbo --chunk-seconds 30 --parallel 6 --lang en
+# Long text (500+ words): Chunked processing (auto-detected)
+python -m TTS_ka long_text.txt --chunk-seconds 30 --parallel 6 --lang en
 ```
 
 ## 🚀 Examples & Use Cases
@@ -346,26 +354,26 @@ python -m TTS_ka long_text.txt --turbo --chunk-seconds 30 --parallel 6 --lang en
 **1. Article Reading**
 ```bash
 # Copy web article → instant speech
-python -m TTS_ka clipboard --turbo --lang en
+python -m TTS_ka clipboard --lang en
 ```
 
 **2. Document Processing**  
 ```bash
 # Process research papers, books, etc.
-python -m TTS_ka research_paper.pdf.txt --turbo --lang en
+python -m TTS_ka research_paper.pdf.txt --lang en
 ```
 
 **3. Language Learning**
 ```bash
 # Practice pronunciation with different languages
-python -m TTS_ka "სწავლობდი ქართულს" --turbo --lang ka
-python -m TTS_ka "Learning Russian язык" --turbo --lang ru
+python -m TTS_ka "სწავლობდი ქართულს" --lang ka
+python -m TTS_ka "Learning Russian язык" --lang ru
 ```
 
 **4. Accessibility**
 ```bash
 # Screen reader alternative
-python -m TTS_ka clipboard --turbo --no-play --lang en > audio_file.mp3
+python -m TTS_ka clipboard --no-play --lang en > audio_file.mp3
 ```
 
 ### Batch Processing
@@ -373,11 +381,11 @@ python -m TTS_ka clipboard --turbo --no-play --lang en > audio_file.mp3
 ```bash
 # Process multiple files
 for file in *.txt; do
-    python -m TTS_ka "$file" --turbo --no-play --lang en
+    python -m TTS_ka "$file" --no-play --lang en
 done
 
 # Windows batch processing
-for %f in (*.txt) do python -m TTS_ka "%f" --turbo --no-play --lang en
+for %f in (*.txt) do python -m TTS_ka "%f" --no-play --lang en
 ```
 
 ## 🛠️ Advanced Configuration
@@ -465,7 +473,7 @@ docker run tts_container "Hello Docker!" --turbo --lang en
 ## 🎯 Tips & Best Practices
 
 ### Performance Tips
-1. **Always use `--turbo`** for optimal speed
+1. **Auto-optimization is enabled by default** - no flags needed!
 2. **Use clipboard workflow** for fastest daily usage  
 3. **Chunk long texts** with `--chunk-seconds 30`
 4. **Optimize workers** with `--parallel 4-6` for most systems
