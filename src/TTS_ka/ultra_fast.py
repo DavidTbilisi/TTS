@@ -1,0 +1,168 @@
+"""Ultra-fast parallel processing with optimized concurrency."""
+
+import asyncio
+import os
+import sys
+from typing import List
+from concurrent.futures import ThreadPoolExecutor
+import multiprocessing as mp
+
+try:
+    import uvloop
+    HAS_UVLOOP = True
+except ImportError:
+    HAS_UVLOOP = False
+
+from .fast_audio import fast_generate_audio, fast_merge_audio_files
+from .rich_progress import create_progress_display, animate_loading
+
+# Optimal worker count
+OPTIMAL_WORKERS = min(32, (os.cpu_count() or 1) * 4)
+
+
+async def ultra_fast_parallel_generation(chunks: List[str], language: str, 
+                                       parallel: int = OPTIMAL_WORKERS) -> List[str]:
+    """Ultra-fast parallel generation with optimized concurrency."""
+    
+    # Use uvloop for maximum performance on Unix systems
+    if HAS_UVLOOP and sys.platform != 'win32':
+        try:
+            loop = uvloop.new_event_loop()
+            asyncio.set_event_loop(loop)
+        except Exception:
+            pass
+    
+    parts = []
+    
+    # Pre-allocate part files
+    for i in range(len(chunks)):
+        part_name = f".part_{i}.mp3"
+        if os.path.exists(part_name):
+            os.remove(part_name)
+        parts.append(part_name)
+    
+    # Optimize concurrency based on system
+    max_workers = min(parallel, OPTIMAL_WORKERS, len(chunks))
+    
+    # Use optimized semaphore with higher limits for I/O bound tasks
+    sem = asyncio.Semaphore(max_workers)
+    
+    async def worker(i: int, text: str, output: str):
+        async with sem:
+            try:
+                return await fast_generate_audio(text, language, output, quiet=True)
+            except Exception as e:
+                print(f"⚠️  Error generating part {i}: {e}")
+                return False
+    
+    # Create all tasks at once for better scheduling
+    tasks = [asyncio.create_task(worker(i, chunks[i], parts[i])) 
+             for i in range(len(chunks))]
+    
+    # Rich progress display with statistics
+    progress = create_progress_display(chunks, language)
+    
+    try:
+        # Process tasks as they complete with rich progress updates
+        completed_tasks = []
+        for coro in asyncio.as_completed(tasks):
+            result = await coro
+            completed_tasks.append(result)
+            
+            # Update progress with chunk word count
+            chunk_idx = len(completed_tasks) - 1
+            chunk_words = len(chunks[chunk_idx].split()) if chunk_idx < len(chunks) else 0
+            progress.update(chunk_words)
+        
+        progress.finish(success=True)
+    except Exception as e:
+        progress.finish(success=False)
+        raise e
+    
+    return parts
+
+
+def ultra_fast_cleanup_parts(parts: List[str], keep_parts: bool = False) -> None:
+    """Ultra-fast parallel cleanup of temporary files."""
+    if keep_parts:
+        return
+    
+    def remove_file(part):
+        try:
+            if os.path.exists(part):
+                os.remove(part)
+        except Exception:
+            pass
+    
+    # Use thread pool for parallel file deletion
+    if len(parts) > 5:
+        with ThreadPoolExecutor(max_workers=min(8, len(parts))) as executor:
+            executor.map(remove_file, parts)
+    else:
+        # For few files, sequential is faster
+        for part in parts:
+            remove_file(part)
+
+
+async def smart_generate_long_text(text: str, language: str, chunk_seconds: int = 30, 
+                                  parallel: int = OPTIMAL_WORKERS, output_path: str = 'data.mp3',
+                                  keep_parts: bool = False) -> None:
+    """Smart generation with dynamic optimization based on text length."""
+    
+    from .chunking import split_text_into_chunks
+    import time
+    
+    start = time.perf_counter()
+    
+    # Dynamic chunk sizing based on text length
+    word_count = len(text.split())
+    if word_count < 200:
+        # Very short text - direct generation is fastest
+        await fast_generate_audio(text, language, output_path)
+        elapsed = time.perf_counter() - start
+        print(f"⚡ Completed in {elapsed:.2f}s (direct)")
+        return
+    
+    # Optimize chunk size based on text length and parallel workers
+    optimal_chunk_seconds = max(15, min(60, word_count // (parallel * 2)))
+    if chunk_seconds == 0:
+        chunk_seconds = optimal_chunk_seconds
+    
+    chunks = split_text_into_chunks(text, approx_seconds=chunk_seconds)
+    
+    if len(chunks) == 1:
+        # Still short enough for direct generation
+        await fast_generate_audio(text, language, output_path)
+        elapsed = time.perf_counter() - start
+        print(f"⚡ Completed in {elapsed:.2f}s (direct)")
+        return
+    
+    print(f"⚡ Using {len(chunks)} chunks with {parallel} workers")
+    
+    # Generate chunks in parallel
+    parts = await ultra_fast_parallel_generation(chunks, language, parallel)
+    
+    # Ultra-fast merge
+    fast_merge_audio_files(parts, output_path)
+    
+    # Fast cleanup
+    ultra_fast_cleanup_parts(parts, keep_parts)
+    
+    elapsed = time.perf_counter() - start
+    print(f"⚡ Completed in {elapsed:.2f}s ({len(chunks)} chunks, {parallel} workers)")
+
+
+def get_optimal_settings(text: str) -> dict:
+    """Calculate optimal settings based on text characteristics."""
+    word_count = len(text.split())
+    char_count = len(text)
+    
+    # Dynamic optimization
+    if word_count < 100:
+        return {'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}
+    elif word_count < 500:
+        return {'method': 'smart', 'chunk_seconds': 20, 'parallel': 2}
+    elif word_count < 2000:
+        return {'method': 'smart', 'chunk_seconds': 30, 'parallel': min(4, OPTIMAL_WORKERS)}
+    else:
+        return {'method': 'smart', 'chunk_seconds': 45, 'parallel': OPTIMAL_WORKERS}

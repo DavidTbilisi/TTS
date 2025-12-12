@@ -1,5 +1,5 @@
 /venv
-data*
+*.mp3
 sub.vtt
 test.txt
 dist/
