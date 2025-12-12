@@ -43,6 +43,9 @@ async def get_http_client() -> httpx.AsyncClient:
     return _http_client
 
 
+from .not_reading import replace_not_readable
+
+
 async def fast_generate_audio(text: str, language: str, output_path: str, 
                              quiet: bool = False) -> bool:
     """Ultra-fast audio generation with optimized HTTP."""
@@ -61,9 +64,10 @@ async def fast_generate_audio(text: str, language: str, output_path: str,
         # Use optimized HTTP client instead of edge-tts
         client = await get_http_client()
         
-        # Generate SSML
+        # Sanitize text and generate SSML
+        safe_text = replace_not_readable(text)
         ssml = f"""<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>
-            <voice name='{voice}'>{text}</voice>
+            <voice name='{voice}'>{safe_text}</voice>
         </speak>"""
         
         # Direct API call to Azure Cognitive Services TTS
@@ -106,7 +110,8 @@ async def fallback_generate_audio(text: str, language: str, output_path: str,
                 print(f"❌ Language '{language}' not supported. Use: ka, ru, en")
             return False
         
-        communicate = Communicate(text, voice)
+        clean_text = replace_not_readable(text)
+        communicate = Communicate(clean_text, voice)
         await communicate.save(output_path)
         
         if not quiet:

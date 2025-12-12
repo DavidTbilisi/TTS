@@ -3,6 +3,7 @@
 import os
 import sys
 from edge_tts import Communicate
+from .not_reading import replace_not_readable
 
 # Optional imports
 try:
@@ -27,7 +28,8 @@ async def generate_audio(text: str, language: str, output_path: str,
     
     # Generate new audio
     try:
-        communicate = Communicate(text, voice)
+        clean_text = replace_not_readable(text)
+        communicate = Communicate(clean_text, voice)
         await communicate.save(output_path)
         
         # Success
