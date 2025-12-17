@@ -15,14 +15,16 @@ except ImportError:
 
 from .fast_audio import fast_generate_audio, fast_merge_audio_files
 from .rich_progress import create_progress_display, animate_loading
+from .streaming_player import StreamingAudioPlayer
 
 # Optimal worker count
 OPTIMAL_WORKERS = min(32, (os.cpu_count() or 1) * 4)
 
 
 async def ultra_fast_parallel_generation(chunks: List[str], language: str, 
-                                       parallel: int = OPTIMAL_WORKERS) -> List[str]:
-    """Ultra-fast parallel generation with optimized concurrency."""
+                                       parallel: int = OPTIMAL_WORKERS,
+                                       streaming_player: StreamingAudioPlayer = None) -> List[str]:
+    """Ultra-fast parallel generation with optimized concurrency and optional streaming playback."""
     
     # Use uvloop for maximum performance on Unix systems
     if HAS_UVLOOP and sys.platform != 'win32':
@@ -50,7 +52,11 @@ async def ultra_fast_parallel_generation(chunks: List[str], language: str,
     async def worker(i: int, text: str, output: str):
         async with sem:
             try:
-                return await fast_generate_audio(text, language, output, quiet=True)
+                result = await fast_generate_audio(text, language, output, quiet=True)
+                # If streaming is enabled, add chunk to player as soon as it's ready
+                if result and streaming_player:
+                    streaming_player.add_chunk(output)
+                return result
             except Exception as e:
                 print(f"⚠️  Error generating part {i}: {e}")
                 return False
@@ -106,11 +112,19 @@ def ultra_fast_cleanup_parts(parts: List[str], keep_parts: bool = False) -> None
 
 async def smart_generate_long_text(text: str, language: str, chunk_seconds: int = 30, 
                                   parallel: int = OPTIMAL_WORKERS, output_path: str = 'data.mp3',
-                                  keep_parts: bool = False) -> None:
-    """Smart generation with dynamic optimization based on text length."""
+                                  keep_parts: bool = False, enable_streaming: bool = False) -> None:
+    """Smart generation with dynamic optimization based on text length and optional streaming playback."""
     
     from .chunking import split_text_into_chunks
     import time
+    import glob
+    
+    # Clean up any leftover part files from previous runs/crashes
+    for old_part in glob.glob('.part_*.mp3'):
+        try:
+            os.remove(old_part)
+        except Exception:
+            pass
     
     start = time.perf_counter()
     
@@ -139,17 +153,45 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
     
     print(f"⚡ Using {len(chunks)} chunks with {parallel} workers")
     
+    # Initialize streaming player if enabled
+    streaming_player = None
+    if enable_streaming:
+        streaming_player = StreamingAudioPlayer()
+        streaming_player.start()
+        if sys.platform.startswith('win'):
+            print("🔊 Streaming enabled - first chunk will play immediately (Windows mode)")
+        else:
+            print("🔊 Streaming playback enabled - audio will start playing immediately")
+    
     # Generate chunks in parallel
-    parts = await ultra_fast_parallel_generation(chunks, language, parallel)
+    parts = await ultra_fast_parallel_generation(chunks, language, parallel, streaming_player)
     
-    # Ultra-fast merge
-    fast_merge_audio_files(parts, output_path)
-    
-    # Fast cleanup
-    ultra_fast_cleanup_parts(parts, keep_parts)
-    
-    elapsed = time.perf_counter() - start
-    print(f"⚡ Completed in {elapsed:.2f}s ({len(chunks)} chunks, {parallel} workers)")
+    try:
+        # Signal streaming completion
+        if streaming_player:
+            streaming_player.finish_generation()
+        
+        # Ultra-fast merge
+        fast_merge_audio_files(parts, output_path)
+        
+        # Fast cleanup
+        ultra_fast_cleanup_parts(parts, keep_parts)
+        
+        # Wait for streaming playback to complete if enabled
+        if streaming_player:
+            print("⏸️  Waiting for playback to complete...")
+            streaming_player.wait_for_completion()
+        
+        elapsed = time.perf_counter() - start
+        print(f"⚡ Completed in {elapsed:.2f}s ({len(chunks)} chunks, {parallel} workers)")
+    except KeyboardInterrupt:
+        # Cleanup on interruption
+        ultra_fast_cleanup_parts(parts, keep_parts=False)
+        raise
+    except Exception as e:
+        # Cleanup on error
+        ultra_fast_cleanup_parts(parts, keep_parts=False)
+        raise
 
 
 def get_optimal_settings(text: str) -> dict:
