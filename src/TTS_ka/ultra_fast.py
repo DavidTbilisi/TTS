@@ -44,8 +44,15 @@ async def ultra_fast_parallel_generation(chunks: List[str], language: str,
             part_name = output_path
         else:
             part_name = f".part_{i}.mp3"
+            # Safe file removal - handle locked files gracefully
             if os.path.exists(part_name):
-                os.remove(part_name)
+                try:
+                    os.remove(part_name)
+                except (PermissionError, OSError) as e:
+                    # File might be locked by media player - try alternative name
+                    import time
+                    timestamp = int(time.time() * 1000)
+                    part_name = f".part_{i}_{timestamp}.mp3"
         parts.append(part_name)
     
     # Optimize concurrency based on system
@@ -94,7 +101,7 @@ async def ultra_fast_parallel_generation(chunks: List[str], language: str,
 
 
 def ultra_fast_cleanup_parts(parts: List[str], keep_parts: bool = False) -> None:
-    """Ultra-fast parallel cleanup of temporary files."""
+    """Ultra-fast parallel cleanup of temporary files with robust error handling."""
     if keep_parts:
         return
     
@@ -102,6 +109,16 @@ def ultra_fast_cleanup_parts(parts: List[str], keep_parts: bool = False) -> None
         try:
             if os.path.exists(part):
                 os.remove(part)
+        except (PermissionError, OSError):
+            # File might be locked - try again after a short delay
+            try:
+                import time
+                time.sleep(0.1)
+                if os.path.exists(part):
+                    os.remove(part)
+            except Exception:
+                # If still can't remove, silently continue (file will be cleaned up later)
+                pass
         except Exception:
             pass
     
@@ -206,6 +223,8 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
         if streaming_player:
             print("⏸️  Waiting for playback to complete...")
             streaming_player.wait_for_completion()
+            # Small delay to ensure files are released by media player
+            time.sleep(0.2)
         
         elapsed = time.perf_counter() - start
         print(f"⚡ Completed in {elapsed:.2f}s ({len(chunks)} chunks, {parallel} workers)")
