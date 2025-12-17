@@ -8,3 +8,6 @@ __pycache__/
 *.pyc
 test_*.txt
 .part_*.mp3
+.pytest_cache/
+.tts_fast_cache/
+src/TTS_ka/__pycache__/
