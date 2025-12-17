@@ -134,7 +134,7 @@ def ultra_fast_cleanup_parts(parts: List[str], keep_parts: bool = False) -> None
 
 async def smart_generate_long_text(text: str, language: str, chunk_seconds: int = 30, 
                                   parallel: int = OPTIMAL_WORKERS, output_path: str = 'data.mp3',
-                                  keep_parts: bool = False, enable_streaming: bool = False) -> None:
+                                  keep_parts: bool = False, enable_streaming: bool = False, show_gui: bool = False) -> None:
     """Smart generation with dynamic optimization based on text length and optional streaming playback."""
     
     from .chunking import split_text_into_chunks
@@ -182,10 +182,13 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
     # Initialize streaming player if enabled
     streaming_player = None
     if enable_streaming:
-        streaming_player = StreamingAudioPlayer()
+        streaming_player = StreamingAudioPlayer(show_gui=show_gui)
         streaming_player.start()
         if sys.platform.startswith('win'):
-            print("🔊 Streaming enabled - first chunk will play immediately (Windows mode)")
+            if show_gui:
+                print("🔊 Streaming enabled - first chunk will play in VLC GUI (Windows mode)")
+            else:
+                print("🔊 Streaming enabled - first chunk will play immediately (Windows mode)")
         else:
             print("🔊 Streaming playback enabled - audio will start playing immediately")
     

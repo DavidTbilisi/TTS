@@ -59,6 +59,8 @@ For comprehensive help with examples: %(prog)s --help-full
                        help='Disable auto-optimization (legacy mode)')
     parser.add_argument('--stream', action='store_true',
                        help='Enable streaming playback (audio starts playing while still generating)')
+    parser.add_argument('--show-player', action='store_true',
+                       help='Show VLC player GUI when streaming (instead of headless playback)')
     parser.add_argument('--help-full', action='store_true', 
                        help='Show comprehensive help with examples and workflows')
     
@@ -116,7 +118,8 @@ For comprehensive help with examples: %(prog)s --help-full
                     chunk_seconds=args.chunk_seconds or 30,
                     parallel=args.parallel,
                     output_path=output_path,
-                    enable_streaming=args.stream
+                    enable_streaming=args.stream,
+                    show_gui=args.show_player
                 )
             else:
                 # Ultra-fast direct generation

@@ -12,12 +12,13 @@ import threading
 class StreamingAudioPlayer:
     """Plays audio chunks as they become available during generation."""
     
-    def __init__(self):
+    def __init__(self, show_gui: bool = False):
         self.chunk_queue: Queue = Queue()
         self.playback_thread: Optional[threading.Thread] = None
         self.is_playing = False
         self.finished_generating = False
         self.process: Optional[subprocess.Popen] = None
+        self.show_gui = show_gui
         
     def add_chunk(self, chunk_path: str) -> None:
         """Add a generated chunk to the playback queue."""
@@ -60,13 +61,17 @@ class StreamingAudioPlayer:
                 try:
                     if use_vlc:
                         # Use VLC for better control
-                        vlc_cmd = [vlc_player, '--intf', 'dummy', '--play-and-exit', chunk]
+                        if self.show_gui:
+                            vlc_cmd = [vlc_player, '--play-and-exit', chunk]
+                            print("🔊 Playing with VLC GUI while generating remaining chunks...")
+                        else:
+                            vlc_cmd = [vlc_player, '--intf', 'dummy', '--play-and-exit', chunk]
+                            print("🔊 Playing with VLC while generating remaining chunks...")
                         self.process = subprocess.Popen(
                             vlc_cmd,
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL
                         )
-                        print("🔊 Playing with VLC while generating remaining chunks...")
                     else:
                         # Fallback to Windows default player
                         os.startfile(os.path.abspath(chunk))
@@ -84,8 +89,12 @@ class StreamingAudioPlayer:
                 if playlist:
                     import time
                     time.sleep(0.5)  # Brief pause
-                    full_cmd = [vlc_player, '--intf', 'dummy', '--play-and-exit', playlist]
-                    print(f"🎵 VLC playlist with {len(chunks_to_play)} chunks")
+                    if self.show_gui:
+                        full_cmd = [vlc_player, '--play-and-exit', playlist]
+                        print(f"🎵 VLC GUI with {len(chunks_to_play)} chunks")
+                    else:
+                        full_cmd = [vlc_player, '--intf', 'dummy', '--play-and-exit', playlist]
+                        print(f"🎵 VLC playlist with {len(chunks_to_play)} chunks")
                     subprocess.Popen(
                         full_cmd,
                         stdout=subprocess.DEVNULL,
@@ -135,8 +144,12 @@ class StreamingAudioPlayer:
             if chunks:
                 # Play first chunk immediately for instant feedback
                 try:
-                    first_cmd = [player, '--intf', 'dummy', '--play-and-exit', chunks[0]]
-                    print("🔊 Starting VLC playback...")
+                    if self.show_gui:
+                        first_cmd = [player, '--play-and-exit', chunks[0]]
+                        print("🔊 Starting VLC GUI playback...")
+                    else:
+                        first_cmd = [player, '--intf', 'dummy', '--play-and-exit', chunks[0]]
+                        print("🔊 Starting VLC playback...")
                     self.process = subprocess.Popen(
                         first_cmd,
                         stdout=subprocess.DEVNULL,
@@ -150,8 +163,12 @@ class StreamingAudioPlayer:
                             # Wait briefly, then start full playlist
                             import time
                             time.sleep(1)
-                            full_cmd = [player, '--intf', 'dummy', '--play-and-exit', playlist]
-                            print(f"🎵 VLC playlist with {len(chunks)} chunks")
+                            if self.show_gui:
+                                full_cmd = [player, '--play-and-exit', playlist]
+                                print(f"🎵 VLC GUI playlist with {len(chunks)} chunks")
+                            else:
+                                full_cmd = [player, '--intf', 'dummy', '--play-and-exit', playlist]
+                                print(f"🎵 VLC playlist with {len(chunks)} chunks")
                             subprocess.Popen(
                                 full_cmd,
                                 stdout=subprocess.DEVNULL,
@@ -211,10 +228,13 @@ class StreamingAudioPlayer:
             try:
                 if sys.platform.startswith('win'):
                     # Windows: check both PATH and common install locations
-                    common_paths = [
-                        f"C:\\Program Files\\VideoLAN\\VLC\\{player}.exe",
-                        f"C:\\Program Files (x86)\\VideoLAN\\VLC\\{player}.exe"
-                    ]
+                    if player == 'vlc':
+                        common_paths = [
+                            "C:\\Program Files\\VideoLAN\\VLC\\vlc.exe",
+                            "C:\\Program Files (x86)\\VideoLAN\\VLC\\vlc.exe"
+                        ]
+                    else:
+                        common_paths = [f"C:\\Program Files\\{player}\\{player}.exe"]
                     
                     # Check PATH first
                     result = subprocess.run(['where', player], 
@@ -283,18 +303,19 @@ class StreamingAudioPlayer:
                 pass
 
 
-async def play_audio_streaming(chunks: List[str], merge_first: bool = True) -> StreamingAudioPlayer:
+async def play_audio_streaming(chunks: List[str], merge_first: bool = True, show_gui: bool = False) -> StreamingAudioPlayer:
     """
     Play audio chunks with streaming (play while generating).
     
     Args:
         chunks: List of chunk file paths
         merge_first: If True, merge all chunks first (faster but no streaming)
+        show_gui: If True, show VLC GUI instead of headless playback
     
     Returns:
         StreamingAudioPlayer instance
     """
-    player = StreamingAudioPlayer()
+    player = StreamingAudioPlayer(show_gui=show_gui)
     
     if merge_first or sys.platform.startswith('win'):
         # Windows or user preference: merge first then play

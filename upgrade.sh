@@ -3,6 +3,17 @@
 set -e  # Exit on error
 
 if ! git diff-index --quiet HEAD --; then
+    # On Windows, files named 'nul' (reserved device name) can cause
+    # "invalid path 'nul'" errors when adding to git. Detect and remove
+    # any untracked entries named 'nul' before staging.
+    if git ls-files --others --exclude-standard | grep -E '(^|/|\\)nul$' >/dev/null 2>&1; then
+        echo "Found reserved filename 'nul' in working tree; removing to avoid git errors."
+        git ls-files --others --exclude-standard | grep -E '(^|/|\\)nul$' | while read -r f; do
+            echo "Removing untracked file: $f"
+            rm -f -- "$f" || true
+        done
+    fi
+
     git add .
     git commit -m "Upgrade package"
 fi
