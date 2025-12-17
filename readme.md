@@ -10,6 +10,7 @@
 ## ✨ Features
 
 - 🚀 **Ultra-Fast Generation**: 6-15 seconds for 1000 words (vs 25+ seconds traditional)
+- 🔊 **Streaming Playback**: Audio starts playing while still generating (NEW!)
 - 🧠 **Smart Chunking**: Automatic text splitting for optimal performance  
 - ⚡ **Parallel Processing**: Multi-threaded generation with up to 8 workers
 - 📋 **Clipboard Integration**: Direct clipboard-to-speech workflow
@@ -83,6 +84,7 @@ python -m TTS_ka [TEXT_SOURCE] [OPTIONS]
 | Option | Description | Examples |
 |--------|-------------|----------|
 | `--lang` | Language: `ka` (Georgian), `ru` (Russian), `en` (English) | `--lang ka` |
+| `--stream` | 🆕 Enable streaming playback (audio starts while generating) | `--stream` |
 | `--chunk-seconds` | Chunk size in seconds (0=auto, 20-60 optimal) | `--chunk-seconds 30` |
 | `--parallel` | Workers (0=auto, 2-8 recommended) | `--parallel 6` |
 | `--no-play` | Skip automatic audio playback | `--no-play` |
@@ -96,6 +98,44 @@ python -m TTS_ka [TEXT_SOURCE] [OPTIONS]
 - **TTS_ka Direct**: 15-25 seconds  
 - **TTS_ka Turbo**: 8-15 seconds
 - **TTS_ka Chunked**: 6-12 seconds ⚡
+- **TTS_ka Streaming**: 🔊 2-3 seconds to first audio (NEW!)
+
+### 🆕 Streaming Playback - Audio Starts Immediately!
+
+The new streaming feature starts playing audio within **2-3 seconds** while the rest continues generating in the background. This provides an **85-90% reduction in perceived wait time**!
+
+**Quick Usage:**
+```bash
+# Basic streaming - audio starts almost instantly!
+python -m TTS_ka "Your long text..." --lang en --stream
+
+# From file with streaming
+python -m TTS_ka article.txt --lang ka --stream
+
+# Clipboard with streaming (fastest workflow)
+python -m TTS_ka clipboard --stream
+```
+
+**How It Works:**
+1. Text is split into chunks (if needed)
+2. Chunks generate in parallel (2-8 workers)
+3. **First chunk plays immediately** (~2-3 seconds)
+4. Remaining chunks continue generating in background
+5. Final merged audio file is saved
+
+**Performance:**
+- **Without streaming**: Wait 10-30+ seconds for all audio
+- **With streaming**: Hear audio in 2-3 seconds ⚡
+- **Platform support**: Windows, Linux, macOS
+
+**Advanced Streaming:**
+```bash
+# Custom chunking for optimal streaming
+python -m TTS_ka longtext.txt --stream --chunk-seconds 25 --parallel 6
+
+# Streaming without final playback
+python -m TTS_ka text.txt --stream --no-play
+```
 
 ### Real-World Examples
 

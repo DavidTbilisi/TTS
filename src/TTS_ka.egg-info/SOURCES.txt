@@ -12,6 +12,7 @@ src/TTS_ka/not_reading.py
 src/TTS_ka/parallel.py
 src/TTS_ka/rich_progress.py
 src/TTS_ka/simple_help.py
+src/TTS_ka/streaming_player.py
 src/TTS_ka/ultra_fast.py
 src/TTS_ka.egg-info/PKG-INFO
 src/TTS_ka.egg-info/SOURCES.txt
@@ -39,4 +40,6 @@ tests/test_not_readable.py
 tests/test_rich_progress.py
 tests/test_simple_help.py
 tests/test_simple_help_simple.py
+tests/test_streaming.py
+tests/test_streaming_integration.py
 tests/test_ultra_fast.py

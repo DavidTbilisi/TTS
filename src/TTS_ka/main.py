@@ -57,6 +57,11 @@ For comprehensive help with examples: %(prog)s --help-full
     parser.add_argument('--no-play', action='store_true', help='Skip automatic audio playback')
     parser.add_argument('--no-turbo', action='store_true', 
                        help='Disable auto-optimization (legacy mode)')
+    parser.add_argument('--stream', action='store_true',
+                       help='Enable streaming playback (audio starts playing while still generating)')
+    # GUI is the default; provide an opt-out flag to use headless playback
+    parser.add_argument('--no-gui', dest='show_player', action='store_false', default=True,
+                       help='Disable VLC player GUI when streaming (use headless playback)')
     parser.add_argument('--help-full', action='store_true', 
                        help='Show comprehensive help with examples and workflows')
     
@@ -88,6 +93,12 @@ For comprehensive help with examples: %(prog)s --help-full
         if args.parallel == 0:
             args.parallel = optimal['parallel']
         
+        # Override optimization for streaming - ensure chunking is enabled
+        if args.stream and args.chunk_seconds == 0:
+            args.chunk_seconds = 15  # Force chunking for streaming
+            optimal['method'] = 'smart'  # Override method too
+            print(f"🔊 Streaming enabled - forcing chunked generation (15s chunks)")
+        
         # Language-specific optimization messages
         lang_names = {'ka': 'Georgian', 'ru': 'Russian', 'en': 'English'}
         lang_name = lang_names.get(args.lang, 'Unknown')
@@ -101,13 +112,15 @@ For comprehensive help with examples: %(prog)s --help-full
     
     async def run_generation():
         try:
-            if args.chunk_seconds > 0 or len(text.split()) > 200:
-                # Smart chunked generation
+            if args.chunk_seconds > 0 or len(text.split()) > 200 or args.stream:
+                # Smart chunked generation with optional streaming
                 await smart_generate_long_text(
                     text, args.lang,
                     chunk_seconds=args.chunk_seconds or 30,
                     parallel=args.parallel,
-                    output_path=output_path
+                    output_path=output_path,
+                    enable_streaming=args.stream,
+                    show_gui=args.show_player
                 )
             else:
                 # Ultra-fast direct generation
@@ -116,7 +129,8 @@ For comprehensive help with examples: %(prog)s --help-full
                 elapsed = time.perf_counter() - start
                 print(f"⚡ Completed in {elapsed:.2f}s (direct)")
             
-            if not args.no_play:
+            # Only play after generation if not streaming (streaming already played)
+            if not args.no_play and not args.stream:
                 play_audio(output_path)
                 
         finally:

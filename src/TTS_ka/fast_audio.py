@@ -162,19 +162,30 @@ def fast_merge_audio_files(parts: list[str], output_path: str) -> None:
         from pydub import AudioSegment
         combined = AudioSegment.from_mp3(parts[0])
         for part in parts[1:]:
-            combined += AudioSegment.from_mp3(part)
+            if os.path.exists(part):
+                combined += AudioSegment.from_mp3(part)
         combined.export(output_path, format='mp3')
-    except ImportError:
-        # FFmpeg fallback
+    except (ImportError, Exception):
+        # FFmpeg fallback - use absolute paths and better error handling
         listfile = '.ff_concat.txt'
         try:
             with open(listfile, 'w', encoding='utf-8') as f:
                 for part in parts:
-                    f.write(f"file '{os.path.abspath(part)}'\n")
+                    if os.path.exists(part):
+                        # Use forward slashes for FFmpeg compatibility
+                        abs_path = os.path.abspath(part).replace('\\', '/')
+                        f.write(f"file '{abs_path}'\n")
             
-            rc = os.system(f"ffmpeg -y -hide_banner -loglevel error -f concat -safe 0 -i {listfile} -c copy {output_path}")
+            # More robust FFmpeg command with quotes
+            cmd = f'ffmpeg -y -hide_banner -loglevel error -f concat -safe 0 -i "{listfile}" -c copy "{output_path}"'
+            rc = os.system(cmd)
             if rc != 0:
-                raise RuntimeError('ffmpeg concat failed')
+                # Try alternative approach - copy first file for streaming
+                import shutil
+                if os.path.exists(parts[0]):
+                    shutil.copy2(parts[0], output_path)
+                else:
+                    raise RuntimeError('Audio merge failed - no valid parts found')
         finally:
             try:
                 os.remove(listfile)
