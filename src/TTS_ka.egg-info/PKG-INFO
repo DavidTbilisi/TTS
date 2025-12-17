@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: TTS_ka
-Version: 1.2.0
+Version: 1.3.0
 Summary: A simple text to speech program using edge-tts library
 Author-email: David Chincharashvili <davidchincharashvili@gmail.com>
 Project-URL: Homepage, https://github.com/DavidTbilisi/TTS.git
