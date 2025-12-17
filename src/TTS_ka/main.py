@@ -57,6 +57,8 @@ For comprehensive help with examples: %(prog)s --help-full
     parser.add_argument('--no-play', action='store_true', help='Skip automatic audio playback')
     parser.add_argument('--no-turbo', action='store_true', 
                        help='Disable auto-optimization (legacy mode)')
+    parser.add_argument('--stream', action='store_true',
+                       help='Enable streaming playback (audio starts playing while still generating)')
     parser.add_argument('--help-full', action='store_true', 
                        help='Show comprehensive help with examples and workflows')
     
@@ -102,12 +104,13 @@ For comprehensive help with examples: %(prog)s --help-full
     async def run_generation():
         try:
             if args.chunk_seconds > 0 or len(text.split()) > 200:
-                # Smart chunked generation
+                # Smart chunked generation with optional streaming
                 await smart_generate_long_text(
                     text, args.lang,
                     chunk_seconds=args.chunk_seconds or 30,
                     parallel=args.parallel,
-                    output_path=output_path
+                    output_path=output_path,
+                    enable_streaming=args.stream
                 )
             else:
                 # Ultra-fast direct generation
@@ -116,7 +119,8 @@ For comprehensive help with examples: %(prog)s --help-full
                 elapsed = time.perf_counter() - start
                 print(f"⚡ Completed in {elapsed:.2f}s (direct)")
             
-            if not args.no_play:
+            # Only play after generation if not streaming (streaming already played)
+            if not args.no_play and not args.stream:
                 play_audio(output_path)
                 
         finally:
