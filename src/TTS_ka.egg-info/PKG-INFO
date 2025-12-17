@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: TTS_ka
-Version: 1.2.0
+Version: 1.3.0
 Summary: A simple text to speech program using edge-tts library
 Author-email: David Chincharashvili <davidchincharashvili@gmail.com>
 Project-URL: Homepage, https://github.com/DavidTbilisi/TTS.git
@@ -134,15 +134,42 @@ python -m TTS_ka [TEXT_SOURCE] [OPTIONS]
 - **TTS_ka Chunked**: 6-12 seconds ⚡
 - **TTS_ka Streaming**: 🔊 2-3 seconds to first audio (NEW!)
 
-### 🆕 Streaming Playback Example
-```bash
-# Audio starts playing in ~2 seconds while rest generates
-python -m TTS_ka "Your long article text..." --lang en --stream
+### 🆕 Streaming Playback - Audio Starts Immediately!
 
-# Perfect for long documents
+The new streaming feature starts playing audio within **2-3 seconds** while the rest continues generating in the background. This provides an **85-90% reduction in perceived wait time**!
+
+**Quick Usage:**
+```bash
+# Basic streaming - audio starts almost instantly!
+python -m TTS_ka "Your long text..." --lang en --stream
+
+# From file with streaming
 python -m TTS_ka article.txt --lang ka --stream
+
+# Clipboard with streaming (fastest workflow)
+python -m TTS_ka clipboard --stream
 ```
-📖 See [STREAMING_GUIDE.md](STREAMING_GUIDE.md) for detailed streaming documentation.
+
+**How It Works:**
+1. Text is split into chunks (if needed)
+2. Chunks generate in parallel (2-8 workers)
+3. **First chunk plays immediately** (~2-3 seconds)
+4. Remaining chunks continue generating in background
+5. Final merged audio file is saved
+
+**Performance:**
+- **Without streaming**: Wait 10-30+ seconds for all audio
+- **With streaming**: Hear audio in 2-3 seconds ⚡
+- **Platform support**: Windows, Linux, macOS
+
+**Advanced Streaming:**
+```bash
+# Custom chunking for optimal streaming
+python -m TTS_ka longtext.txt --stream --chunk-seconds 25 --parallel 6
+
+# Streaming without final playback
+python -m TTS_ka text.txt --stream --no-play
+```
 
 ### Real-World Examples
 

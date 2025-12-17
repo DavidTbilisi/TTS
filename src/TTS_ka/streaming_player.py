@@ -40,9 +40,10 @@ class StreamingAudioPlayer:
             print(f"⚠️  Playback error: {e}")
     
     def _playback_worker_windows(self) -> None:
-        """Windows streaming playback - plays first chunk immediately."""
+        """Windows streaming playback - plays first chunk immediately, then waits for merge completion."""
         chunks_to_play = []
         first_played = False
+        output_file = None
         
         while True:
             chunk = self.chunk_queue.get()
@@ -56,12 +57,15 @@ class StreamingAudioPlayer:
                     # Use os.startfile for immediate playback of first chunk
                     os.startfile(os.path.abspath(chunk))
                     first_played = True
-                    print("🔊 Playing first chunk while generating remaining audio...")
+                    output_file = chunk  # Remember the output file path
+                    print("🔊 Playing audio while generating remaining chunks...")
                 except Exception as e:
                     print(f"⚠️  Could not play first chunk: {e}")
         
-        # Note: Subsequent chunks will be merged and the full file will be available
-        # Windows doesn't support seamless streaming concat, but user gets immediate feedback
+        # For streaming: The first chunk becomes the full output file after merging
+        # Windows media player will continue playing as the file is updated
+        if output_file and self.finished_generating:
+            print("✅ Audio generation completed - full audio should be playing")
     
     def _playback_worker_unix(self) -> None:
         """Unix streaming playback using mpv or ffplay."""

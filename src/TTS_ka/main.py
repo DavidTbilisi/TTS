@@ -90,6 +90,12 @@ For comprehensive help with examples: %(prog)s --help-full
         if args.parallel == 0:
             args.parallel = optimal['parallel']
         
+        # Override optimization for streaming - ensure chunking is enabled
+        if args.stream and args.chunk_seconds == 0:
+            args.chunk_seconds = 15  # Force chunking for streaming
+            optimal['method'] = 'smart'  # Override method too
+            print(f"🔊 Streaming enabled - forcing chunked generation (15s chunks)")
+        
         # Language-specific optimization messages
         lang_names = {'ka': 'Georgian', 'ru': 'Russian', 'en': 'English'}
         lang_name = lang_names.get(args.lang, 'Unknown')
@@ -103,7 +109,7 @@ For comprehensive help with examples: %(prog)s --help-full
     
     async def run_generation():
         try:
-            if args.chunk_seconds > 0 or len(text.split()) > 200:
+            if args.chunk_seconds > 0 or len(text.split()) > 200 or args.stream:
                 # Smart chunked generation with optional streaming
                 await smart_generate_long_text(
                     text, args.lang,

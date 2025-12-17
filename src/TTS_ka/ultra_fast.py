@@ -23,7 +23,8 @@ OPTIMAL_WORKERS = min(32, (os.cpu_count() or 1) * 4)
 
 async def ultra_fast_parallel_generation(chunks: List[str], language: str, 
                                        parallel: int = OPTIMAL_WORKERS,
-                                       streaming_player: StreamingAudioPlayer = None) -> List[str]:
+                                       streaming_player: StreamingAudioPlayer = None,
+                                       output_path: str = 'data.mp3') -> List[str]:
     """Ultra-fast parallel generation with optimized concurrency and optional streaming playback."""
     
     # Use uvloop for maximum performance on Unix systems
@@ -36,11 +37,15 @@ async def ultra_fast_parallel_generation(chunks: List[str], language: str,
     
     parts = []
     
-    # Pre-allocate part files
+    # Pre-allocate part files - if streaming, first chunk becomes output file
     for i in range(len(chunks)):
-        part_name = f".part_{i}.mp3"
-        if os.path.exists(part_name):
-            os.remove(part_name)
+        if i == 0 and streaming_player:
+            # First chunk becomes the final output file for immediate playback
+            part_name = output_path
+        else:
+            part_name = f".part_{i}.mp3"
+            if os.path.exists(part_name):
+                os.remove(part_name)
         parts.append(part_name)
     
     # Optimize concurrency based on system
@@ -130,12 +135,16 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
     
     # Dynamic chunk sizing based on text length
     word_count = len(text.split())
-    if word_count < 200:
-        # Very short text - direct generation is fastest
+    if word_count < 200 and not enable_streaming:
+        # Very short text - direct generation is fastest (unless streaming is requested)
         await fast_generate_audio(text, language, output_path)
         elapsed = time.perf_counter() - start
         print(f"⚡ Completed in {elapsed:.2f}s (direct)")
         return
+    
+    # Debug logging for streaming
+    if enable_streaming:
+        print(f"📊 Streaming mode: {word_count} words, proceeding with chunked generation")
     
     # Optimize chunk size based on text length and parallel workers
     optimal_chunk_seconds = max(15, min(60, word_count // (parallel * 2)))
@@ -144,8 +153,8 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
     
     chunks = split_text_into_chunks(text, approx_seconds=chunk_seconds)
     
-    if len(chunks) == 1:
-        # Still short enough for direct generation
+    if len(chunks) == 1 and not enable_streaming:
+        # Still short enough for direct generation (unless streaming is requested)
         await fast_generate_audio(text, language, output_path)
         elapsed = time.perf_counter() - start
         print(f"⚡ Completed in {elapsed:.2f}s (direct)")
@@ -164,18 +173,34 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
             print("🔊 Streaming playback enabled - audio will start playing immediately")
     
     # Generate chunks in parallel
-    parts = await ultra_fast_parallel_generation(chunks, language, parallel, streaming_player)
+    parts = await ultra_fast_parallel_generation(chunks, language, parallel, streaming_player, output_path)
     
     try:
         # Signal streaming completion
         if streaming_player:
             streaming_player.finish_generation()
         
-        # Ultra-fast merge
-        fast_merge_audio_files(parts, output_path)
+        # For streaming: append remaining chunks to first chunk (which is output_path)
+        if streaming_player:
+            if len(parts) > 1:
+                remaining_parts = [p for p in parts[1:] if os.path.exists(p)]
+                if remaining_parts:
+                    # Merge remaining parts into the first chunk (output_path)
+                    all_parts = [output_path] + remaining_parts
+                    temp_merged = output_path.replace('.mp3', '_temp.mp3')
+                    fast_merge_audio_files(all_parts, temp_merged)
+                    # Replace original with merged version
+                    if os.path.exists(temp_merged):
+                        import shutil
+                        shutil.move(temp_merged, output_path)
+            # For single chunk streaming, no merge needed - file is already the output
+        else:
+            # Normal merge for non-streaming
+            fast_merge_audio_files(parts, output_path)
         
-        # Fast cleanup
-        ultra_fast_cleanup_parts(parts, keep_parts)
+        # Fast cleanup (but keep output_path)
+        cleanup_parts = [p for p in parts if p != output_path]
+        ultra_fast_cleanup_parts(cleanup_parts, keep_parts)
         
         # Wait for streaming playback to complete if enabled
         if streaming_player:
