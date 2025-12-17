@@ -4,3 +4,7 @@ sub.vtt
 test.txt
 dist/
 read_my.ahk
+__pycache__/
+*.pyc
+test_*.txt
+.part_*.mp3
