@@ -44,6 +44,7 @@ Dynamic: license-file
 ## ✨ Features
 
 - 🚀 **Ultra-Fast Generation**: 6-15 seconds for 1000 words (vs 25+ seconds traditional)
+- 🔊 **Streaming Playback**: Audio starts playing while still generating (NEW!)
 - 🧠 **Smart Chunking**: Automatic text splitting for optimal performance  
 - ⚡ **Parallel Processing**: Multi-threaded generation with up to 8 workers
 - 📋 **Clipboard Integration**: Direct clipboard-to-speech workflow
@@ -117,6 +118,7 @@ python -m TTS_ka [TEXT_SOURCE] [OPTIONS]
 | Option | Description | Examples |
 |--------|-------------|----------|
 | `--lang` | Language: `ka` (Georgian), `ru` (Russian), `en` (English) | `--lang ka` |
+| `--stream` | 🆕 Enable streaming playback (audio starts while generating) | `--stream` |
 | `--chunk-seconds` | Chunk size in seconds (0=auto, 20-60 optimal) | `--chunk-seconds 30` |
 | `--parallel` | Workers (0=auto, 2-8 recommended) | `--parallel 6` |
 | `--no-play` | Skip automatic audio playback | `--no-play` |
@@ -130,6 +132,17 @@ python -m TTS_ka [TEXT_SOURCE] [OPTIONS]
 - **TTS_ka Direct**: 15-25 seconds  
 - **TTS_ka Turbo**: 8-15 seconds
 - **TTS_ka Chunked**: 6-12 seconds ⚡
+- **TTS_ka Streaming**: 🔊 2-3 seconds to first audio (NEW!)
+
+### 🆕 Streaming Playback Example
+```bash
+# Audio starts playing in ~2 seconds while rest generates
+python -m TTS_ka "Your long article text..." --lang en --stream
+
+# Perfect for long documents
+python -m TTS_ka article.txt --lang ka --stream
+```
+📖 See [STREAMING_GUIDE.md](STREAMING_GUIDE.md) for detailed streaming documentation.
 
 ### Real-World Examples
 

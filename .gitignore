@@ -11,3 +11,5 @@ test_*.txt
 .pytest_cache/
 .tts_fast_cache/
 src/TTS_ka/__pycache__/
+src/TTS_ka.egg-info/
+tests/__pycache__/
