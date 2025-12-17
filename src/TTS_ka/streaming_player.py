@@ -12,7 +12,7 @@ import threading
 class StreamingAudioPlayer:
     """Plays audio chunks as they become available during generation."""
     
-    def __init__(self, show_gui: bool = False):
+    def __init__(self, show_gui: bool = True):
         self.chunk_queue: Queue = Queue()
         self.playback_thread: Optional[threading.Thread] = None
         self.is_playing = False
@@ -303,7 +303,7 @@ class StreamingAudioPlayer:
                 pass
 
 
-async def play_audio_streaming(chunks: List[str], merge_first: bool = True, show_gui: bool = False) -> StreamingAudioPlayer:
+async def play_audio_streaming(chunks: List[str], merge_first: bool = True, show_gui: bool = True) -> StreamingAudioPlayer:
     """
     Play audio chunks with streaming (play while generating).
     

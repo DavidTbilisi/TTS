@@ -134,7 +134,7 @@ def ultra_fast_cleanup_parts(parts: List[str], keep_parts: bool = False) -> None
 
 async def smart_generate_long_text(text: str, language: str, chunk_seconds: int = 30, 
                                   parallel: int = OPTIMAL_WORKERS, output_path: str = 'data.mp3',
-                                  keep_parts: bool = False, enable_streaming: bool = False, show_gui: bool = False) -> None:
+                                  keep_parts: bool = False, enable_streaming: bool = False, show_gui: bool = True) -> None:
     """Smart generation with dynamic optimization based on text length and optional streaming playback."""
     
     from .chunking import split_text_into_chunks
@@ -183,6 +183,12 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
     streaming_player = None
     if enable_streaming:
         streaming_player = StreamingAudioPlayer(show_gui=show_gui)
+        # Enforce GUI-only mode when requested: require VLC be available
+        if show_gui:
+            detected = streaming_player._find_streaming_player()
+            if not detected or 'vlc' not in os.path.basename(detected).lower():
+                print("ERROR: GUI mode requested but VLC was not found. Install VLC or run without GUI.")
+                raise SystemExit(1)
         streaming_player.start()
         if sys.platform.startswith('win'):
             if show_gui:

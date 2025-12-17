@@ -59,8 +59,9 @@ For comprehensive help with examples: %(prog)s --help-full
                        help='Disable auto-optimization (legacy mode)')
     parser.add_argument('--stream', action='store_true',
                        help='Enable streaming playback (audio starts playing while still generating)')
-    parser.add_argument('--show-player', action='store_true',
-                       help='Show VLC player GUI when streaming (instead of headless playback)')
+    # GUI is the default; provide an opt-out flag to use headless playback
+    parser.add_argument('--no-gui', dest='show_player', action='store_false', default=True,
+                       help='Disable VLC player GUI when streaming (use headless playback)')
     parser.add_argument('--help-full', action='store_true', 
                        help='Show comprehensive help with examples and workflows')
     
