@@ -21,7 +21,7 @@ class StreamingAudioPlayer:
         
     def add_chunk(self, chunk_path: str) -> None:
         """Add a generated chunk to the playback queue."""
-        if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 0:
+        if chunk_path and os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 0:
             self.chunk_queue.put(chunk_path)
     
     def finish_generation(self) -> None:
@@ -45,6 +45,10 @@ class StreamingAudioPlayer:
         first_played = False
         output_file = None
         
+        # Check if VLC is available on Windows
+        vlc_player = self._find_streaming_player()
+        use_vlc = vlc_player and 'vlc' in vlc_player.lower()
+        
         while True:
             chunk = self.chunk_queue.get()
             if chunk is None:  # Sentinel
@@ -54,16 +58,43 @@ class StreamingAudioPlayer:
             # Play first chunk immediately on Windows
             if not first_played:
                 try:
-                    # Use os.startfile for immediate playback of first chunk
-                    os.startfile(os.path.abspath(chunk))
+                    if use_vlc:
+                        # Use VLC for better control
+                        vlc_cmd = [vlc_player, '--intf', 'dummy', '--play-and-exit', chunk]
+                        self.process = subprocess.Popen(
+                            vlc_cmd,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL
+                        )
+                        print("🔊 Playing with VLC while generating remaining chunks...")
+                    else:
+                        # Fallback to Windows default player
+                        os.startfile(os.path.abspath(chunk))
+                        print("🔊 Playing audio while generating remaining chunks...")
+                    
                     first_played = True
-                    output_file = chunk  # Remember the output file path
-                    print("🔊 Playing audio while generating remaining chunks...")
+                    output_file = chunk
                 except Exception as e:
                     print(f"⚠️  Could not play first chunk: {e}")
         
+        # If we have VLC and multiple chunks, create playlist for seamless experience
+        if use_vlc and len(chunks_to_play) > 1 and self.finished_generating:
+            try:
+                playlist = self._create_vlc_playlist(chunks_to_play)
+                if playlist:
+                    import time
+                    time.sleep(0.5)  # Brief pause
+                    full_cmd = [vlc_player, '--intf', 'dummy', '--play-and-exit', playlist]
+                    print(f"🎵 VLC playlist with {len(chunks_to_play)} chunks")
+                    subprocess.Popen(
+                        full_cmd,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+            except Exception as e:
+                print(f"⚠️  VLC playlist error: {e}")
+        
         # For streaming: The first chunk becomes the full output file after merging
-        # Windows media player will continue playing as the file is updated
         if output_file and self.finished_generating:
             print("✅ Audio generation completed - full audio should be playing")
     
@@ -90,7 +121,46 @@ class StreamingAudioPlayer:
             return
         
         # Build streaming command
-        if 'mpv' in player:
+        if 'vlc' in player:
+            # VLC with playlist for seamless chunk streaming
+            chunks = []
+            
+            # Collect all chunks first
+            while True:
+                chunk = self.chunk_queue.get()
+                if chunk is None:
+                    break
+                chunks.append(chunk)
+            
+            if chunks:
+                # Play first chunk immediately for instant feedback
+                try:
+                    first_cmd = [player, '--intf', 'dummy', '--play-and-exit', chunks[0]]
+                    print("🔊 Starting VLC playback...")
+                    self.process = subprocess.Popen(
+                        first_cmd,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                    
+                    # If multiple chunks, create playlist for full audio
+                    if len(chunks) > 1:
+                        playlist = self._create_vlc_playlist(chunks)
+                        if playlist:
+                            # Wait briefly, then start full playlist
+                            import time
+                            time.sleep(1)
+                            full_cmd = [player, '--intf', 'dummy', '--play-and-exit', playlist]
+                            print(f"🎵 VLC playlist with {len(chunks)} chunks")
+                            subprocess.Popen(
+                                full_cmd,
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL
+                            )
+                except Exception as e:
+                    print(f"⚠️  VLC playback error: {e}")
+        
+        elif 'mpv' in player:
             # mpv can play multiple files in sequence
             cmd = [player, '--no-video', '--really-quiet']
             chunks = []
@@ -101,20 +171,18 @@ class StreamingAudioPlayer:
                 if chunk is None:
                     break
                 chunks.append(chunk)
-                
-                # Start playing first chunk immediately
-                if len(chunks) == 1:
-                    try:
-                        self.process = subprocess.Popen(
-                            cmd + [chunk],
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL
-                        )
-                    except Exception:
-                        pass
             
-            # For remaining chunks, we'd need to use mpv's IPC
-            # For now, this provides partial streaming
+            if chunks:
+                # mpv can handle multiple files directly for seamless playback
+                try:
+                    print(f"🔊 Starting mpv with {len(chunks)} chunks")
+                    self.process = subprocess.Popen(
+                        cmd + chunks,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                except Exception as e:
+                    print(f"⚠️  mpv playback error: {e}")
         
         elif 'ffplay' in player:
             # Similar approach for ffplay
@@ -137,16 +205,53 @@ class StreamingAudioPlayer:
     
     def _find_streaming_player(self) -> Optional[str]:
         """Find a suitable streaming audio player."""
-        for player in ['mpv', 'ffplay', 'mplayer']:
+        players = ['vlc', 'mpv', 'ffplay', 'mplayer']
+        
+        for player in players:
             try:
-                result = subprocess.run(['which', player], 
-                                      capture_output=True, 
-                                      timeout=1)
-                if result.returncode == 0:
-                    return player
+                if sys.platform.startswith('win'):
+                    # Windows: check both PATH and common install locations
+                    common_paths = [
+                        f"C:\\Program Files\\VideoLAN\\VLC\\{player}.exe",
+                        f"C:\\Program Files (x86)\\VideoLAN\\VLC\\{player}.exe"
+                    ]
+                    
+                    # Check PATH first
+                    result = subprocess.run(['where', player], 
+                                          capture_output=True, 
+                                          timeout=1)
+                    if result.returncode == 0:
+                        return player
+                    
+                    # Check common install paths
+                    for path in common_paths:
+                        if os.path.exists(path):
+                            return path
+                else:
+                    # Unix: use which
+                    result = subprocess.run(['which', player], 
+                                          capture_output=True, 
+                                          timeout=1)
+                    if result.returncode == 0:
+                        return player
             except Exception:
                 continue
         return None
+    
+    def _create_vlc_playlist(self, chunks: List[str]) -> Optional[str]:
+        """Create M3U playlist file for VLC seamless playback."""
+        playlist_path = '.streaming_playlist.m3u'
+        try:
+            with open(playlist_path, 'w', encoding='utf-8') as f:
+                f.write('#EXTM3U\n')
+                for i, chunk in enumerate(chunks):
+                    if os.path.exists(chunk):
+                        f.write(f'#EXTINF:-1,Chunk {i+1}\n')
+                        f.write(f'{os.path.abspath(chunk)}\n')
+            return playlist_path
+        except Exception as e:
+            print(f'⚠️  Could not create playlist: {e}')
+            return None
     
     def _get_default_player(self) -> str:
         """Get default player command."""

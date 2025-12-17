@@ -197,20 +197,37 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
         if streaming_player:
             streaming_player.finish_generation()
         
-        # For streaming: append remaining chunks to first chunk (which is output_path)
+        # For streaming: ensure final complete audio is in output_path
         if streaming_player:
             if len(parts) > 1:
                 remaining_parts = [p for p in parts[1:] if os.path.exists(p)]
                 if remaining_parts:
-                    # Merge remaining parts into the first chunk (output_path)
-                    all_parts = [output_path] + remaining_parts
-                    temp_merged = output_path.replace('.mp3', '_temp.mp3')
-                    fast_merge_audio_files(all_parts, temp_merged)
-                    # Replace original with merged version
-                    if os.path.exists(temp_merged):
+                    # Wait for media player to release the file
+                    time.sleep(0.3)
+                    
+                    # Create backup of first chunk
+                    backup_path = output_path + ".backup"
+                    try:
                         import shutil
-                        shutil.move(temp_merged, output_path)
-            # For single chunk streaming, no merge needed - file is already the output
+                        shutil.copy2(output_path, backup_path)
+                        
+                        # Merge all parts directly to output_path
+                        all_parts = [backup_path] + remaining_parts
+                        fast_merge_audio_files(all_parts, output_path)
+                        
+                        # Clean up backup
+                        if os.path.exists(backup_path):
+                            os.remove(backup_path)
+                            
+                    except Exception as e:
+                        print(f"⚠️  Merge warning: {e}")
+                        # Restore backup if merge failed
+                        if os.path.exists(backup_path):
+                            try:
+                                shutil.move(backup_path, output_path)
+                            except Exception:
+                                pass
+            # For single chunk streaming, file is already complete in output_path
         else:
             # Normal merge for non-streaming
             fast_merge_audio_files(parts, output_path)

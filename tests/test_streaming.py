@@ -492,5 +492,319 @@ class TestStreamingPerformance:
             os.chdir(original_dir)
 
 
+class TestStreamingFileHandling:
+    """Test file handling and cleanup for streaming functionality."""
+    
+    def test_locked_file_handling(self, temp_dir):
+        """Test handling of locked files during cleanup."""
+        from TTS_ka.ultra_fast import ultra_fast_cleanup_parts
+        
+        # Create test files
+        part_files = []
+        for i in range(3):
+            part_file = os.path.join(temp_dir, f"part_{i}.mp3")
+            with open(part_file, "wb") as f:
+                f.write(b"dummy data")
+            part_files.append(part_file)
+        
+        # Mock one file as locked
+        original_remove = os.remove
+        def mock_remove(path):
+            if "part_1" in path:
+                raise PermissionError("File locked by media player")
+            else:
+                original_remove(path)
+        
+        with patch('os.remove', side_effect=mock_remove):
+            # Should not crash on locked file
+            ultra_fast_cleanup_parts(part_files, keep_parts=False)
+        
+        # Non-locked files should be removed, locked file should remain
+        assert not os.path.exists(part_files[0])  # part_0 - removed
+        assert os.path.exists(part_files[1])      # part_1 - locked, remains
+        assert not os.path.exists(part_files[2])  # part_2 - removed
+    
+    def test_alternative_filename_generation(self):
+        """Test alternative filename generation for locked files."""
+        # This simulates the logic in ultra_fast_parallel_generation
+        import time
+        
+        base_name = ".part_3.mp3"
+        timestamp = int(time.time() * 1000)
+        alternative_name = f".part_3_{timestamp}.mp3"
+        
+        # Alternative name should be unique and valid
+        assert alternative_name != base_name
+        assert alternative_name.startswith(".part_3_")
+        assert alternative_name.endswith(".mp3")
+        assert str(timestamp) in alternative_name
+
+
+class TestStreamingIntegrationWithMainSystem:
+    """Test streaming integration with main TTS system."""
+    
+    @pytest.mark.asyncio
+    async def test_streaming_enabled_in_smart_generate(self, temp_dir):
+        """Test that enable_streaming=True forces chunked generation."""
+        from TTS_ka.ultra_fast import smart_generate_long_text
+        
+        output_path = os.path.join(temp_dir, "streaming_test.mp3")
+        
+        # Short text that would normally use direct generation
+        short_text = "This is short text."
+        
+        with patch('TTS_ka.ultra_fast.fast_generate_audio') as mock_direct:
+            with patch('TTS_ka.ultra_fast.ultra_fast_parallel_generation') as mock_parallel:
+                # Mock parallel generation to create output file
+                async def mock_parallel_gen(*args, **kwargs):
+                    output = kwargs.get('output_path', args[4] if len(args) > 4 else 'data.mp3')
+                    with open(output, 'wb') as f:
+                        f.write(b'streaming audio')
+                    return [output]
+                
+                mock_parallel.side_effect = mock_parallel_gen
+                
+                await smart_generate_long_text(
+                    text=short_text,
+                    language="en",
+                    chunk_seconds=15,
+                    parallel=1,
+                    output_path=output_path,
+                    enable_streaming=True
+                )
+                
+                # Should use parallel generation, not direct
+                mock_direct.assert_not_called()
+                mock_parallel.assert_called_once()
+                
+                # Should have created output file
+                assert os.path.exists(output_path)
+    
+    @pytest.mark.asyncio
+    async def test_single_chunk_streaming_no_merge(self, temp_dir):
+        """Test that single chunk streaming doesn't attempt merge."""
+        from TTS_ka.ultra_fast import smart_generate_long_text
+        
+        output_path = os.path.join(temp_dir, "single_chunk_test.mp3")
+        
+        with patch('TTS_ka.ultra_fast.ultra_fast_parallel_generation') as mock_parallel:
+            with patch('TTS_ka.fast_audio.fast_merge_audio_files') as mock_merge:
+                # Mock single chunk generation
+                async def single_chunk_gen(*args, **kwargs):
+                    output = kwargs.get('output_path', 'data.mp3')
+                    with open(output, 'wb') as f:
+                        f.write(b'single chunk audio')
+                    return [output]  # Only one part
+                
+                mock_parallel.side_effect = single_chunk_gen
+                
+                await smart_generate_long_text(
+                    text="Single chunk text",
+                    language="en", 
+                    chunk_seconds=15,
+                    parallel=1,
+                    output_path=output_path,
+                    enable_streaming=True
+                )
+                
+                # Should not attempt to merge single chunk
+                mock_merge.assert_not_called()
+    
+    @pytest.mark.asyncio
+    async def test_multi_chunk_streaming_with_merge(self, temp_dir):
+        """Test multi-chunk streaming performs merge correctly."""
+        from TTS_ka.ultra_fast import smart_generate_long_text
+        
+        output_path = os.path.join(temp_dir, "multi_chunk_test.mp3")
+        
+        with patch('TTS_ka.ultra_fast.ultra_fast_parallel_generation') as mock_parallel:
+            with patch('TTS_ka.ultra_fast.fast_merge_audio_files') as mock_merge:
+                # Mock multi-chunk generation
+                async def multi_chunk_gen(*args, **kwargs):
+                    output = kwargs.get('output_path', 'data.mp3')
+                    
+                    # Create output file (first chunk)
+                    with open(output, 'wb') as f:
+                        f.write(b'first chunk')
+                    
+                    # Create additional chunks  
+                    parts = [output]
+                    for i in range(2):
+                        part_path = f".part_{i+1}.mp3"
+                        with open(part_path, 'wb') as f:
+                            f.write(f'chunk {i+1}'.encode())
+                        parts.append(part_path)
+                    
+                    return parts
+                
+                mock_parallel.side_effect = multi_chunk_gen
+                
+                # Mock merge to create final file - this should be called
+                def mock_merge_func(parts, output):
+                    with open(output, 'wb') as f:
+                        f.write(b'merged audio from all chunks')
+                
+                mock_merge.side_effect = mock_merge_func
+                
+                await smart_generate_long_text(
+                    text="Multi chunk text " * 20,  # Long enough for multiple chunks
+                    language="en",
+                    chunk_seconds=5,  # Small chunks to force multiple
+                    parallel=2,
+                    output_path=output_path,
+                    enable_streaming=True
+                )
+                
+                # Should have attempted merge for multiple chunks
+                assert mock_merge.called
+
+
+class TestStreamingPlayerRobustness:
+    """Test streaming player robustness and error handling."""
+    
+    def test_streaming_player_with_invalid_files(self):
+        """Test streaming player handles invalid files gracefully."""
+        player = StreamingAudioPlayer()
+        
+        # Test various invalid inputs
+        invalid_inputs = [
+            "",                    # Empty string
+            None,                  # None
+            "/nonexistent/path.mp3",  # Non-existent file
+            "not_an_audio_file.txt",  # Wrong file type
+        ]
+        
+        for invalid_input in invalid_inputs:
+            # Should not crash
+            try:
+                player.add_chunk(invalid_input)
+            except Exception as e:
+                pytest.fail(f"add_chunk should handle invalid input gracefully: {e}")
+        
+        # Queue should remain empty
+        assert player.chunk_queue.empty()
+    
+    def test_streaming_player_empty_file_handling(self, temp_dir):
+        """Test streaming player handles empty audio files."""
+        player = StreamingAudioPlayer()
+        
+        # Create empty file
+        empty_file = os.path.join(temp_dir, "empty.mp3")
+        with open(empty_file, 'wb') as f:
+            pass  # Create empty file
+        
+        player.add_chunk(empty_file)
+        
+        # Empty files should not be queued (size check)
+        assert player.chunk_queue.empty()
+    
+    @patch('sys.platform', 'win32')
+    @patch('os.startfile')
+    def test_windows_playback_error_recovery(self, mock_startfile, temp_dir):
+        """Test Windows playback error recovery."""
+        # Mock os.startfile to fail
+        mock_startfile.side_effect = OSError("Cannot start file")
+        
+        player = StreamingAudioPlayer()
+        
+        # Create test chunk
+        test_file = os.path.join(temp_dir, "test.mp3")
+        with open(test_file, 'wb') as f:
+            f.write(b'test audio')
+        
+        player.add_chunk(test_file)
+        player.finish_generation()
+        
+        # Should handle error gracefully without crashing
+        try:
+            player._playback_worker()
+        except Exception as e:
+            pytest.fail(f"Player should handle OS errors gracefully: {e}")
+    
+    def test_streaming_player_thread_safety(self, temp_dir):
+        """Test streaming player thread safety."""
+        player = StreamingAudioPlayer()
+        
+        # Create multiple test files
+        test_files = []
+        for i in range(10):
+            test_file = os.path.join(temp_dir, f"thread_test_{i}.mp3")
+            with open(test_file, 'wb') as f:
+                f.write(f'audio chunk {i}'.encode())
+            test_files.append(test_file)
+        
+        # Add chunks from multiple threads
+        import threading
+        
+        def add_chunks(files):
+            for file in files:
+                player.add_chunk(file)
+                time.sleep(0.001)  # Small delay
+        
+        threads = []
+        chunk_size = len(test_files) // 3
+        for i in range(0, len(test_files), chunk_size):
+            chunk = test_files[i:i + chunk_size]
+            thread = threading.Thread(target=add_chunks, args=(chunk,))
+            threads.append(thread)
+        
+        # Start all threads
+        for thread in threads:
+            thread.start()
+        
+        # Wait for completion
+        for thread in threads:
+            thread.join()
+        
+        # Should have all chunks in queue
+        assert player.chunk_queue.qsize() == len(test_files)
+
+
+class TestStreamingPerformance:
+    """Test streaming performance characteristics."""
+    
+    def test_queue_performance_large_chunks(self, temp_dir):
+        """Test queue performance with many chunks."""
+        player = StreamingAudioPlayer()
+        
+        # Create many test chunks
+        chunk_files = []
+        for i in range(100):
+            chunk_file = os.path.join(temp_dir, f"perf_{i}.mp3")
+            with open(chunk_file, 'wb') as f:
+                f.write(f'chunk {i} data'.encode())
+            chunk_files.append(chunk_file)
+        
+        # Measure time to add all chunks
+        start_time = time.time()
+        for chunk_file in chunk_files:
+            player.add_chunk(chunk_file)
+        add_time = time.time() - start_time
+        
+        # Should be fast (under 0.5 seconds for 100 chunks)
+        assert add_time < 0.5
+        
+        # All valid chunks should be queued
+        assert player.chunk_queue.qsize() == 100
+    
+    def test_streaming_memory_usage(self, temp_dir):
+        """Test streaming doesn't accumulate excessive memory."""
+        player = StreamingAudioPlayer()
+        
+        # Add many chunks to test memory usage
+        for i in range(50):
+            chunk_file = os.path.join(temp_dir, f"mem_test_{i}.mp3")
+            with open(chunk_file, 'wb') as f:
+                f.write(b'x' * 1024)  # 1KB per chunk
+            player.add_chunk(chunk_file)
+        
+        # Queue should not grow excessively
+        # (This is more of a regression test)
+        assert player.chunk_queue.qsize() == 50
+        
+        # Finish to clean up
+        player.finish_generation()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
