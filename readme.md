@@ -589,3 +589,40 @@ ffmpeg -version
 ⭐ **Star this project** on GitHub if you find it useful!  
 🐛 **Report issues** to help improve the tool  
 🤝 **Contribute** to make it even better
+
+## 🔧 Developer Tools & Programmatic API
+
+If you want to use the library from Python code or contribute to the project, these helpers will get you started.
+
+Programmatic API (facades)
+
+```python
+from TTS_ka import generate, generate_bytes, play_audio_file, merge_audio, should_chunk_text
+
+# Generate a file synchronously
+path = generate("Hello world", language="en", output_path="out.mp3")
+print(path)
+
+# Get raw mp3 bytes
+mp3 = generate_bytes("Short phrase", language="en")
+
+# Play a file
+play_audio_file("out.mp3")
+```
+
+Developer quickstart
+
+- Create a virtualenv, install test deps, and run the test suite:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements-test.txt
+pytest -q
+```
+
+- Use the included pre-commit config to auto-run Black/isort/flake8/mypy locally.
+
+CI
+
+- There is a GitHub Actions workflow at `.github/workflows/ci.yml` that runs the test suite on push and PRs.

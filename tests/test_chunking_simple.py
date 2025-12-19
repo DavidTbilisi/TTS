@@ -1,7 +1,8 @@
 """Tests for chunking module."""
 
 import pytest
-from TTS_ka.chunking import split_text_into_chunks, should_chunk_text
+
+from TTS_ka.chunking import should_chunk_text, split_text_into_chunks
 
 
 class TestChunking:
@@ -11,7 +12,7 @@ class TestChunking:
         """Test basic text chunking functionality."""
         text = "Hello world. This is a test. Another sentence here."
         chunks = split_text_into_chunks(text, approx_seconds=30)
-        
+
         assert len(chunks) >= 1
         assert all(isinstance(chunk, str) for chunk in chunks)
 
@@ -19,7 +20,7 @@ class TestChunking:
         """Test chunking with text shorter than chunk size."""
         text = "Short text"
         chunks = split_text_into_chunks(text, approx_seconds=60)
-        
+
         assert len(chunks) == 1
         assert chunks[0] == text
 
@@ -32,7 +33,7 @@ class TestChunking:
         """Test chunking with long text."""
         text = "This is a very long text that should be chunked. " * 50
         chunks = split_text_into_chunks(text, approx_seconds=15)
-        
+
         assert len(chunks) > 1
         assert all(isinstance(chunk, str) for chunk in chunks)
 
@@ -41,7 +42,7 @@ class TestChunking:
         """Test chunking with various duration targets."""
         text = "This is a test sentence for chunking. " * 20
         chunks = split_text_into_chunks(text, approx_seconds=seconds)
-        
+
         assert len(chunks) >= 1
         assert all(isinstance(chunk, str) for chunk in chunks)
 
@@ -58,7 +59,7 @@ class TestChunking:
     def test_should_chunk_text_various_inputs(self):
         """Test should_chunk_text with various inputs."""
         text = "Test text"
-        
+
         assert should_chunk_text(text, chunk_seconds=0) == False
         assert should_chunk_text(text, chunk_seconds=1) == True
         assert should_chunk_text(text, chunk_seconds=60) == True
@@ -68,12 +69,12 @@ class TestChunking:
         """Test that chunking preserves all words."""
         text = "Word1 word2 word3 word4 word5 word6 word7 word8 word9 word10"
         chunks = split_text_into_chunks(text, approx_seconds=30)
-        
+
         # Count words in original vs reconstructed
         original_words = text.split()
         reconstructed_words = []
         for chunk in chunks:
             reconstructed_words.extend(chunk.split())
-        
+
         assert len(original_words) == len(reconstructed_words)
         assert original_words == reconstructed_words

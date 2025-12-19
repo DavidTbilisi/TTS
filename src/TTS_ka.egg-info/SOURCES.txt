@@ -1,12 +1,16 @@
 LICENSE
 README.md
 pyproject.toml
+src/audioop.py
+src/playsound.py
+src/pygame.py
 src/TTS_ka/__init__.py
 src/TTS_ka/__main__.py
 src/TTS_ka/audio.py
+src/TTS_ka/chunker.py
 src/TTS_ka/chunking.py
+src/TTS_ka/cli.py
 src/TTS_ka/fast_audio.py
-src/TTS_ka/help_system.py
 src/TTS_ka/main.py
 src/TTS_ka/not_reading.py
 src/TTS_ka/parallel.py
@@ -17,8 +21,6 @@ src/TTS_ka/ultra_fast.py
 src/TTS_ka.egg-info/PKG-INFO
 src/TTS_ka.egg-info/SOURCES.txt
 src/TTS_ka.egg-info/dependency_links.txt
-src/TTS_ka.egg-info/entry_points.txt
-src/TTS_ka.egg-info/requires.txt
 src/TTS_ka.egg-info/top_level.txt
 src/tts_ka/__init__.py
 src/tts_ka/__main__.py

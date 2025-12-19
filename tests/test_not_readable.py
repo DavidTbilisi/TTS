@@ -6,7 +6,10 @@ def test_inline_code():
 
 
 def test_code_block():
-    assert replace_not_readable("before ```print('x')``` after") == "before you can see code in text after"
+    assert (
+        replace_not_readable("before ```print('x')``` after")
+        == "before you can see code in text after"
+    )
 
 
 def test_url():
@@ -22,6 +25,6 @@ def test_combined():
     assert "you can see code in text" in out
     assert "see link in text" in out
     assert "a large number" in out
-    assert '`' not in out
-    assert 'http' not in out
-    assert '1000000' not in out
+    assert "`" not in out
+    assert "http" not in out
+    assert "1000000" not in out

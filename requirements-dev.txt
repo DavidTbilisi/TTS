@@ -1,0 +1,19 @@
+# Development dependencies
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+
+# Code quality
+black>=24.0.0
+flake8>=7.0.0
+isort>=5.13.0
+mypy>=1.8.0
+
+# Linting plugins
+flake8-docstrings>=1.7.0
+flake8-bugbear>=24.0.0
+flake8-comprehensions>=3.14.0
+
+# Testing utilities
+coverage>=7.4.0
+

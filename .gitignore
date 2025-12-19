@@ -1,15 +1,59 @@
+# Virtual environments
 /venv
-*.mp3
-sub.vtt
-test.txt
-dist/
-read_my.ahk
+/.venv
+/env
+/ENV
+
+# Python cache
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+src/TTS_ka.egg-info/
+
+# Test and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+coverage.xml
+*.cover
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+*.mp3
+*.ahk
+sub.vtt
+test.txt
 test_*.txt
 .part_*.mp3
-.pytest_cache/
 .tts_fast_cache/
-src/TTS_ka/__pycache__/
-src/TTS_ka.egg-info/
-tests/__pycache__/
+.ff_concat.txt
+
+# Mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Temporary files
+*.tmp
+*.log
+example_out.mp3
+data.mp3
+data_temp.mp3

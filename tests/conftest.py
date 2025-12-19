@@ -1,15 +1,16 @@
 """Test configuration and fixtures for TTS_ka tests."""
 
 import os
+import shutil
 import sys
 import tempfile
-import shutil
-import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 # Add src to Python path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
 @pytest.fixture
@@ -62,7 +63,7 @@ def mock_audio_response():
 @pytest.fixture
 def mock_communicate():
     """Mock edge-tts communicate."""
-    with patch('edge_tts.Communicate') as mock:
+    with patch("edge_tts.Communicate") as mock:
         mock_instance = MagicMock()
         mock.return_value = mock_instance
         yield mock_instance
@@ -71,7 +72,7 @@ def mock_communicate():
 @pytest.fixture
 def mock_httpx_client():
     """Mock httpx client for fast audio."""
-    with patch('httpx.AsyncClient') as mock:
+    with patch("httpx.AsyncClient") as mock:
         mock_client = MagicMock()
         mock.return_value.__aenter__.return_value = mock_client
         mock_client.get.return_value.status_code = 200
@@ -82,20 +83,20 @@ def mock_httpx_client():
 @pytest.fixture
 def mock_soundfile():
     """Mock soundfile for audio processing."""
-    with patch('soundfile.write') as mock:
+    with patch("soundfile.write") as mock:
         yield mock
 
 
 @pytest.fixture
 def mock_pygame():
     """Mock pygame for audio playback."""
-    with patch.dict('sys.modules', {'pygame': MagicMock()}):
+    with patch.dict("sys.modules", {"pygame": MagicMock()}):
         yield
 
 
 @pytest.fixture
 def mock_pyperclip():
     """Mock pyperclip for clipboard operations."""
-    with patch('pyperclip.paste') as mock:
+    with patch("pyperclip.paste") as mock:
         mock.return_value = "clipboard text"
         yield mock

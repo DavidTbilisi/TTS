@@ -1,2 +1,4 @@
 TTS_ka
-edge_tts
+audioop
+playsound
+pygame
