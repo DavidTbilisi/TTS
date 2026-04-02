@@ -7,6 +7,7 @@ import subprocess
 from typing import List, Optional
 from queue import Queue
 import threading
+from .constants import PLAYBACK_JOIN_TIMEOUT
 
 
 class StreamingAudioPlayer:
@@ -95,7 +96,7 @@ class StreamingAudioPlayer:
                     else:
                         full_cmd = [vlc_player, '--intf', 'dummy', '--play-and-exit', playlist]
                         print(f"🎵 VLC playlist with {len(chunks_to_play)} chunks")
-                    subprocess.Popen(
+                    self.process = subprocess.Popen(
                         full_cmd,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL
@@ -125,7 +126,7 @@ class StreamingAudioPlayer:
             if chunks:
                 try:
                     os.system(f"{self._get_default_player()} '{chunks[0]}' &")
-                except Exception:
+                except OSError:
                     pass
             return
         
@@ -169,7 +170,7 @@ class StreamingAudioPlayer:
                             else:
                                 full_cmd = [player, '--intf', 'dummy', '--play-and-exit', playlist]
                                 print(f"🎵 VLC playlist with {len(chunks)} chunks")
-                            subprocess.Popen(
+                            self.process = subprocess.Popen(
                                 full_cmd,
                                 stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL
@@ -217,9 +218,9 @@ class StreamingAudioPlayer:
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL
                         )
-                    except Exception:
-                        pass
-    
+                    except OSError as e:
+                        print(f"⚠️  Could not start ffplay: {e}")
+
     def _find_streaming_player(self) -> Optional[str]:
         """Find a suitable streaming audio player."""
         players = ['vlc', 'mpv', 'ffplay', 'mplayer']
@@ -254,7 +255,7 @@ class StreamingAudioPlayer:
                                           timeout=1)
                     if result.returncode == 0:
                         return player
-            except Exception:
+            except (OSError, subprocess.TimeoutExpired):
                 continue
         return None
     
@@ -291,7 +292,7 @@ class StreamingAudioPlayer:
     def wait_for_completion(self) -> None:
         """Wait for playback to complete."""
         if self.playback_thread:
-            self.playback_thread.join(timeout=300)  # 5 minute timeout
+            self.playback_thread.join(timeout=PLAYBACK_JOIN_TIMEOUT)
     
     def stop(self) -> None:
         """Stop playback."""
@@ -299,7 +300,8 @@ class StreamingAudioPlayer:
         if self.process:
             try:
                 self.process.terminate()
-            except Exception:
+                self.process.wait(timeout=5)
+            except OSError:
                 pass
 
 

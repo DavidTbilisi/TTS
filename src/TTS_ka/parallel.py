@@ -14,25 +14,34 @@ except ImportError:
     HAS_TQDM = False
 
 
-async def generate_chunks_parallel(chunks: List[str], language: str, 
-                                 parallel: int = 2, use_cache: bool = True) -> List[str]:
-    """Generate audio for multiple text chunks in parallel."""
+async def generate_chunks_parallel(chunks: List[str], language: str,
+                                 parallel: int = 2) -> List[str]:
+    """Generate audio for multiple text chunks in parallel.
+
+    Args:
+        chunks: List of text strings to convert to audio.
+        language: Language code ('ka', 'ru', or 'en').
+        parallel: Maximum number of concurrent workers.
+
+    Returns:
+        List of output file paths for each chunk.
+    """
     parts = []
-    
+
     # Prepare part files
     for i in range(len(chunks)):
         part_name = f".part_{i}.mp3"
         if os.path.exists(part_name):
             os.remove(part_name)
         parts.append(part_name)
-    
+
     # Create semaphore to limit concurrency
     sem = asyncio.Semaphore(max(1, parallel))
-    
+
     async def worker(i: int, text: str, output: str):
         async with sem:
             try:
-                await generate_audio(text, language, output, use_cache=use_cache, quiet=True)
+                await generate_audio(text, language, output, quiet=True)
             except Exception as e:
                 print(f"Error generating part {i}: {e}")
     
@@ -66,5 +75,5 @@ def cleanup_parts(parts: List[str], keep_parts: bool = False) -> None:
             try:
                 if os.path.exists(part):
                     os.remove(part)
-            except Exception:
+            except OSError:
                 pass

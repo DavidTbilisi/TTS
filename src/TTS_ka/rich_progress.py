@@ -60,7 +60,11 @@ class RichProgressDisplay:
             print(f"🚀 Starting TTS generation: {self.stats.total_chunks} chunks")
     
     def update(self, chunk_words: int = 0):
-        """Update progress with current chunk completion."""
+        """Update progress after a chunk completes.
+
+        Args:
+            chunk_words: Number of words in the completed chunk (for words/sec stats).
+        """
         now = time.perf_counter()
         
         # Update stats

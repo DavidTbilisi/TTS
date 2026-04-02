@@ -7,7 +7,7 @@ from .streaming_player import StreamingAudioPlayer
 from .chunking import split_text_into_chunks, should_chunk_text
 from .main import main
 
-__version__ = "1.1.0"
+__version__ = "1.4.0"
 __all__ = [
     'generate_audio',
     'play_audio',

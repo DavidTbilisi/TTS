@@ -1,14 +1,14 @@
 """Text chunking utilities for long text processing."""
 
 from typing import List
+from .constants import WPM
 
 
 def split_text_into_chunks(text: str, approx_seconds: int = 60) -> List[str]:
     """Split text into chunks of approximately the specified duration.
-    
-    Uses words-per-minute heuristics (avg 160 wpm -> ~2.66 wps).
+
+    Uses words-per-minute heuristics (WPM constant -> ~2.66 wps at 160 wpm).
     """
-    WPM = 160
     words_per_second = WPM / 60.0
     words_per_chunk = max(20, int(words_per_second * approx_seconds))
     

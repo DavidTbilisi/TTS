@@ -1,217 +1,279 @@
 """Tests for fast_audio module."""
 
 import pytest
-import asyncio
+import os
 from unittest.mock import MagicMock, patch, AsyncMock
-from TTS_ka.fast_audio import generate_audio_ultra_fast, get_voice_for_language, validate_language
+from TTS_ka.fast_audio import (
+    fast_generate_audio,
+    fallback_generate_audio,
+    fast_merge_audio_files,
+    play_audio,
+    get_http_client,
+    cleanup_http,
+)
+from TTS_ka.constants import VOICE_MAP
 
 
-class TestFastAudio:
-    """Test cases for fast audio generation."""
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-    def test_get_voice_for_language_ka(self):
-        """Test voice selection for Georgian."""
-        voice = get_voice_for_language("ka")
-        assert voice in ["ka-GE-EkaNeural", "ka-GE-GiorgiNeural"]
+def _make_stream_cm(status_code=200, data=b"audio"):
+    """Return a mock async context manager that simulates client.stream()."""
 
-    def test_get_voice_for_language_ru(self):
-        """Test voice selection for Russian."""
-        voice = get_voice_for_language("ru")
-        assert voice in ["ru-RU-SvetlanaNeural", "ru-RU-DmitryNeural"]
+    async def _aiter_bytes(chunk_size=8192):
+        yield data
 
-    def test_get_voice_for_language_en(self):
-        """Test voice selection for English."""
-        voice = get_voice_for_language("en")
-        assert voice in ["en-US-AriaNeural", "en-US-DavisNeural"]
+    mock_resp = MagicMock()
+    mock_resp.status_code = status_code
+    mock_resp.aiter_bytes = _aiter_bytes
 
-    def test_get_voice_for_language_invalid(self):
-        """Test voice selection for invalid language."""
-        voice = get_voice_for_language("invalid")
-        assert voice == "en-US-AriaNeural"  # Default fallback
+    class _CM:
+        async def __aenter__(self):
+            return mock_resp
+        async def __aexit__(self, *a):
+            pass
 
-    def test_validate_language_valid(self):
-        """Test language validation for valid languages."""
-        assert validate_language("ka") == True
-        assert validate_language("ru") == True
-        assert validate_language("en") == True
+    return _CM()
 
-    def test_validate_language_invalid(self):
-        """Test language validation for invalid languages."""
-        assert validate_language("fr") == False
-        assert validate_language("de") == False
-        assert validate_language("invalid") == False
-        assert validate_language("") == False
-        assert validate_language(None) == False
 
-    @pytest.mark.asyncio
-    async def test_generate_audio_ultra_fast_success(self, mock_httpx_client, temp_dir):
-        """Test successful audio generation via API."""
-        output_path = f"{temp_dir}/test.mp3"
-        
-        # Mock successful API response
-        mock_httpx_client.get.return_value.status_code = 200
-        mock_httpx_client.get.return_value.content = b"fake_audio_data"
-        
-        with patch('TTS_ka.fast_audio.httpx.AsyncClient') as mock_client:
-            mock_client.return_value.__aenter__.return_value = mock_httpx_client
-            
-            with patch('builtins.open', create=True) as mock_open:
-                mock_file = MagicMock()
-                mock_open.return_value.__enter__.return_value = mock_file
-                
-                result = await generate_audio_ultra_fast(
-                    "Hello world", 
-                    output_path, 
-                    "en"
-                )
-        
-        assert result == True
-        mock_file.write.assert_called_once_with(b"fake_audio_data")
+# ---------------------------------------------------------------------------
+# VOICE_MAP / constants
+# ---------------------------------------------------------------------------
 
-    @pytest.mark.asyncio
-    async def test_generate_audio_ultra_fast_api_failure(self, mock_httpx_client, temp_dir, mock_communicate):
-        """Test audio generation with API failure, falling back to edge-tts."""
-        output_path = f"{temp_dir}/test.mp3"
-        
-        # Mock API failure
-        mock_httpx_client.get.return_value.status_code = 500
-        
-        # Mock edge-tts success
-        mock_communicate.stream.return_value = AsyncMock()
-        mock_communicate.stream.return_value.__aiter__.return_value = [
-            {"type": "audio", "data": b"fake_audio_chunk"}
-        ]
-        
-        with patch('TTS_ka.fast_audio.httpx.AsyncClient') as mock_client:
-            mock_client.return_value.__aenter__.return_value = mock_httpx_client
-            
-            with patch('TTS_ka.fast_audio.edge_tts.Communicate', return_value=mock_communicate):
-                with patch('builtins.open', create=True) as mock_open:
-                    mock_file = MagicMock()
-                    mock_open.return_value.__enter__.return_value = mock_file
-                    
-                    result = await generate_audio_ultra_fast(
-                        "Hello world", 
-                        output_path, 
-                        "en"
-                    )
-        
-        assert result == True
+class TestVoiceMap:
+    def test_voice_map_has_ka(self):
+        assert "ka" in VOICE_MAP
+        assert "EkaNeural" in VOICE_MAP["ka"]
 
-    @pytest.mark.asyncio
-    async def test_generate_audio_ultra_fast_exception(self, temp_dir):
-        """Test audio generation with exceptions."""
-        output_path = f"{temp_dir}/test.mp3"
-        
-        with patch('TTS_ka.fast_audio.httpx.AsyncClient') as mock_client:
-            # Simulate exception in API call
-            mock_client.side_effect = Exception("Network error")
-            
-            result = await generate_audio_ultra_fast(
-                "Hello world", 
-                output_path, 
-                "en"
-            )
-        
-        assert result == False
+    def test_voice_map_has_ru(self):
+        assert "ru" in VOICE_MAP
+        assert "SvetlanaNeural" in VOICE_MAP["ru"]
 
-    @pytest.mark.asyncio
-    async def test_generate_audio_ultra_fast_empty_text(self, temp_dir):
-        """Test audio generation with empty text."""
-        output_path = f"{temp_dir}/test.mp3"
-        
-        result = await generate_audio_ultra_fast("", output_path, "en")
-        assert result == False
+    def test_voice_map_has_en(self):
+        assert "en" in VOICE_MAP
+        assert "SoniaNeural" in VOICE_MAP["en"]
 
-    @pytest.mark.asyncio
-    async def test_generate_audio_ultra_fast_georgian(self, mock_httpx_client, temp_dir):
-        """Test audio generation with Georgian text."""
-        output_path = f"{temp_dir}/test.mp3"
-        
-        mock_httpx_client.get.return_value.status_code = 200
-        mock_httpx_client.get.return_value.content = b"fake_audio_data"
-        
-        with patch('TTS_ka.fast_audio.httpx.AsyncClient') as mock_client:
-            mock_client.return_value.__aenter__.return_value = mock_httpx_client
-            
-            with patch('builtins.open', create=True) as mock_open:
-                mock_file = MagicMock()
-                mock_open.return_value.__enter__.return_value = mock_file
-                
-                result = await generate_audio_ultra_fast(
-                    "გამარჯობა", 
-                    output_path, 
-                    "ka"
-                )
-        
-        assert result == True
+    def test_voice_map_invalid_language_returns_none(self):
+        assert VOICE_MAP.get("fr") is None
 
-    @pytest.mark.asyncio
-    async def test_generate_audio_ultra_fast_russian(self, mock_httpx_client, temp_dir):
-        """Test audio generation with Russian text."""
-        output_path = f"{temp_dir}/test.mp3"
-        
-        mock_httpx_client.get.return_value.status_code = 200
-        mock_httpx_client.get.return_value.content = b"fake_audio_data"
-        
-        with patch('TTS_ka.fast_audio.httpx.AsyncClient') as mock_client:
-            mock_client.return_value.__aenter__.return_value = mock_httpx_client
-            
-            with patch('builtins.open', create=True) as mock_open:
-                mock_file = MagicMock()
-                mock_open.return_value.__enter__.return_value = mock_file
-                
-                result = await generate_audio_ultra_fast(
-                    "Привет", 
-                    output_path, 
-                    "ru"
-                )
-        
-        assert result == True
 
-    @pytest.mark.parametrize("language", ["ka", "ru", "en"])
-    @pytest.mark.asyncio
-    async def test_generate_audio_all_languages(self, language, mock_httpx_client, temp_dir):
-        """Test audio generation for all supported languages."""
-        output_path = f"{temp_dir}/test_{language}.mp3"
-        
-        mock_httpx_client.get.return_value.status_code = 200
-        mock_httpx_client.get.return_value.content = b"fake_audio_data"
-        
-        with patch('TTS_ka.fast_audio.httpx.AsyncClient') as mock_client:
-            mock_client.return_value.__aenter__.return_value = mock_httpx_client
-            
-            with patch('builtins.open', create=True) as mock_open:
-                mock_file = MagicMock()
-                mock_open.return_value.__enter__.return_value = mock_file
-                
-                result = await generate_audio_ultra_fast(
-                    "Test text", 
-                    output_path, 
-                    language
-                )
-        
-        assert result == True
+# ---------------------------------------------------------------------------
+# fast_generate_audio
+# ---------------------------------------------------------------------------
 
-    @pytest.mark.asyncio
-    async def test_generate_audio_ultra_fast_invalid_language(self, temp_dir):
-        """Test audio generation with invalid language."""
-        output_path = f"{temp_dir}/test.mp3"
-        
-        result = await generate_audio_ultra_fast(
-            "Hello world", 
-            output_path, 
-            "invalid"
-        )
-        
-        assert result == False
+class TestFastGenerateAudio:
+    async def test_success_writes_file(self, temp_dir):
+        out = os.path.join(temp_dir, "out.mp3")
+        mock_client = MagicMock()
+        mock_client.stream.return_value = _make_stream_cm(200, b"audiodata")
+        with patch('TTS_ka.fast_audio.get_http_client', new=AsyncMock(return_value=mock_client)):
+            result = await fast_generate_audio("Hello world", "en", out, quiet=True)
+        assert result is True
+        assert os.path.exists(out)
+        with open(out, "rb") as f:
+            assert f.read() == b"audiodata"
 
-    def test_voice_mapping_completeness(self):
-        """Test that all supported languages have voice mappings."""
-        supported_languages = ["ka", "ru", "en"]
-        
-        for lang in supported_languages:
-            voice = get_voice_for_language(lang)
-            assert voice is not None
-            assert isinstance(voice, str)
-            assert len(voice) > 0
+    async def test_non_200_falls_back_to_edge_tts(self, temp_dir):
+        out = os.path.join(temp_dir, "out.mp3")
+        mock_client = MagicMock()
+        mock_client.stream.return_value = _make_stream_cm(503, b"")
+        with patch('TTS_ka.fast_audio.get_http_client', new=AsyncMock(return_value=mock_client)), \
+             patch('TTS_ka.fast_audio.fallback_generate_audio', new=AsyncMock(return_value=True)) as mock_fb:
+            result = await fast_generate_audio("Hello", "en", out, quiet=True)
+        assert result is True
+        mock_fb.assert_called_once()
+
+    async def test_http_error_falls_back(self, temp_dir):
+        import httpx
+        out = os.path.join(temp_dir, "out.mp3")
+        mock_client = MagicMock()
+        mock_client.stream.side_effect = httpx.HTTPError("timeout")
+        with patch('TTS_ka.fast_audio.get_http_client', new=AsyncMock(return_value=mock_client)), \
+             patch('TTS_ka.fast_audio.fallback_generate_audio', new=AsyncMock(return_value=True)) as mock_fb:
+            result = await fast_generate_audio("Hello", "en", out, quiet=True)
+        assert result is True
+        mock_fb.assert_called_once()
+
+    async def test_invalid_language_returns_false(self, temp_dir):
+        out = os.path.join(temp_dir, "out.mp3")
+        result = await fast_generate_audio("Hello", "invalid_lang", out, quiet=True)
+        assert result is False
+
+    async def test_invalid_language_prints_error(self, temp_dir, capsys):
+        out = os.path.join(temp_dir, "out.mp3")
+        await fast_generate_audio("Hello", "xx", out, quiet=False)
+        assert "not supported" in capsys.readouterr().out
+
+    async def test_quiet_no_print(self, temp_dir, capsys):
+        out = os.path.join(temp_dir, "out.mp3")
+        mock_client = MagicMock()
+        mock_client.stream.return_value = _make_stream_cm(200, b"data")
+        with patch('TTS_ka.fast_audio.get_http_client', new=AsyncMock(return_value=mock_client)):
+            await fast_generate_audio("Hello", "en", out, quiet=True)
+        assert capsys.readouterr().out == ""
+
+    @pytest.mark.parametrize("lang", ["ka", "ru", "en"])
+    async def test_all_supported_languages(self, lang, temp_dir):
+        out = os.path.join(temp_dir, f"out_{lang}.mp3")
+        mock_client = MagicMock()
+        mock_client.stream.return_value = _make_stream_cm(200, b"audio")
+        with patch('TTS_ka.fast_audio.get_http_client', new=AsyncMock(return_value=mock_client)):
+            result = await fast_generate_audio("Test", lang, out, quiet=True)
+        assert result is True
+
+
+# ---------------------------------------------------------------------------
+# fallback_generate_audio
+# ---------------------------------------------------------------------------
+
+class TestFallbackGenerateAudio:
+    async def test_success(self, temp_dir):
+        out = os.path.join(temp_dir, "out.mp3")
+        with patch('edge_tts.Communicate') as mock_comm:
+            mock_inst = AsyncMock()
+            mock_comm.return_value = mock_inst
+            result = await fallback_generate_audio("Hello world", "en", out, quiet=True)
+        assert result is True
+        mock_inst.save.assert_called_once_with(out)
+
+    async def test_prints_path_when_not_quiet(self, temp_dir, capsys):
+        out = os.path.join(temp_dir, "out.mp3")
+        with patch('edge_tts.Communicate') as mock_comm:
+            mock_comm.return_value = AsyncMock()
+            await fallback_generate_audio("Hello", "en", out, quiet=False)
+        assert out in capsys.readouterr().out
+
+    async def test_failure_returns_false(self, temp_dir):
+        out = os.path.join(temp_dir, "out.mp3")
+        with patch('edge_tts.Communicate', side_effect=Exception("fail")):
+            result = await fallback_generate_audio("Hello", "en", out, quiet=True)
+        assert result is False
+
+    async def test_invalid_language_returns_false(self, temp_dir):
+        out = os.path.join(temp_dir, "out.mp3")
+        result = await fallback_generate_audio("Hello", "zz", out, quiet=True)
+        assert result is False
+
+    @pytest.mark.parametrize("lang", ["ka", "ru", "en"])
+    async def test_all_languages(self, lang, temp_dir):
+        out = os.path.join(temp_dir, f"out_{lang}.mp3")
+        with patch('edge_tts.Communicate') as mock_comm:
+            mock_comm.return_value = AsyncMock()
+            result = await fallback_generate_audio("Test", lang, out, quiet=True)
+        assert result is True
+
+
+# ---------------------------------------------------------------------------
+# fast_merge_audio_files
+# ---------------------------------------------------------------------------
+
+class TestFastMergeAudioFiles:
+    def test_empty_parts_raises(self, temp_dir):
+        with pytest.raises(ValueError):
+            fast_merge_audio_files([], os.path.join(temp_dir, "out.mp3"))
+
+    def test_merge_with_pydub(self, temp_dir):
+        part = os.path.join(temp_dir, "p.mp3")
+        out = os.path.join(temp_dir, "out.mp3")
+        with open(part, "wb") as f:
+            f.write(b"fake")
+        mock_seg = MagicMock()
+        mock_seg.__add__ = MagicMock(return_value=mock_seg)
+        with patch('TTS_ka.fast_audio.HAS_SOUNDFILE', False), \
+             patch('pydub.AudioSegment') as mock_audio:
+            mock_audio.from_mp3.return_value = mock_seg
+            fast_merge_audio_files([part], out)
+        mock_seg.export.assert_called_once()
+
+    def test_merge_ffmpeg_fallback(self, temp_dir):
+        part = os.path.join(temp_dir, "p.mp3")
+        out = os.path.join(temp_dir, "out.mp3")
+        with open(part, "wb") as f:
+            f.write(b"fake")
+        with patch('TTS_ka.fast_audio.HAS_SOUNDFILE', False), \
+             patch('pydub.AudioSegment', side_effect=ImportError), \
+             patch('os.system', return_value=0) as mock_sys, \
+             patch('os.remove'):
+            fast_merge_audio_files([part], out)
+        mock_sys.assert_called_once()
+
+    def test_removes_existing_output(self, temp_dir):
+        part = os.path.join(temp_dir, "p.mp3")
+        out = os.path.join(temp_dir, "out.mp3")
+        with open(part, "wb") as f:
+            f.write(b"fake")
+        with open(out, "wb") as f:
+            f.write(b"old")
+        mock_seg = MagicMock()
+        mock_seg.__add__ = MagicMock(return_value=mock_seg)
+        with patch('TTS_ka.fast_audio.HAS_SOUNDFILE', False), \
+             patch('pydub.AudioSegment') as mock_audio:
+            mock_audio.from_mp3.return_value = mock_seg
+            fast_merge_audio_files([part], out)
+        # If we got here without error, old file was handled
+        mock_seg.export.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# HTTP client lifecycle
+# ---------------------------------------------------------------------------
+
+class TestHttpClient:
+    async def test_get_http_client_creates_client(self):
+        import TTS_ka.fast_audio as fa
+        fa._http_client = None
+        client = await get_http_client()
+        assert client is not None
+        # cleanup
+        await cleanup_http()
+        assert fa._http_client is None
+
+    async def test_get_http_client_reuses_instance(self):
+        import TTS_ka.fast_audio as fa
+        fa._http_client = None
+        c1 = await get_http_client()
+        c2 = await get_http_client()
+        assert c1 is c2
+        await cleanup_http()
+
+    async def test_cleanup_http_idempotent(self):
+        import TTS_ka.fast_audio as fa
+        fa._http_client = None
+        await cleanup_http()  # must not raise when already None
+
+
+# ---------------------------------------------------------------------------
+# play_audio
+# ---------------------------------------------------------------------------
+
+class TestFastPlayAudio:
+    def test_windows(self, temp_dir):
+        f = os.path.join(temp_dir, "t.mp3")
+        with open(f, "wb") as fp:
+            fp.write(b"x")
+        with patch('sys.platform', 'win32'), patch('os.startfile') as m:
+            play_audio(f)
+        m.assert_called_once()
+
+    def test_mac(self, temp_dir):
+        f = os.path.join(temp_dir, "t.mp3")
+        with open(f, "wb") as fp:
+            fp.write(b"x")
+        with patch('sys.platform', 'darwin'), patch('os.system') as m:
+            play_audio(f)
+        assert "open" in m.call_args[0][0]
+
+    def test_linux(self, temp_dir):
+        f = os.path.join(temp_dir, "t.mp3")
+        with open(f, "wb") as fp:
+            fp.write(b"x")
+        with patch('sys.platform', 'linux'), patch('os.system', return_value=0):
+            play_audio(f)  # must not raise
+
+    def test_oserror_silenced(self, temp_dir):
+        f = os.path.join(temp_dir, "t.mp3")
+        with open(f, "wb") as fp:
+            fp.write(b"x")
+        with patch('sys.platform', 'win32'), patch('os.startfile', side_effect=OSError):
+            play_audio(f)  # must not raise

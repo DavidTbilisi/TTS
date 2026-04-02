@@ -17,14 +17,7 @@ try:
 except ImportError:
     HAS_SOUNDFILE = False
 
-# Cache functionality removed
-
-# Optimized voice selection for maximum speed - ka/ru/en only
-VOICE_MAP = {
-    'ka': 'ka-GE-EkaNeural',    # Georgian - Premium quality
-    'ru': 'ru-RU-SvetlanaNeural',  # Russian - Fast neural voice
-    'en': 'en-GB-SoniaNeural'      # English - Fastest neural voice
-}
+from .constants import VOICE_MAP, HTTP_TIMEOUT_TOTAL, HTTP_TIMEOUT_CONNECT, HTTP_MAX_KEEPALIVE, HTTP_MAX_CONNECTIONS
 
 # Global HTTP client for connection reuse
 _http_client: Optional[httpx.AsyncClient] = None
@@ -33,8 +26,8 @@ async def get_http_client() -> httpx.AsyncClient:
     """Get or create optimized HTTP client with connection pooling."""
     global _http_client
     if _http_client is None:
-        limits = httpx.Limits(max_keepalive_connections=20, max_connections=100)
-        timeout = httpx.Timeout(30.0, connect=10.0)
+        limits = httpx.Limits(max_keepalive_connections=HTTP_MAX_KEEPALIVE, max_connections=HTTP_MAX_CONNECTIONS)
+        timeout = httpx.Timeout(HTTP_TIMEOUT_TOTAL, connect=HTTP_TIMEOUT_CONNECT)
         _http_client = httpx.AsyncClient(
             limits=limits, 
             timeout=timeout,
@@ -94,8 +87,10 @@ async def fast_generate_audio(text: str, language: str, output_path: str,
                 # Fallback to edge-tts if direct API fails
                 return await fallback_generate_audio(text, language, output_path, quiet)
                 
-    except Exception:
-        # Fallback to edge-tts 
+    except (httpx.HTTPError, httpx.TimeoutException, OSError) as e:
+        # Fallback to edge-tts on HTTP or I/O errors
+        if not quiet:
+            print(f"Warning: fast HTTP failed ({type(e).__name__}), falling back to edge-tts")
         return await fallback_generate_audio(text, language, output_path, quiet)
 
 
@@ -146,16 +141,15 @@ def fast_merge_audio_files(parts: list[str], output_path: str) -> None:
                     if sample_rate is None:
                         sample_rate = sr
                     combined_data.append(data)
-                except Exception:
-                    # Fallback for this part
+                except (OSError, RuntimeError, ValueError):
                     continue
             
             if combined_data and sample_rate:
                 final_audio = np.concatenate(combined_data, axis=0)
                 sf.write(output_path, final_audio, sample_rate)
                 return
-        except Exception:
-            pass  # Fall through to other methods
+        except Exception:  # broad fallback intentional — soundfile/numpy errors vary
+            pass  # Fall through to pydub/ffmpeg
     
     # Fallback to existing methods
     try:
@@ -189,7 +183,7 @@ def fast_merge_audio_files(parts: list[str], output_path: str) -> None:
         finally:
             try:
                 os.remove(listfile)
-            except Exception:
+            except OSError:
                 pass
 
 
@@ -207,8 +201,8 @@ def play_audio(file_path: str) -> None:
             for cmd in [f"mpv '{abs_path}' &", f"vlc '{abs_path}' &", f"xdg-open '{abs_path}' &"]:
                 if os.system(cmd) == 0:
                     break
-    except Exception:
-        pass
+    except OSError:
+        pass  # Best-effort playback
 
 
 async def cleanup_http():

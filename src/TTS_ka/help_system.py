@@ -218,7 +218,6 @@ def show_comprehensive_help():
     
     print("📚 ADDITIONAL RESOURCES:")
     print("═" * 50)
-    print("  • GitHub: https://github.com/YourRepo/TTS_ka")
     print("  • Documentation: Run with --help for quick reference")
     print("  • AutoHotkey Integration: See read.ahk examples")
     print("  • Performance Benchmarks: Use --turbo for optimal settings")

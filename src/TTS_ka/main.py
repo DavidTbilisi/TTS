@@ -10,6 +10,7 @@ from .fast_audio import fast_generate_audio, play_audio, cleanup_http
 from .ultra_fast import smart_generate_long_text, get_optimal_settings, OPTIMAL_WORKERS
 from .chunking import should_chunk_text
 from .simple_help import show_simple_help, show_troubleshooting
+from .constants import STREAMING_CHUNK_SECONDS
 
 
 
@@ -76,7 +77,7 @@ For comprehensive help with examples: %(prog)s --help-full
     # Get input text
     if not args.text:
         show_simple_help()
-        print("ERROR: No text provided")
+        print("Error: No text provided")
         print("Try: python -m TTS_ka 'your text' --lang en")
         return
     
@@ -95,9 +96,9 @@ For comprehensive help with examples: %(prog)s --help-full
         
         # Override optimization for streaming - ensure chunking is enabled
         if args.stream and args.chunk_seconds == 0:
-            args.chunk_seconds = 15  # Force chunking for streaming
+            args.chunk_seconds = STREAMING_CHUNK_SECONDS  # Force chunking for streaming
             optimal['method'] = 'smart'  # Override method too
-            print(f"🔊 Streaming enabled - forcing chunked generation (15s chunks)")
+            print(f"🔊 Streaming enabled - forcing chunked generation ({STREAMING_CHUNK_SECONDS}s chunks)")
         
         # Language-specific optimization messages
         lang_names = {'ka': 'Georgian', 'ru': 'Russian', 'en': 'English'}
@@ -134,8 +135,11 @@ For comprehensive help with examples: %(prog)s --help-full
                 play_audio(output_path)
                 
         finally:
-            # Cleanup HTTP resources
-            await cleanup_http()
+            # Cleanup HTTP resources — guard against errors in cleanup itself
+            try:
+                await cleanup_http()
+            except Exception:
+                pass
     
     # Run with optimized event loop
     try:

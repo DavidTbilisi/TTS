@@ -4,6 +4,7 @@ import os
 import sys
 from edge_tts import Communicate
 from .not_reading import replace_not_readable
+from .constants import VOICE_MAP
 
 # Optional imports
 try:
@@ -11,14 +12,6 @@ try:
     HAS_PYDUB = True
 except ImportError:
     HAS_PYDUB = False
-
-
-VOICE_MAP = {
-    'ka': 'ka-GE-EkaNeural',
-    'en': 'en-GB-SoniaNeural',
-    'ru': 'ru-RU-SvetlanaNeural',
-    'en-US': 'en-US-SteffanNeural'
-}
 
 
 async def generate_audio(text: str, language: str, output_path: str, 
@@ -71,7 +64,7 @@ def merge_audio_files(parts: list[str], output_path: str) -> None:
         finally:
             try:
                 os.remove(listfile)
-            except Exception:
+            except OSError:
                 pass
 
 
@@ -86,5 +79,5 @@ def play_audio(file_path: str) -> None:
         else:
             if os.system(f"xdg-open '{abs_path}' &") != 0:
                 os.system(f"mpg123 '{abs_path}' &")
-    except Exception:
+    except OSError:
         pass  # Best-effort playback
