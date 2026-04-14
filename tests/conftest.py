@@ -61,10 +61,11 @@ def mock_audio_response():
 
 @pytest.fixture
 def mock_communicate():
-    """Mock edge-tts communicate."""
-    with patch('edge_tts.Communicate') as mock:
-        mock_instance = MagicMock()
-        mock.return_value = mock_instance
+    """Mock edge-tts communicate (injected via sys.modules to avoid null-byte SyntaxError)."""
+    mock_instance = MagicMock()
+    mock_edge = MagicMock()
+    mock_edge.Communicate = MagicMock(return_value=mock_instance)
+    with patch.dict('sys.modules', {'edge_tts': mock_edge}):
         yield mock_instance
 
 
@@ -94,8 +95,8 @@ def mock_pygame():
 
 
 @pytest.fixture
-def mock_pyperclip():
-    """Mock pyperclip for clipboard operations."""
-    with patch('pyperclip.paste') as mock:
+def mock_clipboard():
+    """Mock the stdlib clipboard reader for clipboard operations."""
+    with patch('TTS_ka.main._read_clipboard') as mock:
         mock.return_value = "clipboard text"
         yield mock

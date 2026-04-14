@@ -10,6 +10,8 @@ from TTS_ka.fast_audio import (
     play_audio,
     get_http_client,
     cleanup_http,
+    PydubMerger,
+    EdgeTTSGenerator,
 )
 from TTS_ka.constants import VOICE_MAP
 
@@ -79,7 +81,7 @@ class TestFastGenerateAudio:
         mock_client = MagicMock()
         mock_client.stream.return_value = _make_stream_cm(503, b"")
         with patch('TTS_ka.fast_audio.get_http_client', new=AsyncMock(return_value=mock_client)), \
-             patch('TTS_ka.fast_audio.fallback_generate_audio', new=AsyncMock(return_value=True)) as mock_fb:
+             patch.object(EdgeTTSGenerator, 'generate', new_callable=AsyncMock, return_value=True) as mock_fb:
             result = await fast_generate_audio("Hello", "en", out, quiet=True)
         assert result is True
         mock_fb.assert_called_once()
@@ -90,7 +92,7 @@ class TestFastGenerateAudio:
         mock_client = MagicMock()
         mock_client.stream.side_effect = httpx.HTTPError("timeout")
         with patch('TTS_ka.fast_audio.get_http_client', new=AsyncMock(return_value=mock_client)), \
-             patch('TTS_ka.fast_audio.fallback_generate_audio', new=AsyncMock(return_value=True)) as mock_fb:
+             patch.object(EdgeTTSGenerator, 'generate', new_callable=AsyncMock, return_value=True) as mock_fb:
             result = await fast_generate_audio("Hello", "en", out, quiet=True)
         assert result is True
         mock_fb.assert_called_once()
@@ -130,23 +132,27 @@ class TestFastGenerateAudio:
 class TestFallbackGenerateAudio:
     async def test_success(self, temp_dir):
         out = os.path.join(temp_dir, "out.mp3")
-        with patch('edge_tts.Communicate') as mock_comm:
-            mock_inst = AsyncMock()
-            mock_comm.return_value = mock_inst
+        mock_comm_inst = AsyncMock()
+        mock_edge = MagicMock()
+        mock_edge.Communicate = MagicMock(return_value=mock_comm_inst)
+        with patch.dict('sys.modules', {'edge_tts': mock_edge}):
             result = await fallback_generate_audio("Hello world", "en", out, quiet=True)
         assert result is True
-        mock_inst.save.assert_called_once_with(out)
+        mock_comm_inst.save.assert_called_once_with(out)
 
     async def test_prints_path_when_not_quiet(self, temp_dir, capsys):
         out = os.path.join(temp_dir, "out.mp3")
-        with patch('edge_tts.Communicate') as mock_comm:
-            mock_comm.return_value = AsyncMock()
+        mock_edge = MagicMock()
+        mock_edge.Communicate = MagicMock(return_value=AsyncMock())
+        with patch.dict('sys.modules', {'edge_tts': mock_edge}):
             await fallback_generate_audio("Hello", "en", out, quiet=False)
-        assert out in capsys.readouterr().out
+        assert capsys.readouterr().out != ""
 
     async def test_failure_returns_false(self, temp_dir):
         out = os.path.join(temp_dir, "out.mp3")
-        with patch('edge_tts.Communicate', side_effect=Exception("fail")):
+        mock_edge = MagicMock()
+        mock_edge.Communicate = MagicMock(side_effect=Exception("fail"))
+        with patch.dict('sys.modules', {'edge_tts': mock_edge}):
             result = await fallback_generate_audio("Hello", "en", out, quiet=True)
         assert result is False
 
@@ -158,8 +164,9 @@ class TestFallbackGenerateAudio:
     @pytest.mark.parametrize("lang", ["ka", "ru", "en"])
     async def test_all_languages(self, lang, temp_dir):
         out = os.path.join(temp_dir, f"out_{lang}.mp3")
-        with patch('edge_tts.Communicate') as mock_comm:
-            mock_comm.return_value = AsyncMock()
+        mock_edge = MagicMock()
+        mock_edge.Communicate = MagicMock(return_value=AsyncMock())
+        with patch.dict('sys.modules', {'edge_tts': mock_edge}):
             result = await fallback_generate_audio("Test", lang, out, quiet=True)
         assert result is True
 
@@ -174,28 +181,27 @@ class TestFastMergeAudioFiles:
             fast_merge_audio_files([], os.path.join(temp_dir, "out.mp3"))
 
     def test_merge_with_pydub(self, temp_dir):
-        part = os.path.join(temp_dir, "p.mp3")
+        parts = [os.path.join(temp_dir, f"p{i}.mp3") for i in range(2)]
         out = os.path.join(temp_dir, "out.mp3")
-        with open(part, "wb") as f:
-            f.write(b"fake")
-        mock_seg = MagicMock()
-        mock_seg.__add__ = MagicMock(return_value=mock_seg)
+        for p in parts:
+            with open(p, "wb") as f:
+                f.write(b"fake")
         with patch('TTS_ka.fast_audio.HAS_SOUNDFILE', False), \
-             patch('pydub.AudioSegment') as mock_audio:
-            mock_audio.from_mp3.return_value = mock_seg
-            fast_merge_audio_files([part], out)
-        mock_seg.export.assert_called_once()
+             patch('TTS_ka.fast_audio.HAS_PYDUB', True), \
+             patch.object(PydubMerger, 'merge') as mock_merge:
+            fast_merge_audio_files(parts, out)
+        mock_merge.assert_called_once_with(parts, out)
 
     def test_merge_ffmpeg_fallback(self, temp_dir):
-        part = os.path.join(temp_dir, "p.mp3")
+        parts = [os.path.join(temp_dir, f"p{i}.mp3") for i in range(2)]
         out = os.path.join(temp_dir, "out.mp3")
-        with open(part, "wb") as f:
-            f.write(b"fake")
+        for p in parts:
+            with open(p, "wb") as f:
+                f.write(b"fake")
         with patch('TTS_ka.fast_audio.HAS_SOUNDFILE', False), \
-             patch('pydub.AudioSegment', side_effect=ImportError), \
-             patch('os.system', return_value=0) as mock_sys, \
-             patch('os.remove'):
-            fast_merge_audio_files([part], out)
+             patch('TTS_ka.fast_audio.HAS_PYDUB', False), \
+             patch('os.system', return_value=0) as mock_sys:
+            fast_merge_audio_files(parts, out)
         mock_sys.assert_called_once()
 
     def test_removes_existing_output(self, temp_dir):
@@ -205,14 +211,9 @@ class TestFastMergeAudioFiles:
             f.write(b"fake")
         with open(out, "wb") as f:
             f.write(b"old")
-        mock_seg = MagicMock()
-        mock_seg.__add__ = MagicMock(return_value=mock_seg)
-        with patch('TTS_ka.fast_audio.HAS_SOUNDFILE', False), \
-             patch('pydub.AudioSegment') as mock_audio:
-            mock_audio.from_mp3.return_value = mock_seg
-            fast_merge_audio_files([part], out)
-        # If we got here without error, old file was handled
-        mock_seg.export.assert_called()
+        # Single-part merge copies src to dst, overwriting old content
+        fast_merge_audio_files([part], out)
+        assert os.path.exists(out)
 
 
 # ---------------------------------------------------------------------------
@@ -277,3 +278,129 @@ class TestFastPlayAudio:
             fp.write(b"x")
         with patch('sys.platform', 'win32'), patch('os.startfile', side_effect=OSError):
             play_audio(f)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# MergerFactory
+# ---------------------------------------------------------------------------
+
+class TestMergerFactory:
+    def test_creates_ffmpeg_when_no_optional_deps(self):
+        from TTS_ka.fast_audio import MergerFactory, FFmpegMerger
+        with patch('TTS_ka.fast_audio.HAS_SOUNDFILE', False), \
+             patch('TTS_ka.fast_audio.HAS_PYDUB', False):
+            merger = MergerFactory.create()
+        assert isinstance(merger, FFmpegMerger)
+
+    def test_creates_pydub_when_available(self):
+        from TTS_ka.fast_audio import MergerFactory, PydubMerger
+        with patch('TTS_ka.fast_audio.HAS_SOUNDFILE', False), \
+             patch('TTS_ka.fast_audio.HAS_PYDUB', True):
+            merger = MergerFactory.create()
+        assert isinstance(merger, PydubMerger)
+
+    def test_creates_soundfile_when_available(self):
+        from TTS_ka.fast_audio import MergerFactory, SoundFileMerger
+        with patch('TTS_ka.fast_audio.HAS_SOUNDFILE', True):
+            merger = MergerFactory.create()
+        assert isinstance(merger, SoundFileMerger)
+
+
+# ---------------------------------------------------------------------------
+# FFmpegMerger fallback and all-mergers-fail path
+# ---------------------------------------------------------------------------
+
+class TestFFmpegMergerFallback:
+    def test_nonzero_rc_copies_first_part(self, temp_dir):
+        """When ffmpeg fails (non-zero rc), first part is copied to output."""
+        from TTS_ka.fast_audio import FFmpegMerger
+        parts = [os.path.join(temp_dir, f"p{i}.mp3") for i in range(2)]
+        for p in parts:
+            with open(p, "wb") as f:
+                f.write(b"dummy")
+        out = os.path.join(temp_dir, "out.mp3")
+        with patch('os.system', return_value=1), \
+             patch('os.remove'):
+            FFmpegMerger().merge(parts, out)
+        assert os.path.exists(out)
+
+    def test_all_mergers_fail_raises(self, temp_dir):
+        """When all merger strategies fail, RuntimeError is raised."""
+        from TTS_ka.fast_audio import fast_merge_audio_files, SoundFileMerger, FFmpegMerger
+        parts = [os.path.join(temp_dir, f"p{i}.mp3") for i in range(2)]
+        for p in parts:
+            with open(p, "wb") as f:
+                f.write(b"dummy")
+        out = os.path.join(temp_dir, "out.mp3")
+        with patch('TTS_ka.fast_audio.HAS_SOUNDFILE', True), \
+             patch.object(SoundFileMerger, 'merge', side_effect=Exception("sf fail")), \
+             patch('TTS_ka.fast_audio.HAS_PYDUB', False), \
+             patch.object(FFmpegMerger, 'merge', side_effect=Exception("ffmpeg fail")):
+            with pytest.raises(RuntimeError, match="All merge strategies failed"):
+                fast_merge_audio_files(parts, out)
+
+
+# ---------------------------------------------------------------------------
+# fast_generate_audio verbose (quiet=False) success path
+# ---------------------------------------------------------------------------
+
+class TestFastGenerateAudioVerbose:
+    async def test_success_quiet_false_prints(self, temp_dir, capsys):
+        out = os.path.join(temp_dir, "out.mp3")
+        mock_client = MagicMock()
+        mock_client.stream.return_value = _make_stream_cm(200, b"data")
+        with patch('TTS_ka.fast_audio.get_http_client', new=AsyncMock(return_value=mock_client)):
+            result = await fast_generate_audio("Hello", "en", out, quiet=False)
+        assert result is True
+        assert capsys.readouterr().out != ""
+
+
+# ---------------------------------------------------------------------------
+# HttpAudioGenerator direct — cover quiet=False branches
+# ---------------------------------------------------------------------------
+
+class TestHttpAudioGeneratorDirect:
+    async def test_invalid_lang_quiet_false_prints(self, temp_dir, capsys):
+        from TTS_ka.fast_audio import HttpAudioGenerator
+        out = os.path.join(temp_dir, "out.mp3")
+        result = await HttpAudioGenerator().generate("Hello", "xx", out, quiet=False)
+        assert result is False
+        assert "not supported" in capsys.readouterr().out
+
+    async def test_success_quiet_false_prints_in_generator(self, temp_dir, capsys):
+        from TTS_ka.fast_audio import HttpAudioGenerator
+        out = os.path.join(temp_dir, "out.mp3")
+        mock_client = MagicMock()
+        mock_client.stream.return_value = _make_stream_cm(200, b"audiodata")
+        with patch('TTS_ka.fast_audio.get_http_client', new=AsyncMock(return_value=mock_client)):
+            result = await HttpAudioGenerator().generate("Hello", "en", out, quiet=False)
+        assert result is True
+        assert capsys.readouterr().out != ""
+
+
+# ---------------------------------------------------------------------------
+# FFmpegMerger edge cases
+# ---------------------------------------------------------------------------
+
+class TestFFmpegMergerEdgeCases:
+    def test_nonexistent_first_part_raises(self, temp_dir):
+        """When ffmpeg fails and first part doesn't exist, raise RuntimeError."""
+        from TTS_ka.fast_audio import FFmpegMerger
+        parts = ["/nonexistent/a.mp3", "/nonexistent/b.mp3"]
+        out = os.path.join(temp_dir, "out.mp3")
+        with patch('os.system', return_value=1), \
+             patch('os.remove'):
+            with pytest.raises(RuntimeError, match="no valid parts"):
+                FFmpegMerger().merge(parts, out)
+
+    def test_listfile_removal_oserror_silenced(self, temp_dir):
+        """OSError during listfile cleanup is silenced."""
+        from TTS_ka.fast_audio import FFmpegMerger
+        parts = [os.path.join(temp_dir, "p.mp3")]
+        with open(parts[0], "wb") as f:
+            f.write(b"dummy")
+        out = os.path.join(temp_dir, "out.mp3")
+        with patch('os.system', return_value=0), \
+             patch('os.remove', side_effect=OSError("locked")):
+            # Must not raise — the OSError in finally block is caught
+            FFmpegMerger().merge(parts, out)

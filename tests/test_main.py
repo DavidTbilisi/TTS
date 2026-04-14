@@ -4,7 +4,7 @@ import pytest
 import sys
 import os
 from unittest.mock import MagicMock, patch, AsyncMock
-from TTS_ka.main import get_input_text
+from TTS_ka.main import get_input_text, _read_clipboard
 
 
 class TestGetInputText:
@@ -14,17 +14,17 @@ class TestGetInputText:
         assert get_input_text("Hello world") == "Hello world"
 
     def test_clipboard(self):
-        with patch('pyperclip.paste', return_value="clipboard text"):
+        with patch('TTS_ka.main._read_clipboard', return_value="clipboard text"):
             assert get_input_text("clipboard") == "clipboard text"
 
     def test_clipboard_empty(self, capsys):
-        with patch('pyperclip.paste', return_value="   "):
+        with patch('TTS_ka.main._read_clipboard', return_value="   "):
             result = get_input_text("clipboard")
         assert result == ""
         assert "No text" in capsys.readouterr().out
 
     def test_clipboard_strips_crlf(self):
-        with patch('pyperclip.paste', return_value="line1\r\nline2"):
+        with patch('TTS_ka.main._read_clipboard', return_value="line1\r\nline2"):
             result = get_input_text("clipboard")
         assert result == "line1\nline2"
 
@@ -113,15 +113,14 @@ class TestMain:
     def test_invalid_language_exits(self):
         """Parser rejects unknown language codes."""
         with patch('sys.argv', ['TTS_ka', 'test', '--lang', 'xx']):
-            import argparse
             with pytest.raises(SystemExit):
                 from TTS_ka.main import main
                 main()
 
     def test_clipboard_input_via_main(self):
-        """'clipboard' text arg reads from pyperclip."""
+        """'clipboard' text arg reads from _read_clipboard."""
         with patch('sys.argv', ['TTS_ka', 'clipboard', '--lang', 'en', '--no-play']):
-            with patch('pyperclip.paste', return_value='pasted text'), \
+            with patch('TTS_ka.main._read_clipboard', return_value='pasted text'), \
                  patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)), \
                  patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
                  patch('TTS_ka.main.get_optimal_settings', return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
@@ -147,3 +146,85 @@ class TestMain:
                 from TTS_ka.main import main
                 main()
         assert "OPTIMIZED MODE" not in capsys.readouterr().out
+
+
+class TestReadClipboard:
+    """Tests for _read_clipboard() implementation paths."""
+
+    def test_tkinter_success(self):
+        """When tkinter works, return clipboard_get() result."""
+        mock_root = MagicMock()
+        mock_root.clipboard_get.return_value = "tkinter clipboard"
+        mock_tk_mod = MagicMock()
+        mock_tk_mod.Tk.return_value = mock_root
+        with patch.dict('sys.modules', {'tkinter': mock_tk_mod}):
+            result = _read_clipboard()
+        assert result == "tkinter clipboard"
+
+    def test_tkinter_clipboard_get_raises_falls_through(self):
+        """When clipboard_get() raises, exception is caught and fallback runs."""
+        mock_root = MagicMock()
+        mock_root.clipboard_get.side_effect = Exception("no selection")
+        mock_tk_mod = MagicMock()
+        mock_tk_mod.Tk.return_value = mock_root
+        with patch.dict('sys.modules', {'tkinter': mock_tk_mod}), \
+             patch('sys.platform', 'linux'):
+            result = _read_clipboard()
+        assert result == ""
+
+    def test_tkinter_tk_raises_falls_back_to_powershell(self):
+        """When tk.Tk() raises, Windows fallback (powershell) is tried."""
+        mock_tk_mod = MagicMock()
+        mock_tk_mod.Tk.side_effect = Exception("no display")
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = "powershell text\n"
+        with patch.dict('sys.modules', {'tkinter': mock_tk_mod}), \
+             patch('sys.platform', 'win32'), \
+             patch('subprocess.run', return_value=mock_proc):
+            result = _read_clipboard()
+        assert result == "powershell text"
+
+    def test_tkinter_fails_powershell_nonzero_returns_empty(self):
+        """When tkinter fails and powershell returns non-zero, return empty string."""
+        mock_tk_mod = MagicMock()
+        mock_tk_mod.Tk.side_effect = Exception("no display")
+        mock_proc = MagicMock()
+        mock_proc.returncode = 1
+        with patch.dict('sys.modules', {'tkinter': mock_tk_mod}), \
+             patch('sys.platform', 'win32'), \
+             patch('subprocess.run', return_value=mock_proc):
+            result = _read_clipboard()
+        assert result == ""
+
+    def test_tkinter_fails_subprocess_raises_returns_empty(self):
+        """When tkinter and subprocess both fail, return empty string."""
+        mock_tk_mod = MagicMock()
+        mock_tk_mod.Tk.side_effect = Exception("no display")
+        with patch.dict('sys.modules', {'tkinter': mock_tk_mod}), \
+             patch('sys.platform', 'win32'), \
+             patch('subprocess.run', side_effect=OSError("no powershell")):
+            result = _read_clipboard()
+        assert result == ""
+
+    def test_darwin_pbpaste_success(self):
+        """On macOS, pbpaste is tried when tkinter fails."""
+        mock_tk_mod = MagicMock()
+        mock_tk_mod.Tk.side_effect = Exception("no display")
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = "mac clipboard text"
+        with patch.dict('sys.modules', {'tkinter': mock_tk_mod}), \
+             patch('sys.platform', 'darwin'), \
+             patch('subprocess.run', return_value=mock_proc):
+            result = _read_clipboard()
+        assert result == "mac clipboard text"
+
+    def test_linux_no_fallback_returns_empty(self):
+        """On Linux (non-darwin, non-win32), return empty if tkinter fails."""
+        mock_tk_mod = MagicMock()
+        mock_tk_mod.Tk.side_effect = Exception("no display")
+        with patch.dict('sys.modules', {'tkinter': mock_tk_mod}), \
+             patch('sys.platform', 'linux'):
+            result = _read_clipboard()
+        assert result == ""

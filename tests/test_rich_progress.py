@@ -7,9 +7,6 @@ from TTS_ka.rich_progress import (
     RichProgressDisplay,
     ProgressStats,
     create_progress_display,
-    animate_loading,
-    SPINNER_FRAMES,
-    PULSE_FRAMES,
 )
 
 
@@ -90,7 +87,8 @@ class TestRichProgressDisplay:
         with patch('TTS_ka.rich_progress.HAS_TQDM', False):
             display = RichProgressDisplay(total_chunks=2, language="en")
         display.finish(success=False)
-        assert "Failed" in capsys.readouterr().out or "❌" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "Failed" in out or "❌" in out
 
     def test_finish_with_tqdm_success(self):
         mock_pbar = MagicMock()
@@ -130,7 +128,6 @@ class TestRichProgressDisplay:
                  patch('TTS_ka.rich_progress.tqdm') as mock_tqdm:
                 mock_tqdm.return_value = MagicMock()
                 display = RichProgressDisplay(total_chunks=1, language=lang)
-            # tqdm desc should contain the flag
             call_kwargs = mock_tqdm.call_args[1] if mock_tqdm.call_args else {}
             desc = call_kwargs.get('desc', '')
             assert flag in desc
@@ -155,27 +152,3 @@ class TestCreateProgressDisplay:
         with patch('TTS_ka.rich_progress.HAS_TQDM', False):
             display = create_progress_display([], language="ka")
         assert display.stats.total_chunks == 0
-
-
-class TestAnimateLoading:
-    def test_runs_without_error(self, capsys):
-        # Patch time.sleep so test runs instantly
-        with patch('time.sleep'), \
-             patch('time.perf_counter', side_effect=[0.0, 0.0, 0.5, 1.0, 1.1]):
-            animate_loading("Testing", duration=1.0)
-        out = capsys.readouterr().out
-        assert "Testing" in out
-
-    def test_prints_complete(self, capsys):
-        with patch('time.sleep'), \
-             patch('time.perf_counter', side_effect=[0.0, 2.0]):
-            animate_loading("Loading", duration=1.0)
-        assert "complete" in capsys.readouterr().out.lower()
-
-
-class TestConstants:
-    def test_spinner_frames_non_empty(self):
-        assert len(SPINNER_FRAMES) > 0
-
-    def test_pulse_frames_non_empty(self):
-        assert len(PULSE_FRAMES) > 0

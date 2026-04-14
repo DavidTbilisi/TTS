@@ -168,7 +168,7 @@ class TestSmartGenerateLongText:
     async def test_empty_chunks_raises(self, tmp_path):
         output_path = str(tmp_path / "out.mp3")
 
-        with patch('TTS_ka.ultra_fast.split_text_into_chunks', return_value=[]):
+        with patch('TTS_ka.chunking.split_text_into_chunks', return_value=[]):
             with pytest.raises(ValueError, match="No text chunks"):
                 await smart_generate_long_text("word " * 300, "en", chunk_seconds=20, output_path=output_path)
 

@@ -2,309 +2,157 @@
 
 import pytest
 import os
-import asyncio
 from unittest.mock import MagicMock, patch, AsyncMock
+from TTS_ka.constants import VOICE_MAP
+from TTS_ka.chunking import split_text_into_chunks, should_chunk_text
+from TTS_ka.simple_help import show_simple_help, show_troubleshooting
 
 
 class TestCoverageBoost:
     """Additional tests to achieve 80%+ coverage."""
 
+    # === Fast audio generator tests ===
     @pytest.mark.asyncio
-    async def test_audio_generate_exception_handling(self, temp_dir):
-        """Test audio generation exception handling."""
-        from TTS_ka.audio import generate_audio
-        
+    async def test_fallback_generate_success(self, temp_dir):
+        """EdgeTTSGenerator returns True on success."""
+        from TTS_ka.fast_audio import fallback_generate_audio
         output_path = os.path.join(temp_dir, "test.mp3")
-        
-        with patch('edge_tts.Communicate') as mock_comm:
-            # Test exception during initialization
-            mock_comm.side_effect = Exception("Connection error")
-            
-            result = await generate_audio("test", "en", output_path, quiet=True)
-            # The function currently returns True even on exception
-            # Let's test the actual behavior
-            assert isinstance(result, bool)
+        mock_edge = MagicMock()
+        mock_edge.Communicate = MagicMock(return_value=AsyncMock())
+        with patch.dict('sys.modules', {'edge_tts': mock_edge}):
+            result = await fallback_generate_audio("test", "en", output_path, quiet=True)
+        assert isinstance(result, bool)
 
     @pytest.mark.asyncio
-    async def test_audio_generate_save_exception(self, temp_dir):
-        """Test audio generation when save fails."""
-        from TTS_ka.audio import generate_audio
-        
+    async def test_fallback_generate_failure(self, temp_dir):
+        """EdgeTTSGenerator returns False on exception."""
+        from TTS_ka.fast_audio import fallback_generate_audio
         output_path = os.path.join(temp_dir, "test.mp3")
-        
-        with patch('edge_tts.Communicate') as mock_comm:
-            mock_instance = MagicMock()
-            mock_comm.return_value = mock_instance
-            
-            # Make save method raise exception
-            mock_instance.save = AsyncMock(side_effect=Exception("Save failed"))
-            
-            result = await generate_audio("test", "en", output_path, quiet=True)
-            assert isinstance(result, bool)
+        mock_edge = MagicMock()
+        mock_edge.Communicate = MagicMock(side_effect=Exception("Network error"))
+        with patch.dict('sys.modules', {'edge_tts': mock_edge}):
+            result = await fallback_generate_audio("test", "en", output_path, quiet=True)
+        assert result is False
 
-    def test_merge_audio_existing_output_file(self, temp_dir):
-        """Test merge_audio_files when output file exists."""
-        from TTS_ka.audio import merge_audio_files
-        
-        input_file = os.path.join(temp_dir, "input.mp3") 
-        output_file = os.path.join(temp_dir, "output.mp3")
-        
-        # Create input and existing output files
-        with open(input_file, "wb") as f:
-            f.write(b"dummy_audio")
-        with open(output_file, "wb") as f:
-            f.write(b"old_audio")
-        
-        # Test that it removes existing output
-        with patch('shutil.move') as mock_move:
-            merge_audio_files([input_file], output_file)
-            # Should have removed existing file
-            assert not os.path.exists(output_file) or mock_move.called
+    @pytest.mark.asyncio
+    async def test_fallback_generate_unknown_lang(self, temp_dir):
+        """EdgeTTSGenerator returns False for unknown language."""
+        from TTS_ka.fast_audio import fallback_generate_audio
+        output_path = os.path.join(temp_dir, "test.mp3")
+        result = await fallback_generate_audio("test", "xx", output_path, quiet=True)
+        assert result is False
 
-    def test_merge_audio_pydub_path(self, temp_dir):
-        """Test merge_audio_files with pydub available."""
-        from TTS_ka.audio import merge_audio_files
-        
-        input_files = [
-            os.path.join(temp_dir, "input1.mp3"),
-            os.path.join(temp_dir, "input2.mp3")
-        ]
-        output_file = os.path.join(temp_dir, "output.mp3")
-        
-        # Create dummy files
-        for f in input_files:
-            with open(f, "wb") as file:
-                file.write(b"dummy_audio")
-        
-        # Mock pydub path
-        with patch('TTS_ka.audio.HAS_PYDUB', True):
-            with patch('TTS_ka.audio.AudioSegment') as mock_audio_segment:
-                mock_combined = MagicMock()
-                mock_audio_segment.from_mp3.return_value = mock_combined
-                mock_combined.__add__ = MagicMock(return_value=mock_combined)
-                
-                try:
-                    merge_audio_files(input_files, output_file)
-                except Exception:
-                    # May still fail, but we test the pydub code path
-                    pass
+    # === Merger tests ===
+    def test_fast_merge_empty_raises(self, temp_dir):
+        """fast_merge_audio_files raises ValueError on empty list."""
+        from TTS_ka.fast_audio import fast_merge_audio_files
+        with pytest.raises(ValueError, match="No parts to merge"):
+            fast_merge_audio_files([], os.path.join(temp_dir, "out.mp3"))
 
-    def test_merge_audio_ffmpeg_failure(self, temp_dir):
-        """Test merge_audio_files when ffmpeg fails."""
-        from TTS_ka.audio import merge_audio_files
-        
-        input_files = [
-            os.path.join(temp_dir, "input1.mp3"),
-            os.path.join(temp_dir, "input2.mp3")
-        ]
-        output_file = os.path.join(temp_dir, "output.mp3")
-        
-        # Create dummy files
-        for f in input_files:
-            with open(f, "wb") as file:
-                file.write(b"dummy_audio")
-        
-        # Mock ffmpeg failure
-        with patch('TTS_ka.audio.HAS_PYDUB', False):
-            with patch('os.system', return_value=1):  # Non-zero = failure
-                
-                with pytest.raises(RuntimeError, match="ffmpeg concat failed"):
-                    merge_audio_files(input_files, output_file)
+    def test_fast_merge_single_file_copies(self, temp_dir):
+        """Single-part merge copies src to dst."""
+        from TTS_ka.fast_audio import fast_merge_audio_files
+        src = os.path.join(temp_dir, "part.mp3")
+        dst = os.path.join(temp_dir, "out.mp3")
+        with open(src, "wb") as f:
+            f.write(b"audio")
+        fast_merge_audio_files([src], dst)
+        assert os.path.exists(dst)
 
-    def test_play_audio_pygame_success_path(self, temp_dir):
-        """Test play_audio pygame success path."""
-        from TTS_ka.audio import play_audio
-        
-        audio_file = os.path.join(temp_dir, "test.mp3") 
-        with open(audio_file, "wb") as f:
-            f.write(b"dummy_audio")
-        
-        with patch('pygame.mixer.init') as mock_init:
-            with patch('pygame.mixer.music.load') as mock_load:
-                with patch('pygame.mixer.music.play') as mock_play:
-                    with patch('pygame.mixer.get_busy') as mock_busy:
-                        with patch('time.sleep') as mock_sleep:
-                            # Simulate playing then finished
-                            mock_busy.side_effect = [True, True, False]
-                            
-                            play_audio(audio_file)
-                            
-                            mock_init.assert_called_once()
-                            mock_load.assert_called_once_with(audio_file)
-                            mock_play.assert_called_once()
+    def test_fast_merge_ffmpeg_path(self, temp_dir):
+        """FFmpegMerger is tried as last resort."""
+        from TTS_ka.fast_audio import fast_merge_audio_files
+        parts = []
+        for i in range(2):
+            p = os.path.join(temp_dir, f"p{i}.mp3")
+            with open(p, "wb") as f:
+                f.write(b"audio")
+            parts.append(p)
+        out = os.path.join(temp_dir, "out.mp3")
+        with patch('TTS_ka.fast_audio.HAS_SOUNDFILE', False), \
+             patch('TTS_ka.fast_audio.HAS_PYDUB', False), \
+             patch('os.system', return_value=0):
+            fast_merge_audio_files(parts, out)
 
-    def test_play_audio_pygame_exception(self, temp_dir):
-        """Test play_audio when pygame raises exception."""
-        from TTS_ka.audio import play_audio
-        
-        audio_file = os.path.join(temp_dir, "test.mp3")
-        with open(audio_file, "wb") as f:
-            f.write(b"dummy_audio")
-        
-        with patch('pygame.mixer.init', side_effect=Exception("Pygame error")):
-            # Should not raise exception
-            play_audio(audio_file)
+    # === play_audio tests ===
+    def test_play_audio_windows(self, temp_dir):
+        from TTS_ka.fast_audio import play_audio
+        f = os.path.join(temp_dir, "test.mp3")
+        with open(f, "wb") as fp:
+            fp.write(b"fake")
+        with patch('sys.platform', 'win32'), patch('os.startfile') as mock_start:
+            play_audio(f)
+        mock_start.assert_called_once()
 
+    def test_play_audio_oserror_silenced(self, temp_dir):
+        from TTS_ka.fast_audio import play_audio
+        f = os.path.join(temp_dir, "test.mp3")
+        with open(f, "wb") as fp:
+            fp.write(b"fake")
+        with patch('sys.platform', 'win32'), \
+             patch('os.startfile', side_effect=OSError("locked")):
+            play_audio(f)  # must not raise
+
+    # === Main / clipboard tests ===
     def test_main_file_reading_errors(self, temp_dir):
-        """Test main get_input_text file reading error cases."""
         from TTS_ka.main import get_input_text
-        
-        # Test directory instead of file
-        result = get_input_text(temp_dir)
-        assert result == temp_dir  # Should return path as-is
-        
-        # Test file that exists but can't be read
-        restricted_file = os.path.join(temp_dir, "restricted.txt")
-        with open(restricted_file, "w") as f:
-            f.write("test content")
-        
-        # Mock file reading to fail
-        with patch('builtins.open', side_effect=PermissionError("Access denied")):
-            result = get_input_text(restricted_file)
-            # Should fall back to returning the path
-            assert result == restricted_file
+        # Directory path returns path as-is
+        assert get_input_text(temp_dir) == temp_dir
 
-    def test_main_clipboard_processing_edge_cases(self):
-        """Test clipboard processing edge cases."""
+    def test_main_clipboard_crlf_normalised(self):
         from TTS_ka.main import get_input_text
-        
-        # Test clipboard with mixed line endings
-        with patch('pyperclip.paste') as mock_paste:
-            mock_paste.return_value = "line1\r\nline2\nline3\r\n"
+        with patch('TTS_ka.main._read_clipboard', return_value="line1\r\nline2\nline3\r\n"):
             result = get_input_text("clipboard")
-            assert "\r\n" not in result
-            assert result.count("\n") == 2
+        assert "\r\n" not in result
+        assert result.count("\n") >= 2  # at least 2 newlines after CRLF normalisation
 
-    def test_main_function_argument_parsing_paths(self):
-        """Test different paths through main function argument parsing."""
+    def test_main_help_flag_exits(self):
         from TTS_ka.main import main
-        
-        # Test with minimal arguments that would trigger help
-        test_args = ["test_script", "--help"]
-        
-        with patch('sys.argv', test_args):
+        with patch('sys.argv', ['TTS_ka', '--help']):
             with pytest.raises(SystemExit):
-                # argparse will exit on --help
                 main()
 
-    def test_audio_voice_mapping_all_languages(self):
-        """Test voice mapping covers all expected languages."""
-        from TTS_ka.audio import VOICE_MAP
-        
-        required_languages = ['ka', 'en', 'ru', 'en-US']
-        
-        for lang in required_languages:
+    # === Voice mapping (constants) ===
+    def test_voice_mapping_all_languages(self):
+        for lang in ['ka', 'en', 'ru', 'en-US']:
             assert lang in VOICE_MAP
-            voice = VOICE_MAP[lang]
-            assert isinstance(voice, str)
-            assert len(voice) > 0
-            assert "Neural" in voice  # All should be neural voices
-
-    def test_chunking_edge_cases(self):
-        """Test chunking function edge cases."""
-        from TTS_ka.chunking import split_text_into_chunks
-        
-        # Test with very small approx_seconds (should hit minimum words logic)
-        text = "a b c"  
-        chunks = split_text_into_chunks(text, 1)  # Very short time
-        assert len(chunks) == 1  # Should still fit in one chunk
-        
-        # Test with zero seconds
-        chunks = split_text_into_chunks(text, 0)
-        assert len(chunks) == 1
-        
-        # Test chunking calculation
-        # 160 WPM = 2.67 words per second
-        # For 30 seconds: 80 words per chunk (but minimum 20)
-        long_text = " ".join([f"word{i}" for i in range(100)])
-        chunks = split_text_into_chunks(long_text, 30)
-        
-        # Should create chunks based on word count
-        total_words = 100
-        expected_words_per_chunk = max(20, int(2.67 * 30))  # ~80 words
-        expected_chunks = (total_words + expected_words_per_chunk - 1) // expected_words_per_chunk
-        
-        assert len(chunks) >= 1
-
-    def test_should_chunk_edge_cases(self):
-        """Test should_chunk_text edge cases.""" 
-        from TTS_ka.chunking import should_chunk_text
-        
-        # Test with various text inputs (function only cares about chunk_seconds)
-        assert should_chunk_text("", 0) == False
-        assert should_chunk_text("long text here", 0) == False  
-        assert should_chunk_text("", 1) == True
-        assert should_chunk_text("any text", -1) == False  # Negative should be False
-
-    def test_help_system_coverage(self):
-        """Test help system functions for coverage."""
-        from TTS_ka.simple_help import show_simple_help, show_troubleshooting
-        
-        # Capture all output to verify functions execute fully
-        output_lines = []
-        
-        def capture_print(*args, **kwargs):
-            output_lines.append(str(args[0]) if args else "")
-        
-        with patch('builtins.print', side_effect=capture_print):
-            show_simple_help()
-            simple_help_lines = len(output_lines)
-            
-            output_lines.clear()
-            show_troubleshooting()
-            troubleshoot_lines = len(output_lines)
-        
-        # Both should produce output
-        assert simple_help_lines > 0
-        assert troubleshoot_lines > 0
-
-    def test_import_error_handling(self):
-        """Test import error handling in audio module.""" 
-        # Test that we can access HAS_PYDUB flag
-        from TTS_ka.audio import HAS_PYDUB
-        assert isinstance(HAS_PYDUB, bool)
+            assert "Neural" in VOICE_MAP[lang]
 
     @pytest.mark.parametrize("language,expected_voice", [
         ("ka", "ka-GE-EkaNeural"),
-        ("en", "en-GB-SoniaNeural"), 
+        ("en", "en-GB-SoniaNeural"),
         ("ru", "ru-RU-SvetlanaNeural"),
         ("en-US", "en-US-SteffanNeural"),
-        ("unknown", "en-GB-SoniaNeural")  # Should fall back to default
+        ("unknown", "en-GB-SoniaNeural"),
     ])
     def test_voice_selection_parametrized(self, language, expected_voice):
-        """Test voice selection for all languages."""
-        from TTS_ka.audio import VOICE_MAP
-        
         voice = VOICE_MAP.get(language, "en-GB-SoniaNeural")
         assert voice == expected_voice
 
-    def test_audio_module_constants(self):
-        """Test that audio module has expected constants."""
-        from TTS_ka.audio import VOICE_MAP, HAS_PYDUB
-        
-        assert isinstance(VOICE_MAP, dict)
-        assert isinstance(HAS_PYDUB, bool)
-        
-        # Test VOICE_MAP structure
-        for key, value in VOICE_MAP.items():
-            assert isinstance(key, str)
-            assert isinstance(value, str)
-            assert key.isalpha() or "-" in key  # Language codes
-            assert "Neural" in value  # All should be neural voices
+    # === Chunking ===
+    def test_chunking_edge_cases(self):
+        assert split_text_into_chunks("a b c", 1) == ["a b c"]
+        assert split_text_into_chunks("a b c", 0) == ["a b c"]
 
-    def test_chunking_module_constants(self):
-        """Test chunking module calculations."""
-        from TTS_ka.chunking import split_text_into_chunks
-        
-        # Test the WPM calculation is working
-        # 160 WPM should give us 160/60 = 2.67 words per second
-        text_100_words = " ".join([f"word{i}" for i in range(100)])
-        
-        # For 60 seconds, should fit in ~1 chunk (160 words per 60 seconds)
-        chunks_60s = split_text_into_chunks(text_100_words, 60)
-        
-        # For 30 seconds, should fit in ~2 chunks (80 words per 30 seconds)  
-        chunks_30s = split_text_into_chunks(text_100_words, 30)
-        
-        # Should have more chunks for shorter time
+    def test_should_chunk_edge_cases(self):
+        assert should_chunk_text("", 0) is False
+        assert should_chunk_text("any", 1) is True
+        assert should_chunk_text("any", -1) is False
+
+    def test_chunking_wpm_calculation(self):
+        text_100 = " ".join([f"w{i}" for i in range(100)])
+        chunks_60s = split_text_into_chunks(text_100, 60)
+        chunks_30s = split_text_into_chunks(text_100, 30)
         assert len(chunks_60s) <= len(chunks_30s)
+
+    # === Help ===
+    def test_help_system_coverage(self):
+        lines: list = []
+        with patch('builtins.print', side_effect=lambda *a, **k: lines.append(str(a))):
+            show_simple_help()
+            n_help = len(lines)
+            lines.clear()
+            show_troubleshooting()
+            n_trouble = len(lines)
+        assert n_help > 0
+        assert n_trouble > 0

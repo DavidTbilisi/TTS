@@ -3,14 +3,24 @@
 Provides helpers to replace code blocks, inline code, links, and very
 large numeric sequences with short, readable placeholders so TTS engines
 don't attempt to speak raw code/URLs/huge numbers.
+
+Design
+------
+Each filter is a plain ``TextFilter`` callable (``str -> str``).
+``TextProcessingPipeline`` composes them in order, making the set of
+active filters easy to extend or override without touching call sites.
+The module-level ``replace_not_readable`` convenience function runs the
+default four-filter pipeline.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Pattern
+from typing import Callable, List, Optional, Pattern
 
 __all__ = [
+    "TextFilter",
+    "TextProcessingPipeline",
     "replace_not_readable",
     "filter_code_blocks",
     "filter_inline_code",
@@ -18,12 +28,19 @@ __all__ = [
     "filter_big_numbers",
 ]
 
+# A TextFilter is any callable that transforms a string
+TextFilter = Callable[[str], str]
+
+# ── Compiled regexes (module-level for reuse) ────────────────────────────────
 
 CODE_BLOCK_RE: Pattern = re.compile(r"```.*?```", re.DOTALL)
 INLINE_CODE_RE: Pattern = re.compile(r"`([^`]+)`")
 URL_RE: Pattern = re.compile(r"\b(?:https?://|http://|www\.)\S+\b", re.IGNORECASE)
 BIG_NUMBER_RE: Pattern = re.compile(r"\b\d{7,}\b")  # 7+ digits => >= 1,000,000
+_WHITESPACE_RE: Pattern = re.compile(r"\s{2,}")
 
+
+# ── Individual filters ────────────────────────────────────────────────────────
 
 def filter_code_blocks(text: str) -> str:
     """Replace fenced code blocks (```...```) with a placeholder."""
@@ -49,8 +66,49 @@ def filter_big_numbers(text: str) -> str:
     return BIG_NUMBER_RE.sub(" a large number ", text)
 
 
+# ── Pipeline ──────────────────────────────────────────────────────────────────
+
+class TextProcessingPipeline:
+    """Composes a sequence of :data:`TextFilter` callables and applies them in order.
+
+    Usage::
+
+        pipeline = TextProcessingPipeline()          # default filters
+        clean = pipeline.process(raw_text)
+
+        custom = TextProcessingPipeline([filter_urls, filter_big_numbers])
+        clean = custom.process(raw_text)
+    """
+
+    _DEFAULT_FILTERS: List[TextFilter] = [
+        filter_code_blocks,
+        filter_inline_code,
+        filter_urls,
+        filter_big_numbers,
+    ]
+
+    def __init__(self, filters: Optional[List[TextFilter]] = None) -> None:
+        self._filters: List[TextFilter] = (
+            filters if filters is not None else list(self._DEFAULT_FILTERS)
+        )
+
+    def process(self, text: str) -> str:
+        """Apply all filters in order and return a whitespace-normalised result."""
+        if not text:
+            return text
+        result = text
+        for f in self._filters:
+            result = f(result)
+        return _WHITESPACE_RE.sub(" ", result).strip()
+
+
+# ── Module-level convenience (default pipeline, reused across calls) ──────────
+
+_default_pipeline = TextProcessingPipeline()
+
+
 def replace_not_readable(text: str) -> str:
-    """Apply all filters and return a cleaned string suitable for TTS.
+    """Apply all default filters and return a cleaned string suitable for TTS.
 
     Filters are applied in an order that avoids accidental re-matching:
     1. Code blocks
@@ -60,22 +118,10 @@ def replace_not_readable(text: str) -> str:
 
     The result is whitespace-normalized.
     """
-    if not text:
-        return text
-
-    s = text
-    s = filter_code_blocks(s)
-    s = filter_inline_code(s)
-    s = filter_urls(s)
-    s = filter_big_numbers(s)
-
-    # Normalize whitespace created by replacements
-    s = re.sub(r"\s{2,}", " ", s).strip()
-    return s
+    return _default_pipeline.process(text)
 
 
 if __name__ == "__main__":
-    # Quick manual check when run as script
     sample = (
         "Here is code: ```def f(): pass``` and inline `x=1` and a link https://example.com "
         "and a big number 12345678."

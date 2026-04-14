@@ -13,7 +13,7 @@ except ImportError:
     HAS_UVLOOP = False
 
 from .fast_audio import fast_generate_audio, fast_merge_audio_files
-from .rich_progress import create_progress_display, animate_loading
+from .rich_progress import create_progress_display
 from .streaming_player import StreamingAudioPlayer
 from .constants import MAX_PARALLEL_WORKERS, STREAMING_CHUNK_SECONDS
 
@@ -187,7 +187,8 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
         streaming_player = StreamingAudioPlayer(show_gui=show_gui)
         # Enforce GUI-only mode when requested: require VLC be available
         if show_gui:
-            detected = streaming_player._find_streaming_player()
+            from .streaming_player import PlayerDetector
+            detected = PlayerDetector.find()
             if not detected or 'vlc' not in os.path.basename(detected).lower():
                 print("Error: GUI mode requested but VLC was not found. Install VLC or run without GUI.")
                 raise SystemExit(1)

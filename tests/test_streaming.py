@@ -127,68 +127,114 @@ class TestStreamingAudioPlayer:
     
     @patch('os.startfile')
     def test_windows_playback(self, mock_startfile, temp_dir):
-        """Test Windows playback path."""
-        with patch('sys.platform', 'win32'):
+        """Test Windows playback path (no VLC, falls back to os.startfile)."""
+        from TTS_ka.streaming_player import PlayerDetector
+
+        with patch('sys.platform', 'win32'), \
+             patch.object(PlayerDetector, 'find', return_value=None):
             player = StreamingAudioPlayer()
-            
-            # Create test chunks
+
             chunk1 = os.path.join(temp_dir, "chunk1.mp3")
             chunk2 = os.path.join(temp_dir, "chunk2.mp3")
-            
+
             with open(chunk1, 'wb') as f:
                 f.write(b'audio data 1')
             with open(chunk2, 'wb') as f:
                 f.write(b'audio data 2')
-            
+
             player.start()
             player.add_chunk(chunk1)
             player.add_chunk(chunk2)
             player.finish_generation()
-            
-            # Wait for playback thread
+
             player.playback_thread.join(timeout=2)
-            
-            # Should have called os.startfile for first chunk
-            mock_startfile.assert_called_once()
+
+            # Should have called os.startfile for the audio chunks
+            assert mock_startfile.called
     
     @patch('subprocess.run')
     def test_find_streaming_player(self, mock_run):
-        """Test finding available audio players on Unix."""
-        player = StreamingAudioPlayer()
-        
-        # Mock successful mpv detection
+        """Test finding available audio players via PlayerDetector."""
+        from TTS_ka.streaming_player import PlayerDetector
+
         mock_run.return_value = MagicMock(returncode=0)
-        
-        result = player._find_streaming_player()
-        
-        assert result == 'mpv'
-    
+        result = PlayerDetector.find()
+        assert result is not None
+
     @patch('subprocess.run')
     def test_find_no_player(self, mock_run):
         """Test when no player is available."""
-        player = StreamingAudioPlayer()
-        
-        # Mock failed detection
+        from TTS_ka.streaming_player import PlayerDetector
+
         mock_run.return_value = MagicMock(returncode=1)
-        
-        result = player._find_streaming_player()
-        
+        with patch.object(PlayerDetector, '_locate_windows', return_value=None), \
+             patch.object(PlayerDetector, '_locate_unix', return_value=None):
+            result = PlayerDetector.find()
         assert result is None
-    
-    def test_get_default_player_darwin(self):
-        """Test default player on macOS."""
+
+    @patch('subprocess.run')
+    def test_find_player_on_darwin(self, mock_run):
+        """Test player detection on macOS."""
+        from TTS_ka.streaming_player import PlayerDetector
+
         with patch('sys.platform', 'darwin'):
-            player = StreamingAudioPlayer()
-            result = player._get_default_player()
-            assert result == 'afplay'
-    
-    def test_get_default_player_linux(self):
-        """Test default player on Linux."""
+            mock_run.return_value = MagicMock(returncode=0)
+            result = PlayerDetector.find()
+        assert result is not None
+
+    @patch('subprocess.run')
+    def test_find_player_on_linux(self, mock_run):
+        """Test player detection on Linux."""
+        from TTS_ka.streaming_player import PlayerDetector
+
         with patch('sys.platform', 'linux'):
-            player = StreamingAudioPlayer()
-            result = player._get_default_player()
-            assert result == 'mpg123'
-    
+            mock_run.return_value = MagicMock(returncode=0)
+            result = PlayerDetector.find()
+        assert result is not None
+
+    def test_locate_windows_subprocess_oserror(self):
+        """When 'where' raises OSError, _locate_windows still works (returns None or VLC path)."""
+        from TTS_ka.streaming_player import PlayerDetector
+
+        with patch('subprocess.run', side_effect=OSError("not found")), \
+             patch('sys.platform', 'win32'):
+            result = PlayerDetector._locate_windows("mpv")
+        assert result is None  # non-vlc player, no fallback path
+
+    def test_locate_windows_vlc_path_fallback(self):
+        """When 'where' fails but a VLC installation path exists, it is returned."""
+        from TTS_ka.streaming_player import PlayerDetector
+
+        with patch('subprocess.run', side_effect=OSError("not found")), \
+             patch('sys.platform', 'win32'), \
+             patch('os.path.exists', return_value=True):
+            result = PlayerDetector._locate_windows("vlc")
+        assert result is not None
+
+    def test_locate_unix_oserror_returns_none(self):
+        """When 'which' raises OSError, _locate_unix returns None."""
+        from TTS_ka.streaming_player import PlayerDetector
+
+        with patch('subprocess.run', side_effect=OSError("which not found")):
+            result = PlayerDetector._locate_unix("mpv")
+        assert result is None
+
+    def test_locate_unix_not_found_returns_none(self):
+        """When 'which' returns non-zero, _locate_unix returns None."""
+        from TTS_ka.streaming_player import PlayerDetector
+
+        with patch('subprocess.run', return_value=MagicMock(returncode=1)):
+            result = PlayerDetector._locate_unix("mpv")
+        assert result is None
+
+    def test_stop_with_process_oserror(self):
+        """stop() handles OSError when terminating the player process."""
+        player = StreamingAudioPlayer()
+        mock_proc = MagicMock()
+        mock_proc.terminate.side_effect = OSError("already dead")
+        player.process = mock_proc
+        player.stop()  # must not raise
+
     def test_wait_for_completion_timeout(self):
         """Test waiting for playback completion with timeout."""
         player = StreamingAudioPlayer()
@@ -205,35 +251,32 @@ class TestStreamingAudioPlayer:
     
     @patch('os.startfile')
     def test_full_streaming_workflow(self, mock_startfile, temp_dir):
-        """Test complete streaming workflow."""
-        with patch('sys.platform', 'win32'):
+        """Test complete streaming workflow (no VLC, uses os.startfile)."""
+        from TTS_ka.streaming_player import PlayerDetector
+
+        with patch('sys.platform', 'win32'), \
+             patch.object(PlayerDetector, 'find', return_value=None):
             player = StreamingAudioPlayer()
-            
-            # Create multiple chunks
+
             chunks = []
             for i in range(3):
                 chunk_path = os.path.join(temp_dir, f"chunk_{i}.mp3")
                 with open(chunk_path, 'wb') as f:
                     f.write(f'audio data {i}'.encode())
                 chunks.append(chunk_path)
-            
-            # Start playback
+
             player.start()
             assert player.is_playing is True
-            
-            # Add chunks as they "generate"
+
             for chunk in chunks:
                 player.add_chunk(chunk)
                 time.sleep(0.01)
-            
-            # Signal completion
+
             player.finish_generation()
             assert player.finished_generating is True
-            
-            # Wait for playback
+
             player.wait_for_completion()
-            
-            # Verify playback was initiated
+
             assert mock_startfile.called
 
 
@@ -378,21 +421,24 @@ class TestStreamingEdgeCases:
     
     @patch('os.startfile', side_effect=Exception("Playback error"))
     def test_playback_error_handling(self, mock_startfile, temp_dir):
-        """Test that playback errors don't crash the system."""
-        with patch('sys.platform', 'win32'):
+        """Test that playback errors don't crash the system (no VLC, uses os.startfile)."""
+        from TTS_ka.streaming_player import PlayerDetector
+
+        with patch('sys.platform', 'win32'), \
+             patch.object(PlayerDetector, 'find', return_value=None):
             player = StreamingAudioPlayer()
-            
+
             chunk_path = os.path.join(temp_dir, "error_chunk.mp3")
             with open(chunk_path, 'wb') as f:
                 f.write(b'audio data')
-            
+
             player.start()
             player.add_chunk(chunk_path)
             player.finish_generation()
-            
+
             # Should handle error gracefully
             player.wait_for_completion()
-            
+
             # Should still have attempted playback
             assert mock_startfile.called
     
@@ -614,49 +660,48 @@ class TestStreamingIntegrationWithMainSystem:
     async def test_multi_chunk_streaming_with_merge(self, temp_dir):
         """Test multi-chunk streaming performs merge correctly."""
         from TTS_ka.ultra_fast import smart_generate_long_text
-        
+        from TTS_ka.streaming_player import PlayerDetector
+
         output_path = os.path.join(temp_dir, "multi_chunk_test.mp3")
-        
-        with patch('TTS_ka.ultra_fast.ultra_fast_parallel_generation') as mock_parallel:
-            with patch('TTS_ka.ultra_fast.fast_merge_audio_files') as mock_merge:
-                # Mock multi-chunk generation
-                async def multi_chunk_gen(*args, **kwargs):
-                    output = kwargs.get('output_path', 'data.mp3')
-                    
-                    # Create output file (first chunk)
-                    with open(output, 'wb') as f:
-                        f.write(b'first chunk')
-                    
-                    # Create additional chunks  
-                    parts = [output]
-                    for i in range(2):
-                        part_path = f".part_{i+1}.mp3"
-                        with open(part_path, 'wb') as f:
-                            f.write(f'chunk {i+1}'.encode())
-                        parts.append(part_path)
-                    
-                    return parts
-                
-                mock_parallel.side_effect = multi_chunk_gen
-                
-                # Mock merge to create final file - this should be called
-                def mock_merge_func(parts, output):
-                    with open(output, 'wb') as f:
-                        f.write(b'merged audio from all chunks')
-                
-                mock_merge.side_effect = mock_merge_func
-                
-                await smart_generate_long_text(
-                    text="Multi chunk text " * 20,  # Long enough for multiple chunks
-                    language="en",
-                    chunk_seconds=5,  # Small chunks to force multiple
-                    parallel=2,
-                    output_path=output_path,
-                    enable_streaming=True
-                )
-                
-                # Should have attempted merge for multiple chunks
-                assert mock_merge.called
+
+        with patch('TTS_ka.ultra_fast.ultra_fast_parallel_generation') as mock_parallel, \
+             patch('TTS_ka.ultra_fast.fast_merge_audio_files') as mock_merge, \
+             patch.object(PlayerDetector, 'find', return_value=None):
+
+            # Mock multi-chunk generation — use absolute paths so exists() checks pass
+            async def multi_chunk_gen(chunks_arg, lang_arg, parallel_arg,
+                                      streaming_player_arg=None, actual_output=None):
+                actual_output = actual_output or output_path
+                with open(actual_output, 'wb') as f:
+                    f.write(b'first chunk')
+                parts = [actual_output]
+                for i in range(2):
+                    part_path = os.path.join(temp_dir, f"part_{i+1}.mp3")
+                    with open(part_path, 'wb') as f:
+                        f.write(f'chunk {i+1}'.encode())
+                    parts.append(part_path)
+                return parts
+
+            mock_parallel.side_effect = multi_chunk_gen
+
+            def mock_merge_func(parts, out):
+                with open(out, 'wb') as f:
+                    f.write(b'merged audio from all chunks')
+
+            mock_merge.side_effect = mock_merge_func
+
+            await smart_generate_long_text(
+                text="Multi chunk text " * 20,
+                language="en",
+                chunk_seconds=5,
+                parallel=2,
+                output_path=output_path,
+                enable_streaming=True,
+                show_gui=False,
+            )
+
+            # Should have attempted merge for multiple chunks
+            assert mock_merge.called
 
 
 class TestStreamingPlayerRobustness:

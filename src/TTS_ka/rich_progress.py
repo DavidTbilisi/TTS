@@ -161,22 +161,3 @@ def create_progress_display(chunks: list, language: str = "en") -> RichProgressD
     """Create a progress display for the given chunks and language."""
     total_words = sum(len(chunk.split()) for chunk in chunks)
     return RichProgressDisplay(len(chunks), total_words, language)
-
-
-# Animation frames for loading states
-SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-PULSE_FRAMES = ["🔊", "🔉", "🔈", "🔇", "🔈", "🔉"]
-
-
-def animate_loading(message: str = "Processing", duration: float = 1.0):
-    """Show animated loading indicator."""
-    start_time = time.perf_counter()
-    frame_index = 0
-    
-    while time.perf_counter() - start_time < duration:
-        frame = SPINNER_FRAMES[frame_index % len(SPINNER_FRAMES)]
-        print(f"\r{frame} {message}...", end="", flush=True)
-        frame_index += 1
-        time.sleep(0.1)
-    
-    print(f"\r✅ {message} complete!" + " " * 10)
