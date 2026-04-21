@@ -2,10 +2,20 @@
 
 # Supported languages mapped to their Microsoft Neural voice names
 VOICE_MAP = {
-    'ka': 'ka-GE-EkaNeural',       # Georgian — premium female voice
+    'ka': 'ka-GE-EkaNeural',       # Georgian — female neural
+    'ka-m': 'ka-GE-GiorgiNeural',  # Georgian — male neural
     'ru': 'ru-RU-SvetlanaNeural',  # Russian — high-quality female voice
     'en': 'en-GB-SoniaNeural',     # English — British neural voice
     'en-US': 'en-US-SteffanNeural',
+}
+
+# BCP-47 tag for SSML root (matches voice locale for more natural prosody)
+SSML_LANG_MAP = {
+    'ka': 'ka-GE',
+    'ka-m': 'ka-GE',
+    'ru': 'ru-RU',
+    'en': 'en-GB',
+    'en-US': 'en-US',
 }
 
 # HTTP client configuration

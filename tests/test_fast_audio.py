@@ -13,7 +13,7 @@ from TTS_ka.fast_audio import (
     PydubMerger,
     EdgeTTSGenerator,
 )
-from TTS_ka.constants import VOICE_MAP
+from TTS_ka.constants import VOICE_MAP, SSML_LANG_MAP
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +48,10 @@ class TestVoiceMap:
         assert "ka" in VOICE_MAP
         assert "EkaNeural" in VOICE_MAP["ka"]
 
+    def test_voice_map_has_ka_male(self):
+        assert "ka-m" in VOICE_MAP
+        assert "GiorgiNeural" in VOICE_MAP["ka-m"]
+
     def test_voice_map_has_ru(self):
         assert "ru" in VOICE_MAP
         assert "SvetlanaNeural" in VOICE_MAP["ru"]
@@ -58,6 +62,10 @@ class TestVoiceMap:
 
     def test_voice_map_invalid_language_returns_none(self):
         assert VOICE_MAP.get("fr") is None
+
+    def test_ssml_lang_georgian_locale(self):
+        assert SSML_LANG_MAP["ka"] == "ka-GE"
+        assert SSML_LANG_MAP["ka-m"] == "ka-GE"
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +134,7 @@ class TestFastGenerateAudio:
             await fast_generate_audio("Hello", "en", out, quiet=True)
         assert capsys.readouterr().out == ""
 
-    @pytest.mark.parametrize("lang", ["ka", "ru", "en"])
+    @pytest.mark.parametrize("lang", ["ka", "ka-m", "ru", "en"])
     async def test_all_supported_languages(self, lang, temp_dir):
         out = os.path.join(temp_dir, f"out_{lang}.mp3")
         mock_client = MagicMock()
@@ -172,7 +180,7 @@ class TestFallbackGenerateAudio:
         result = await fallback_generate_audio("Hello", "zz", out, quiet=True)
         assert result is False
 
-    @pytest.mark.parametrize("lang", ["ka", "ru", "en"])
+    @pytest.mark.parametrize("lang", ["ka", "ka-m", "ru", "en"])
     async def test_all_languages(self, lang, temp_dir):
         out = os.path.join(temp_dir, f"out_{lang}.mp3")
         mock_edge = MagicMock()

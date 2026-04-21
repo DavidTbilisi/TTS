@@ -59,7 +59,7 @@ def show_troubleshooting():
     print()
     
     print("Language errors:")
-    print("  -> Use only: ka, ru, en")
+    print("  -> Use only: ka, ka-m, ru, en")
     print("  -> Check text encoding (UTF-8)")
     print("  -> Try simple ASCII text first")
     print()

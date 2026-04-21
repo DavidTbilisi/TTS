@@ -41,6 +41,7 @@ class TestMinimalCoverage:
     def test_voice_map_complete(self):
         expected = {
             "ka": "ka-GE-EkaNeural",
+            "ka-m": "ka-GE-GiorgiNeural",
             "en": "en-GB-SoniaNeural",
             "ru": "ru-RU-SvetlanaNeural",
             "en-US": "en-US-SteffanNeural",

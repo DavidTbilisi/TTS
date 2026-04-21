@@ -105,7 +105,7 @@ class TestMain:
                 main()
         assert "cancelled" in capsys.readouterr().out.lower()
 
-    @pytest.mark.parametrize("lang", ["ka", "ru", "en"])
+    @pytest.mark.parametrize("lang", ["ka", "ka-m", "ru", "en"])
     def test_valid_languages_accepted(self, lang):
         """Parser accepts ka, ru, en."""
         with patch('sys.argv', ['TTS_ka', 'test', '--lang', lang, '--no-play']):

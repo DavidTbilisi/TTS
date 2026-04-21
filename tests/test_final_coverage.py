@@ -171,6 +171,7 @@ class TestFinalCoverage:
 
     @pytest.mark.parametrize("language,expected_voice", [
         ("ka", "ka-GE-EkaNeural"),
+        ("ka-m", "ka-GE-GiorgiNeural"),
         ("en", "en-GB-SoniaNeural"),
         ("ru", "ru-RU-SvetlanaNeural"),
         ("en-US", "en-US-SteffanNeural"),
@@ -184,7 +185,7 @@ class TestFinalCoverage:
         assert should_chunk_text("", -1) is False
         assert get_input_text("   ") == "   "
         assert isinstance(VOICE_MAP, dict)
-        assert len(VOICE_MAP) >= 4
+        assert len(VOICE_MAP) >= 5
 
     def test_function_signatures(self):
         sig1 = inspect.signature(split_text_into_chunks)

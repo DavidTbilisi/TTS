@@ -175,7 +175,7 @@ class TestSmartGenerateLongText:
             with pytest.raises(ValueError, match="No text chunks"):
                 await smart_generate_long_text("word " * 300, "en", chunk_seconds=20, output_path=output_path)
 
-    @pytest.mark.parametrize("lang", ["ka", "ru", "en"])
+    @pytest.mark.parametrize("lang", ["ka", "ka-m", "ru", "en"])
     async def test_supported_languages(self, tmp_path, lang):
         output_path = str(tmp_path / f"out_{lang}.mp3")
         with patch('TTS_ka.ultra_fast.fast_generate_audio', new=AsyncMock(return_value=True)):

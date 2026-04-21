@@ -114,12 +114,12 @@ class TestCoverageBoost:
 
     # === Voice mapping (constants) ===
     def test_voice_mapping_all_languages(self):
-        for lang in ['ka', 'en', 'ru', 'en-US']:
-            assert lang in VOICE_MAP
+        for lang in VOICE_MAP:
             assert "Neural" in VOICE_MAP[lang]
 
     @pytest.mark.parametrize("language,expected_voice", [
         ("ka", "ka-GE-EkaNeural"),
+        ("ka-m", "ka-GE-GiorgiNeural"),
         ("en", "en-GB-SoniaNeural"),
         ("ru", "ru-RU-SvetlanaNeural"),
         ("en-US", "en-US-SteffanNeural"),

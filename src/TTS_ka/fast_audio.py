@@ -54,6 +54,7 @@ except ImportError:
 
 from .constants import (
     VOICE_MAP,
+    SSML_LANG_MAP,
     HTTP_TIMEOUT_TOTAL,
     HTTP_TIMEOUT_CONNECT,
     HTTP_MAX_KEEPALIVE,
@@ -128,8 +129,9 @@ class HttpAudioGenerator:
             return False
 
         safe_text = replace_not_readable(text)
+        xml_lang = SSML_LANG_MAP.get(language, "en-US")
         ssml = (
-            f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>"
+            f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{xml_lang}'>"
             f"<voice name='{voice}'>{safe_text}</voice></speak>"
         )
         try:

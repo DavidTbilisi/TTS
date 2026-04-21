@@ -86,7 +86,7 @@ EXAMPLES:
   %(prog)s file.txt --lang ru                       # Russian from file
   %(prog)s clipboard                                 # From clipboard (fastest workflow)
 
-LANGUAGES: 🇬🇪 ka (Georgian) | 🇷🇺 ru (Russian) | 🇬🇧 en (English)
+LANGUAGES: 🇬🇪 ka / ka-m (Georgian female/male) | 🇷🇺 ru | 🇬🇧 en
 For comprehensive help with examples: %(prog)s --help-full
         """,
     )
@@ -99,8 +99,8 @@ For comprehensive help with examples: %(prog)s --help-full
     parser.add_argument(
         "--lang",
         default="en",
-        choices=["ka", "ru", "en"],
-        help="Language: ka=Georgian(🇬🇪), ru=Russian(🇷🇺), en=English(🇬🇧)",
+        choices=["ka", "ka-m", "ru", "en"],
+        help="Language: ka=Georgian female, ka-m=Georgian male, ru=Russian, en=English",
     )
     parser.add_argument(
         "--chunk-seconds",
@@ -168,7 +168,7 @@ For comprehensive help with examples: %(prog)s --help-full
             optimal["method"] = "smart"
             print(f"🔊 Streaming enabled - forcing chunked generation ({STREAMING_CHUNK_SECONDS}s chunks)")
 
-        lang_names = {"ka": "Georgian", "ru": "Russian", "en": "English"}
+        lang_names = {"ka": "Georgian", "ka-m": "Georgian (male)", "ru": "Russian", "en": "English"}
         lang_name = lang_names.get(args.lang, "Unknown")
         print(f"OPTIMIZED MODE - {lang_name}")
         print(f"Strategy: {optimal['method']} generation, {args.parallel} workers")

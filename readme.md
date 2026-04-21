@@ -83,7 +83,7 @@ python -m TTS_ka [TEXT_SOURCE] [OPTIONS]
 
 | Option | Description | Examples |
 |--------|-------------|----------|
-| `--lang` | Language: `ka` (Georgian), `ru` (Russian), `en` (English) | `--lang ka` |
+| `--lang` | `ka` Georgian (female), `ka-m` Georgian (male), `ru`, `en` | `--lang ka` |
 | `--stream` | 🆕 Enable streaming playback (audio starts while generating) | `--stream` |
 | `--chunk-seconds` | Chunk size in seconds (0=auto, 20-60 optimal) | `--chunk-seconds 30` |
 | `--parallel` | Workers (0=auto, 2-8 recommended) | `--parallel 6` |
@@ -164,12 +164,14 @@ python -m TTS_ka clipboard --lang ka
 
 | Language | Code | Voice Quality | Speed | Example |
 |----------|------|---------------|-------|---------|
-| **Georgian** 🇬🇪 | `ka` | Premium Neural | Fast | `--lang ka` |
+| **Georgian** 🇬🇪 | `ka` | Neural (Eka, female) | Fast | `--lang ka` |
+| **Georgian** 🇬🇪 | `ka-m` | Neural (Giorgi, male) | Fast | `--lang ka-m` |
 | **Russian** 🇷🇺 | `ru` | High Quality | Very Fast | `--lang ru` |
 | **English** 🇬🇧 | `en` | Premium Neural | Maximum | `--lang en` |
 
 ### Voice Details
-- **Georgian**: `ka-GE-EkaNeural` - Premium female voice
+- **Georgian (female)**: `ka-GE-EkaNeural` — `--lang ka`
+- **Georgian (male)**: `ka-GE-GiorgiNeural` — `--lang ka-m`
 - **Russian**: `ru-RU-SvetlanaNeural` - High-quality female voice  
 - **English**: `en-GB-SoniaNeural` - British English neural voice
 
