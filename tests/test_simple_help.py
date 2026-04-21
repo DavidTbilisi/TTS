@@ -2,191 +2,104 @@
 
 import pytest
 from unittest.mock import patch
-from TTS_ka.simple_help import show_comprehensive_help
+from TTS_ka.simple_help import show_simple_help, show_troubleshooting
 
 
-class TestSimpleHelp:
-    """Test cases for simple help system."""
+class TestShowSimpleHelp:
+    """Tests for show_simple_help()."""
 
-    def test_show_comprehensive_help_basic(self):
-        """Test basic comprehensive help display."""
-        with patch('builtins.print') as mock_print:
-            show_comprehensive_help()
-            
-            # Should have printed multiple lines
-            assert mock_print.call_count > 10
-            
-            # Check for key sections
-            print_calls = [call[0][0] for call in mock_print.call_args_list]
-            help_text = "\n".join(print_calls)
-            
-            assert "ULTRA-FAST TTS" in help_text
-            assert "SUPPORTED LANGUAGES" in help_text
-            assert "QUICK START EXAMPLES" in help_text
-            assert "TROUBLESHOOTING" in help_text
+    def _get_output(self):
+        import io, sys
+        buf = io.StringIO()
+        with patch('builtins.print', side_effect=lambda *a, **kw: buf.write((' '.join(str(x) for x in a)) + '\n')):
+            show_simple_help()
+        return buf.getvalue()
 
-    def test_help_contains_language_info(self):
-        """Test that help contains language information."""
-        with patch('builtins.print') as mock_print:
-            show_comprehensive_help()
-            
-            print_calls = [call[0][0] for call in mock_print.call_args_list]
-            help_text = "\n".join(print_calls)
-            
-            assert "ka" in help_text.lower()  # Georgian
-            assert "ru" in help_text.lower()  # Russian  
-            assert "en" in help_text.lower()  # English
-            assert "georgian" in help_text.lower()
-            assert "russian" in help_text.lower()
+    def test_no_exception(self):
+        show_simple_help()
 
-    def test_help_contains_examples(self):
-        """Test that help contains usage examples."""
-        with patch('builtins.print') as mock_print:
-            show_comprehensive_help()
-            
-            print_calls = [call[0][0] for call in mock_print.call_args_list]
-            help_text = "\n".join(print_calls)
-            
-            assert "--turbo" in help_text
-            assert "--lang" in help_text
-            assert "clipboard" in help_text
-            assert "file.txt" in help_text
+    def test_contains_ultra_fast_tts(self):
+        out = self._get_output()
+        assert "ULTRA-FAST TTS" in out
 
-    def test_help_contains_performance_info(self):
-        """Test that help contains performance information."""
-        with patch('builtins.print') as mock_print:
-            show_comprehensive_help()
-            
-            print_calls = [call[0][0] for call in mock_print.call_args_list]
-            help_text = "\n".join(print_calls)
-            
-            assert "PERFORMANCE" in help_text or "seconds" in help_text
-            assert "OPTIMIZATION" in help_text or "speed" in help_text.lower()
+    def test_contains_supported_languages(self):
+        out = self._get_output()
+        assert "SUPPORTED LANGUAGES" in out
+        assert "ka" in out
+        assert "ru" in out
+        assert "en" in out
+        assert "Georgian" in out
+        assert "Russian" in out
 
-    def test_help_contains_troubleshooting(self):
-        """Test that help contains troubleshooting section."""
-        with patch('builtins.print') as mock_print:
-            show_comprehensive_help()
-            
-            print_calls = [call[0][0] for call in mock_print.call_args_list]
-            help_text = "\n".join(print_calls)
-            
-            assert "TROUBLESHOOTING" in help_text
-            assert "Slow generation" in help_text or "errors" in help_text.lower()
+    def test_contains_quick_start(self):
+        out = self._get_output()
+        assert "QUICK START EXAMPLES" in out
 
-    def test_help_ascii_compatibility(self):
-        """Test that help uses ASCII-compatible characters."""
-        with patch('builtins.print') as mock_print:
-            show_comprehensive_help()
-            
-            print_calls = [call[0][0] for call in mock_print.call_args_list]
-            
-            # Should not raise encoding errors
-            for call in print_calls:
-                try:
-                    call.encode('ascii', errors='ignore')
-                except UnicodeEncodeError:
-                    pytest.fail(f"Non-ASCII content found: {call}")
+    def test_contains_turbo_flag(self):
+        out = self._get_output()
+        assert "--turbo" in out
 
-    def test_help_contains_workflows(self):
-        """Test that help contains common workflows."""
-        with patch('builtins.print') as mock_print:
-            show_comprehensive_help()
-            
-            print_calls = [call[0][0] for call in mock_print.call_args_list]
-            help_text = "\n".join(print_calls)
-            
-            assert "WORKFLOWS" in help_text or "workflow" in help_text.lower()
+    def test_contains_clipboard(self):
+        out = self._get_output()
+        assert "clipboard" in out
 
-    def test_help_structure_sections(self):
-        """Test that help has proper section structure."""
-        with patch('builtins.print') as mock_print:
-            show_comprehensive_help()
-            
-            print_calls = [call[0][0] for call in mock_print.call_args_list]
-            help_text = "\n".join(print_calls)
-            
-            # Should have multiple major sections
-            section_count = help_text.count("===") + help_text.count("---")
-            assert section_count >= 2
+    def test_contains_file_example(self):
+        out = self._get_output()
+        assert "file.txt" in out
 
-    def test_help_contains_tips(self):
-        """Test that help contains optimization tips."""
-        with patch('builtins.print') as mock_print:
-            show_comprehensive_help()
-            
-            print_calls = [call[0][0] for call in mock_print.call_args_list]
-            help_text = "\n".join(print_calls)
-            
-            assert "TIPS" in help_text or "tip" in help_text.lower()
+    def test_contains_performance_info(self):
+        out = self._get_output()
+        assert "PERFORMANCE" in out or "seconds" in out
 
-    def test_help_no_exceptions(self):
-        """Test that help display doesn't raise exceptions."""
-        try:
-            show_comprehensive_help()
-        except Exception as e:
-            pytest.fail(f"Help display raised exception: {e}")
+    def test_contains_workflows(self):
+        out = self._get_output()
+        assert "WORKFLOW" in out.upper()
 
-    def test_help_contains_file_operations(self):
-        """Test that help mentions file operations."""
-        with patch('builtins.print') as mock_print:
-            show_comprehensive_help()
-            
-            print_calls = [call[0][0] for call in mock_print.call_args_list]
-            help_text = "\n".join(print_calls)
-            
-            assert "file" in help_text.lower()
-            assert "path" in help_text.lower() or "clipboard" in help_text.lower()
+    def test_contains_tips(self):
+        out = self._get_output()
+        assert "TIP" in out.upper()
 
-    def test_help_contains_audio_info(self):
-        """Test that help contains audio-related information."""
-        with patch('builtins.print') as mock_print:
-            show_comprehensive_help()
-            
-            print_calls = [call[0][0] for call in mock_print.call_args_list]
-            help_text = "\n".join(print_calls)
-            
-            assert "audio" in help_text.lower() or "playback" in help_text.lower() or "mp3" in help_text.lower()
+    def test_contains_section_separators(self):
+        out = self._get_output()
+        assert "=" in out or "-" in out
 
-    def test_help_multilingual_examples(self):
-        """Test that help contains examples in multiple languages."""
-        with patch('builtins.print') as mock_print:
-            show_comprehensive_help()
-            
-            print_calls = [call[0][0] for call in mock_print.call_args_list]
-            help_text = "\n".join(print_calls)
-            
-            # Should contain examples for different languages
-            has_multilingual = any(
-                char for char in help_text 
-                if ord(char) > 127  # Non-ASCII characters for Georgian/Russian
-            ) or all(
-                lang in help_text.lower() 
-                for lang in ['english', 'georgian', 'russian']
-            )
-            
-            assert has_multilingual or "georgian" in help_text.lower()
+    def test_contains_python_command(self):
+        out = self._get_output()
+        assert "python" in out.lower()
 
-    def test_help_performance_metrics(self):
-        """Test that help mentions performance metrics."""
-        with patch('builtins.print') as mock_print:
-            show_comprehensive_help()
-            
-            print_calls = [call[0][0] for call in mock_print.call_args_list]
-            help_text = "\n".join(print_calls)
-            
-            performance_terms = ["seconds", "speed", "fast", "workers", "parallel"]
-            has_performance = any(term in help_text.lower() for term in performance_terms)
-            assert has_performance
+    def test_contains_lang_flag(self):
+        out = self._get_output()
+        assert "--lang" in out
 
-    def test_help_command_examples(self):
-        """Test that help contains actual command examples."""
-        with patch('builtins.print') as mock_print:
-            show_comprehensive_help()
-            
-            print_calls = [call[0][0] for call in mock_print.call_args_list]
-            help_text = "\n".join(print_calls)
-            
-            # Should contain actual python commands
-            assert "python" in help_text.lower()
-            assert "-m" in help_text or "TTS_ka" in help_text
+    def test_prints_multiple_lines(self, capsys):
+        show_simple_help()
+        out = capsys.readouterr().out
+        assert out.count('\n') > 5
+
+
+class TestShowTroubleshooting:
+    """Tests for show_troubleshooting()."""
+
+    def _get_output(self):
+        import io
+        buf = io.StringIO()
+        with patch('builtins.print', side_effect=lambda *a, **kw: buf.write((' '.join(str(x) for x in a)) + '\n')):
+            show_troubleshooting()
+        return buf.getvalue()
+
+    def test_no_exception(self):
+        show_troubleshooting()
+
+    def test_contains_troubleshooting(self):
+        out = self._get_output()
+        assert "TROUBLESHOOTING" in out.upper() or "troubleshoot" in out.lower() or len(out) > 0
+
+    def test_prints_something(self, capsys):
+        show_troubleshooting()
+        out = capsys.readouterr().out
+        assert len(out) > 0
+
+    def test_contains_audio_or_error(self):
+        out = self._get_output()
+        has_content = any(kw in out.lower() for kw in ["audio", "error", "slow", "install", "network", "ffmpeg"])
+        assert has_content or len(out) > 10

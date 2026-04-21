@@ -12,14 +12,14 @@ class TestSimpleHelp:
         """Test basic help display."""
         with patch('builtins.print') as mock_print:
             show_simple_help()
-            
+
             # Should have printed something
             assert mock_print.call_count > 0
-            
-            # Check for key content
-            print_calls = [call[0][0] for call in mock_print.call_args_list]
-            help_text = "\n".join(print_calls)
-            
+
+            # Check for key content (guard against calls with no positional args)
+            print_calls = [call[0][0] for call in mock_print.call_args_list if call[0]]
+            help_text = "\n".join(str(s) for s in print_calls)
+
             assert len(help_text) > 0
 
     def test_show_troubleshooting_basic(self):
@@ -42,10 +42,10 @@ class TestSimpleHelp:
         """Test that help contains expected text."""
         with patch('builtins.print') as mock_print:
             show_simple_help()
-            
-            print_calls = [call[0][0] for call in mock_print.call_args_list]
-            help_text = "\n".join(print_calls)
-            
+
+            print_calls = [call[0][0] for call in mock_print.call_args_list if call[0]]
+            help_text = "\n".join(str(s) for s in print_calls)
+
             # Should contain some basic help information
             assert isinstance(help_text, str)
             assert len(help_text) > 10  # Should have some content
@@ -54,10 +54,10 @@ class TestSimpleHelp:
         """Test that troubleshooting contains expected text."""
         with patch('builtins.print') as mock_print:
             show_troubleshooting()
-            
-            print_calls = [call[0][0] for call in mock_print.call_args_list]
-            troubleshoot_text = "\n".join(print_calls)
-            
+
+            print_calls = [call[0][0] for call in mock_print.call_args_list if call[0]]
+            troubleshoot_text = "\n".join(str(s) for s in print_calls)
+
             # Should contain some troubleshooting information
             assert isinstance(troubleshoot_text, str)
             assert len(troubleshoot_text) > 10  # Should have some content

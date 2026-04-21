@@ -1,281 +1,179 @@
 """Tests for ultra_fast module."""
 
 import pytest
-import asyncio
+import os
 from unittest.mock import MagicMock, patch, AsyncMock
 from TTS_ka.ultra_fast import (
-    process_chunks_parallel, 
-    calculate_optimal_workers, 
-    determine_strategy,
-    generate_tts_turbo
+    ultra_fast_parallel_generation,
+    ultra_fast_cleanup_parts,
+    smart_generate_long_text,
+    get_optimal_settings,
+    OPTIMAL_WORKERS,
 )
 
 
-class TestUltraFast:
-    """Test cases for ultra-fast TTS processing."""
+class TestGetOptimalSettings:
+    def test_short_text_direct(self):
+        text = "Hello world"  # < 100 words
+        result = get_optimal_settings(text)
+        assert result['method'] == 'direct'
+        assert result['chunk_seconds'] == 0
+        assert result['parallel'] == 1
 
-    def test_calculate_optimal_workers_small_chunks(self):
-        """Test optimal workers calculation for small chunk count."""
-        workers = calculate_optimal_workers(2, max_workers=8)
-        assert workers == 2
+    def test_medium_text_smart(self):
+        text = "word " * 200  # 200 words
+        result = get_optimal_settings(text)
+        assert result['method'] == 'smart'
+        assert result['chunk_seconds'] > 0
+        assert result['parallel'] >= 1
 
-    def test_calculate_optimal_workers_large_chunks(self):
-        """Test optimal workers calculation for large chunk count."""
-        workers = calculate_optimal_workers(20, max_workers=8)
-        assert workers == 8
+    def test_long_text_smart_more_workers(self):
+        text = "word " * 600  # 600 words
+        result = get_optimal_settings(text)
+        assert result['method'] == 'smart'
+        assert result['parallel'] >= 2
 
-    def test_calculate_optimal_workers_zero_chunks(self):
-        """Test optimal workers calculation for zero chunks."""
-        workers = calculate_optimal_workers(0, max_workers=8)
-        assert workers == 1
+    def test_very_long_text(self):
+        text = "word " * 3000  # 3000 words
+        result = get_optimal_settings(text)
+        assert result['method'] == 'smart'
+        assert result['parallel'] == OPTIMAL_WORKERS
 
-    def test_calculate_optimal_workers_default_max(self):
-        """Test optimal workers calculation with default max."""
-        workers = calculate_optimal_workers(10)
-        assert 1 <= workers <= 6
+    def test_returns_dict_with_required_keys(self):
+        result = get_optimal_settings("hello")
+        assert 'method' in result
+        assert 'chunk_seconds' in result
+        assert 'parallel' in result
 
-    def test_determine_strategy_short_text(self):
-        """Test strategy determination for short text."""
-        strategy, chunks, workers = determine_strategy(
-            "Short text", language="en", max_workers=4
-        )
-        assert strategy == "direct generation"
-        assert chunks == 1
-        assert workers == 1
+    @pytest.mark.parametrize("word_count", [50, 150, 600, 2500])
+    def test_various_lengths_return_valid_settings(self, word_count):
+        text = "word " * word_count
+        result = get_optimal_settings(text)
+        assert result['method'] in ('direct', 'smart')
+        assert result['chunk_seconds'] >= 0
+        assert result['parallel'] >= 1
 
-    def test_determine_strategy_medium_text(self):
-        """Test strategy determination for medium text."""
-        text = "This is a medium length text. " * 10
-        strategy, chunks, workers = determine_strategy(
-            text, language="en", max_workers=4
-        )
-        # Could be either direct or smart depending on exact length
-        assert strategy in ["direct generation", "smart generation"]
-        assert chunks >= 1
-        assert workers >= 1
 
-    def test_determine_strategy_long_text(self):
-        """Test strategy determination for long text."""
-        text = "This is a very long text that should be chunked. " * 50
-        strategy, chunks, workers = determine_strategy(
-            text, language="en", max_workers=8
-        )
-        assert strategy == "smart generation"
-        assert chunks > 1
-        assert workers > 1
+class TestOptimalWorkers:
+    def test_optimal_workers_positive(self):
+        assert OPTIMAL_WORKERS >= 1
 
-    def test_determine_strategy_empty_text(self):
-        """Test strategy determination for empty text."""
-        strategy, chunks, workers = determine_strategy(
-            "", language="en", max_workers=4
-        )
-        assert strategy == "direct generation"
-        assert chunks == 1
-        assert workers == 1
+    def test_optimal_workers_bounded(self):
+        assert OPTIMAL_WORKERS <= 32
 
-    @pytest.mark.asyncio
-    async def test_process_chunks_parallel_success(self, temp_dir):
-        """Test successful parallel chunk processing."""
-        chunks = ["Hello world", "This is a test"]
-        output_path = f"{temp_dir}/test.mp3"
-        
-        # Mock the audio generation function
-        async def mock_generate_audio(text, path, lang):
-            return True
-        
-        with patch('TTS_ka.ultra_fast.generate_audio_ultra_fast', side_effect=mock_generate_audio):
-            with patch('TTS_ka.ultra_fast.ProgressTracker') as mock_tracker:
-                mock_progress = MagicMock()
-                mock_tracker.return_value.__enter__.return_value = mock_progress
-                
-                with patch('TTS_ka.ultra_fast.concatenate_audio_files') as mock_concat:
-                    mock_concat.return_value = True
-                    
-                    result = await process_chunks_parallel(
-                        chunks, output_path, "en", max_workers=2
-                    )
-        
-        assert result == True
-        assert mock_progress.update.call_count == len(chunks)
 
-    @pytest.mark.asyncio
-    async def test_process_chunks_parallel_single_chunk(self, temp_dir):
-        """Test parallel processing with single chunk."""
-        chunks = ["Single chunk text"]
-        output_path = f"{temp_dir}/test.mp3"
-        
-        async def mock_generate_audio(text, path, lang):
-            return True
-        
-        with patch('TTS_ka.ultra_fast.generate_audio_ultra_fast', side_effect=mock_generate_audio):
-            result = await process_chunks_parallel(
-                chunks, output_path, "en", max_workers=1
+class TestUltraFastCleanupParts:
+    def test_deletes_existing_files(self, tmp_path):
+        f = tmp_path / "part.mp3"
+        f.write_bytes(b"data")
+        ultra_fast_cleanup_parts([str(f)])
+        assert not f.exists()
+
+    def test_skips_nonexistent_files(self):
+        ultra_fast_cleanup_parts(["/nonexistent/fake.mp3"])  # must not raise
+
+    def test_keep_parts_skips_deletion(self, tmp_path):
+        f = tmp_path / "part.mp3"
+        f.write_bytes(b"data")
+        ultra_fast_cleanup_parts([str(f)], keep_parts=True)
+        assert f.exists()  # file was kept
+
+    def test_empty_list(self):
+        ultra_fast_cleanup_parts([])  # must not raise
+
+    def test_deletes_many_files(self, tmp_path):
+        files = []
+        for i in range(10):
+            f = tmp_path / f"part_{i}.mp3"
+            f.write_bytes(b"x")
+            files.append(str(f))
+        ultra_fast_cleanup_parts(files)
+        for f in files:
+            assert not os.path.exists(f)
+
+
+class TestUltraFastParallelGeneration:
+    async def test_success_returns_parts(self, tmp_path):
+        chunks = ["Hello world", "Second chunk"]
+        output_path = str(tmp_path / "out.mp3")
+
+        with patch('TTS_ka.ultra_fast.fast_generate_audio', new=AsyncMock(return_value=True)), \
+             patch('TTS_ka.ultra_fast.create_progress_display') as mock_cpd:
+            mock_display = MagicMock()
+            mock_cpd.return_value = mock_display
+            parts = await ultra_fast_parallel_generation(chunks, "en", parallel=2, output_path=output_path)
+
+        assert len(parts) == 2
+
+    async def test_failure_returns_parts_still(self, tmp_path):
+        chunks = ["chunk one"]
+        output_path = str(tmp_path / "out.mp3")
+
+        with patch('TTS_ka.ultra_fast.fast_generate_audio', new=AsyncMock(return_value=False)), \
+             patch('TTS_ka.ultra_fast.create_progress_display', return_value=MagicMock()):
+            parts = await ultra_fast_parallel_generation(chunks, "en", parallel=1, output_path=output_path)
+
+        assert isinstance(parts, list)
+
+    async def test_first_chunk_uses_output_path_when_streaming(self, tmp_path):
+        chunks = ["chunk one", "chunk two"]
+        output_path = str(tmp_path / "out.mp3")
+        mock_player = MagicMock()
+        mock_player.add_chunk = MagicMock()
+
+        with patch('TTS_ka.ultra_fast.fast_generate_audio', new=AsyncMock(return_value=True)), \
+             patch('TTS_ka.ultra_fast.create_progress_display', return_value=MagicMock()):
+            parts = await ultra_fast_parallel_generation(
+                chunks, "en", parallel=2, streaming_player=mock_player, output_path=output_path
             )
-        
-        assert result == True
 
-    @pytest.mark.asyncio
-    async def test_process_chunks_parallel_failure(self, temp_dir):
-        """Test parallel processing with generation failure."""
-        chunks = ["Hello world", "This is a test"]
-        output_path = f"{temp_dir}/test.mp3"
-        
-        async def mock_generate_audio(text, path, lang):
-            return False  # Simulate failure
-        
-        with patch('TTS_ka.ultra_fast.generate_audio_ultra_fast', side_effect=mock_generate_audio):
-            with patch('TTS_ka.ultra_fast.ProgressTracker') as mock_tracker:
-                mock_progress = MagicMock()
-                mock_tracker.return_value.__enter__.return_value = mock_progress
-                
-                result = await process_chunks_parallel(
-                    chunks, output_path, "en", max_workers=2
-                )
-        
-        assert result == False
+        assert parts[0] == output_path
 
-    @pytest.mark.asyncio
-    async def test_process_chunks_parallel_empty_chunks(self, temp_dir):
-        """Test parallel processing with empty chunks."""
-        chunks = []
-        output_path = f"{temp_dir}/test.mp3"
-        
-        result = await process_chunks_parallel(
-            chunks, output_path, "en", max_workers=2
-        )
-        
-        assert result == False
+    async def test_exception_in_worker_caught(self, tmp_path, capsys):
+        chunks = ["bad chunk"]
+        output_path = str(tmp_path / "out.mp3")
 
-    @pytest.mark.asyncio
-    async def test_generate_tts_turbo_direct(self, sample_text, temp_dir):
-        """Test turbo TTS generation with direct strategy."""
-        output_path = f"{temp_dir}/test.mp3"
-        
-        async def mock_generate_audio(text, path, lang):
-            return True
-        
-        with patch('TTS_ka.ultra_fast.generate_audio_ultra_fast', side_effect=mock_generate_audio):
-            with patch('TTS_ka.ultra_fast.determine_strategy') as mock_strategy:
-                mock_strategy.return_value = ("direct generation", 1, 1)
-                
-                result = await generate_tts_turbo(
-                    sample_text, output_path, "en", max_workers=4
-                )
-        
-        assert result == True
+        with patch('TTS_ka.ultra_fast.fast_generate_audio', new=AsyncMock(side_effect=Exception("oops"))), \
+             patch('TTS_ka.ultra_fast.create_progress_display', return_value=MagicMock()):
+            parts = await ultra_fast_parallel_generation(chunks, "en", parallel=1, output_path=output_path)
 
-    @pytest.mark.asyncio
-    async def test_generate_tts_turbo_smart(self, sample_long_text, temp_dir):
-        """Test turbo TTS generation with smart strategy."""
-        output_path = f"{temp_dir}/test.mp3"
-        
-        with patch('TTS_ka.ultra_fast.determine_strategy') as mock_strategy:
-            mock_strategy.return_value = ("smart generation", 5, 4)
-            
-            with patch('TTS_ka.ultra_fast.smart_chunk_text') as mock_chunk:
-                mock_chunk.return_value = ["chunk1", "chunk2", "chunk3"]
-                
-                with patch('TTS_ka.ultra_fast.process_chunks_parallel') as mock_process:
-                    mock_process.return_value = True
-                    
-                    result = await generate_tts_turbo(
-                        sample_long_text, output_path, "en", max_workers=4
-                    )
-        
-        assert result == True
+        # Error is caught, warning is printed
+        assert "oops" in capsys.readouterr().out
 
-    @pytest.mark.asyncio
-    async def test_generate_tts_turbo_failure(self, sample_text, temp_dir):
-        """Test turbo TTS generation with failure."""
-        output_path = f"{temp_dir}/test.mp3"
-        
-        async def mock_generate_audio(text, path, lang):
-            return False
-        
-        with patch('TTS_ka.ultra_fast.generate_audio_ultra_fast', side_effect=mock_generate_audio):
-            with patch('TTS_ka.ultra_fast.determine_strategy') as mock_strategy:
-                mock_strategy.return_value = ("direct generation", 1, 1)
-                
-                result = await generate_tts_turbo(
-                    sample_text, output_path, "en", max_workers=4
-                )
-        
-        assert result == False
 
-    @pytest.mark.parametrize("chunk_count,max_workers,expected_min", [
-        (1, 4, 1),
-        (5, 4, 4),
-        (10, 8, 6),
-        (20, 6, 6)
-    ])
-    def test_calculate_optimal_workers_parametrized(self, chunk_count, max_workers, expected_min):
-        """Test optimal workers calculation with various parameters."""
-        workers = calculate_optimal_workers(chunk_count, max_workers)
-        assert workers >= 1
-        assert workers <= max_workers
-        if chunk_count > 0:
-            assert workers <= chunk_count
+class TestSmartGenerateLongText:
+    async def test_short_text_direct_generation(self, tmp_path, capsys):
+        """Very short text (< 200 words, no streaming) goes direct."""
+        output_path = str(tmp_path / "out.mp3")
+        text = "Hello world"
 
-    @pytest.mark.parametrize("text_multiplier", [1, 5, 10, 20, 50])
-    def test_determine_strategy_scaling(self, text_multiplier):
-        """Test strategy determination with different text sizes."""
-        base_text = "This is a test sentence. "
-        text = base_text * text_multiplier
-        
-        strategy, chunks, workers = determine_strategy(
-            text, language="en", max_workers=8
-        )
-        
-        assert strategy in ["direct generation", "smart generation"]
-        assert chunks >= 1
-        assert workers >= 1
-        assert workers <= 8
+        with patch('TTS_ka.ultra_fast.fast_generate_audio', new=AsyncMock(return_value=True)) as mfa:
+            await smart_generate_long_text(text, "en", output_path=output_path)
 
-    def test_strategy_consistency(self):
-        """Test that strategy determination is consistent."""
-        text = "This is a consistent test text."
-        
-        strategy1, chunks1, workers1 = determine_strategy(text, "en", 4)
-        strategy2, chunks2, workers2 = determine_strategy(text, "en", 4)
-        
-        assert strategy1 == strategy2
-        assert chunks1 == chunks2
-        assert workers1 == workers2
+        mfa.assert_called_once()
+        assert "direct" in capsys.readouterr().out
 
-    @pytest.mark.asyncio
-    async def test_generate_tts_turbo_georgian(self, sample_georgian_text, temp_dir):
-        """Test turbo generation with Georgian text."""
-        output_path = f"{temp_dir}/test_ka.mp3"
-        
-        async def mock_generate_audio(text, path, lang):
-            assert lang == "ka"
-            return True
-        
-        with patch('TTS_ka.ultra_fast.generate_audio_ultra_fast', side_effect=mock_generate_audio):
-            with patch('TTS_ka.ultra_fast.determine_strategy') as mock_strategy:
-                mock_strategy.return_value = ("direct generation", 1, 1)
-                
-                result = await generate_tts_turbo(
-                    sample_georgian_text, output_path, "ka", max_workers=4
-                )
-        
-        assert result == True
+    async def test_long_text_uses_chunks(self, tmp_path):
+        """Long text is split into chunks and merged."""
+        output_path = str(tmp_path / "out.mp3")
+        text = "word " * 300
 
-    @pytest.mark.asyncio
-    async def test_generate_tts_turbo_russian(self, sample_russian_text, temp_dir):
-        """Test turbo generation with Russian text."""
-        output_path = f"{temp_dir}/test_ru.mp3"
-        
-        async def mock_generate_audio(text, path, lang):
-            assert lang == "ru"
-            return True
-        
-        with patch('TTS_ka.ultra_fast.generate_audio_ultra_fast', side_effect=mock_generate_audio):
-            with patch('TTS_ka.ultra_fast.determine_strategy') as mock_strategy:
-                mock_strategy.return_value = ("direct generation", 1, 1)
-                
-                result = await generate_tts_turbo(
-                    sample_russian_text, output_path, "ru", max_workers=4
-                )
-        
-        assert result == True
+        with patch('TTS_ka.ultra_fast.ultra_fast_parallel_generation', new=AsyncMock(return_value=[output_path])) as mupg, \
+             patch('TTS_ka.ultra_fast.fast_merge_audio_files') as mmaf, \
+             patch('TTS_ka.ultra_fast.create_progress_display', return_value=MagicMock()):
+            await smart_generate_long_text(text, "en", chunk_seconds=20, parallel=2, output_path=output_path)
+
+        mupg.assert_called_once()
+
+    async def test_empty_chunks_raises(self, tmp_path):
+        output_path = str(tmp_path / "out.mp3")
+
+        with patch('TTS_ka.chunking.split_text_into_chunks', return_value=[]):
+            with pytest.raises(ValueError, match="No text chunks"):
+                await smart_generate_long_text("word " * 300, "en", chunk_seconds=20, output_path=output_path)
+
+    @pytest.mark.parametrize("lang", ["ka", "ru", "en"])
+    async def test_supported_languages(self, tmp_path, lang):
+        output_path = str(tmp_path / f"out_{lang}.mp3")
+        with patch('TTS_ka.ultra_fast.fast_generate_audio', new=AsyncMock(return_value=True)):
+            await smart_generate_long_text("hello", lang, output_path=output_path)

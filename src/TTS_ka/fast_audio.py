@@ -1,10 +1,35 @@
-"""Fast audio generation using optimized HTTP client and streaming."""
+"""Fast audio generation using optimized HTTP client and streaming.
+
+Design
+------
+``AudioGenerator`` (Protocol) decouples callers from the concrete TTS
+back-end.  Two implementations are provided:
+
+* ``HttpAudioGenerator``  — direct Azure Cognitive Services call (fastest).
+* ``EdgeTTSGenerator``    — edge-tts library fallback.
+
+``AudioMerger`` (Protocol) abstracts the three merge back-ends:
+
+* ``SoundFileMerger`` — soundfile + numpy (lowest latency).
+* ``PydubMerger``     — PyDub (reliable pure-Python MP3 handling).
+* ``FFmpegMerger``    — subprocess ffmpeg (always available when installed).
+
+``MergerFactory.create()`` picks the best available merger at runtime.
+
+The module-level ``fast_generate_audio`` / ``fast_merge_audio_files`` /
+``play_audio`` functions are the public API used by the rest of the package.
+"""
+
+from __future__ import annotations
 
 import os
 import sys
 import asyncio
-from typing import Optional
+import shutil
+from typing import List, Optional, Protocol, runtime_checkable
+
 import httpx
+
 try:
     import uvloop
     HAS_UVLOOP = True
@@ -13,206 +38,284 @@ except ImportError:
 
 try:
     import soundfile as sf
+    import numpy as np
     HAS_SOUNDFILE = True
 except ImportError:
     HAS_SOUNDFILE = False
 
-# Cache functionality removed
+try:
+    from pydub import AudioSegment
+    HAS_PYDUB = True
+except ImportError:
+    HAS_PYDUB = False
 
-# Optimized voice selection for maximum speed - ka/ru/en only
-VOICE_MAP = {
-    'ka': 'ka-GE-EkaNeural',    # Georgian - Premium quality
-    'ru': 'ru-RU-SvetlanaNeural',  # Russian - Fast neural voice
-    'en': 'en-GB-SoniaNeural'      # English - Fastest neural voice
-}
-
-# Global HTTP client for connection reuse
-_http_client: Optional[httpx.AsyncClient] = None
-
-async def get_http_client() -> httpx.AsyncClient:
-    """Get or create optimized HTTP client with connection pooling."""
-    global _http_client
-    if _http_client is None:
-        limits = httpx.Limits(max_keepalive_connections=20, max_connections=100)
-        timeout = httpx.Timeout(30.0, connect=10.0)
-        _http_client = httpx.AsyncClient(
-            limits=limits, 
-            timeout=timeout,
-            http2=True  # Enable HTTP/2 for better performance
-        )
-    return _http_client
-
-
+from .constants import (
+    VOICE_MAP,
+    HTTP_TIMEOUT_TOTAL,
+    HTTP_TIMEOUT_CONNECT,
+    HTTP_MAX_KEEPALIVE,
+    HTTP_MAX_CONNECTIONS,
+)
 from .not_reading import replace_not_readable
 
 
-async def fast_generate_audio(text: str, language: str, output_path: str, 
-                             quiet: bool = False) -> bool:
-    """Ultra-fast audio generation with optimized HTTP."""
-    
-    # Set faster event loop if available
-    if HAS_UVLOOP and sys.platform != 'win32':
-        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-    
-    voice = VOICE_MAP.get(language)
-    if not voice:
-        if not quiet:
-            print(f"❌ Language '{language}' not supported. Use: ka, ru, en")
-        return False
-    
-    try:
-        # Use optimized HTTP client instead of edge-tts
-        client = await get_http_client()
-        
-        # Sanitize text and generate SSML
-        safe_text = replace_not_readable(text)
-        ssml = f"""<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>
-            <voice name='{voice}'>{safe_text}</voice>
-        </speak>"""
-        
-        # Direct API call to Azure Cognitive Services TTS
-        headers = {
-            'Content-Type': 'application/ssml+xml',
-            'X-Microsoft-OutputFormat': 'audio-16khz-128kbitrate-mono-mp3',
-            'User-Agent': 'Mozilla/5.0'
-        }
-        
-        # Fast streaming download
-        url = "https://speech.platform.bing.com/synthesize"
-        
-        async with client.stream('POST', url, headers=headers, content=ssml.encode()) as response:
-            if response.status_code == 200:
-                # Stream directly to file for fastest I/O
-                with open(output_path, 'wb') as f:
-                    async for chunk in response.aiter_bytes(chunk_size=8192):
-                        f.write(chunk)
-                
-                if not quiet:
-                    print(f"⚡ Generated: {os.path.abspath(output_path)}")
-                return True
-            else:
-                # Fallback to edge-tts if direct API fails
-                return await fallback_generate_audio(text, language, output_path, quiet)
-                
-    except Exception:
-        # Fallback to edge-tts 
-        return await fallback_generate_audio(text, language, output_path, quiet)
+# ── Protocols ─────────────────────────────────────────────────────────────────
+
+@runtime_checkable
+class AudioGenerator(Protocol):
+    """Interface for a single-chunk TTS generator."""
+
+    async def generate(self, text: str, language: str, output_path: str,
+                       quiet: bool = False) -> bool:
+        """Generate audio from *text* and write it to *output_path*.
+
+        Returns ``True`` on success, ``False`` on failure.
+        """
+        ...
 
 
-async def fallback_generate_audio(text: str, language: str, output_path: str, 
-                                 quiet: bool = False) -> bool:
-    """Fallback to edge-tts if fast method fails."""
-    try:
-        from edge_tts import Communicate
+class AudioMerger(Protocol):
+    """Interface for merging multiple audio part-files into one output file."""
+
+    def merge(self, parts: List[str], output_path: str) -> None:
+        """Concatenate *parts* and write the result to *output_path*."""
+        ...
+
+
+# ── Shared HTTP client (module-level singleton) ───────────────────────────────
+
+_http_client: Optional[httpx.AsyncClient] = None
+
+
+async def get_http_client() -> httpx.AsyncClient:
+    """Return the shared async HTTP client, creating it on first call."""
+    global _http_client
+    if _http_client is None:
+        limits = httpx.Limits(
+            max_keepalive_connections=HTTP_MAX_KEEPALIVE,
+            max_connections=HTTP_MAX_CONNECTIONS,
+        )
+        timeout = httpx.Timeout(HTTP_TIMEOUT_TOTAL, connect=HTTP_TIMEOUT_CONNECT)
+        _http_client = httpx.AsyncClient(limits=limits, timeout=timeout)
+    return _http_client
+
+
+# ── AudioGenerator implementations ───────────────────────────────────────────
+
+class HttpAudioGenerator:
+    """Primary generator: direct Azure Cognitive Services TTS endpoint.
+
+    Uses the shared ``httpx.AsyncClient`` for connection reuse and streams
+    the response directly to disk in 8 KB chunks.
+    """
+
+    _TTS_URL = "https://speech.platform.bing.com/synthesize"
+    _HEADERS = {
+        "Content-Type": "application/ssml+xml",
+        "X-Microsoft-OutputFormat": "audio-16khz-128kbitrate-mono-mp3",
+        "User-Agent": "Mozilla/5.0",
+    }
+
+    async def generate(self, text: str, language: str, output_path: str,
+                       quiet: bool = False) -> bool:
         voice = VOICE_MAP.get(language)
         if not voice:
             if not quiet:
-                print(f"❌ Language '{language}' not supported. Use: ka, ru, en")
+                print(f"❌ Language '{language}' not supported. Use: {', '.join(VOICE_MAP)}")
             return False
-        
-        clean_text = replace_not_readable(text)
-        communicate = Communicate(clean_text, voice)
-        await communicate.save(output_path)
-        
-        if not quiet:
-            print(f"Generated (fallback): {os.path.abspath(output_path)}")
-        return True
-    except Exception as e:
-        if not quiet:
-            print(f"Error generating audio: {e}")
-        return False
 
-
-def fast_merge_audio_files(parts: list[str], output_path: str) -> None:
-    """Ultra-fast audio merging using soundfile when available."""
-    if not parts:
-        raise ValueError("No parts to merge")
-    
-    # Remove existing output
-    if os.path.exists(output_path):
-        os.remove(output_path)
-    
-    if HAS_SOUNDFILE and len(parts) > 1:
+        safe_text = replace_not_readable(text)
+        ssml = (
+            f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>"
+            f"<voice name='{voice}'>{safe_text}</voice></speak>"
+        )
         try:
-            # Use soundfile for fastest concatenation
-            import numpy as np
-            
-            combined_data = []
-            sample_rate = None
-            
-            for part in parts:
-                try:
-                    data, sr = sf.read(part)
-                    if sample_rate is None:
-                        sample_rate = sr
-                    combined_data.append(data)
-                except Exception:
-                    # Fallback for this part
-                    continue
-            
-            if combined_data and sample_rate:
-                final_audio = np.concatenate(combined_data, axis=0)
-                sf.write(output_path, final_audio, sample_rate)
-                return
-        except Exception:
-            pass  # Fall through to other methods
-    
-    # Fallback to existing methods
-    try:
-        from pydub import AudioSegment
+            client = await get_http_client()
+            async with client.stream(
+                "POST", self._TTS_URL, headers=self._HEADERS, content=ssml.encode()
+            ) as response:
+                if response.status_code == 200:
+                    with open(output_path, "wb") as f:
+                        async for chunk in response.aiter_bytes(chunk_size=8192):
+                            f.write(chunk)
+                    if not quiet:
+                        print(f"⚡ Generated: {os.path.abspath(output_path)}")
+                    return True
+                return False
+        except (httpx.HTTPError, httpx.TimeoutException, OSError):
+            return False
+
+
+class EdgeTTSGenerator:
+    """Fallback generator using the ``edge-tts`` library."""
+
+    async def generate(self, text: str, language: str, output_path: str,
+                       quiet: bool = False) -> bool:
+        voice = VOICE_MAP.get(language)
+        if not voice:
+            if not quiet:
+                print(f"❌ Language '{language}' not supported. Use: {', '.join(VOICE_MAP)}")
+            return False
+        try:
+            from edge_tts import Communicate
+            clean_text = replace_not_readable(text)
+            communicate = Communicate(clean_text, voice)
+            await communicate.save(output_path)
+            if not quiet:
+                print(f"Generated (fallback): {os.path.abspath(output_path)}")
+            return True
+        except Exception as e:
+            if not quiet:
+                print(f"Error generating audio: {e}")
+            return False
+
+
+# ── AudioMerger implementations ───────────────────────────────────────────────
+
+class SoundFileMerger:
+    """Merges MP3 parts via soundfile + numpy (fastest; lossless concat)."""
+
+    def merge(self, parts: List[str], output_path: str) -> None:
+        combined_data = []
+        sample_rate: Optional[int] = None
+        for part in parts:
+            try:
+                data, sr = sf.read(part)
+                if sample_rate is None:
+                    sample_rate = sr
+                combined_data.append(data)
+            except (OSError, RuntimeError, ValueError):
+                continue
+        if not combined_data or sample_rate is None:
+            raise RuntimeError("SoundFileMerger: no valid audio parts to merge")
+        final_audio = np.concatenate(combined_data, axis=0)
+        sf.write(output_path, final_audio, sample_rate)
+
+
+class PydubMerger:
+    """Merges MP3 parts using PyDub."""
+
+    def merge(self, parts: List[str], output_path: str) -> None:
         combined = AudioSegment.from_mp3(parts[0])
         for part in parts[1:]:
             if os.path.exists(part):
                 combined += AudioSegment.from_mp3(part)
-        combined.export(output_path, format='mp3')
-    except (ImportError, Exception):
-        # FFmpeg fallback - use absolute paths and better error handling
-        listfile = '.ff_concat.txt'
+        combined.export(output_path, format="mp3")
+
+
+class FFmpegMerger:
+    """Merges MP3 parts via an FFmpeg concat-demuxer subprocess."""
+
+    _LISTFILE = ".ff_concat.txt"
+
+    def merge(self, parts: List[str], output_path: str) -> None:
         try:
-            with open(listfile, 'w', encoding='utf-8') as f:
+            with open(self._LISTFILE, "w", encoding="utf-8") as f:
                 for part in parts:
                     if os.path.exists(part):
-                        # Use forward slashes for FFmpeg compatibility
-                        abs_path = os.path.abspath(part).replace('\\', '/')
+                        abs_path = os.path.abspath(part).replace("\\", "/")
                         f.write(f"file '{abs_path}'\n")
-            
-            # More robust FFmpeg command with quotes
-            cmd = f'ffmpeg -y -hide_banner -loglevel error -f concat -safe 0 -i "{listfile}" -c copy "{output_path}"'
+            cmd = (
+                f'ffmpeg -y -hide_banner -loglevel error -f concat -safe 0 '
+                f'-i "{self._LISTFILE}" -c copy "{output_path}"'
+            )
             rc = os.system(cmd)
             if rc != 0:
-                # Try alternative approach - copy first file for streaming
-                import shutil
+                # Last resort: copy first part so caller always has *something*
                 if os.path.exists(parts[0]):
                     shutil.copy2(parts[0], output_path)
                 else:
-                    raise RuntimeError('Audio merge failed - no valid parts found')
+                    raise RuntimeError("FFmpegMerger: no valid parts found")
         finally:
             try:
-                os.remove(listfile)
-            except Exception:
+                os.remove(self._LISTFILE)
+            except OSError:
                 pass
 
 
+class MergerFactory:
+    """Returns the fastest ``AudioMerger`` supported by the current environment."""
+
+    @staticmethod
+    def create() -> AudioMerger:
+        if HAS_SOUNDFILE:
+            return SoundFileMerger()
+        if HAS_PYDUB:
+            return PydubMerger()
+        return FFmpegMerger()
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+async def fast_generate_audio(text: str, language: str, output_path: str,
+                               quiet: bool = False) -> bool:
+    """Generate audio: try HTTP first, fall back to edge-tts on any failure."""
+    if HAS_UVLOOP and sys.platform != "win32":
+        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+
+    if await HttpAudioGenerator().generate(text, language, output_path, quiet=True):
+        if not quiet:
+            print(f"⚡ Generated: {os.path.abspath(output_path)}")
+        return True
+
+    if not quiet:
+        print(f"Warning: fast HTTP failed, falling back to edge-tts")
+    return await EdgeTTSGenerator().generate(text, language, output_path, quiet)
+
+
+async def fallback_generate_audio(text: str, language: str, output_path: str,
+                                   quiet: bool = False) -> bool:
+    """Generate audio using edge-tts directly (skips the HTTP attempt)."""
+    return await EdgeTTSGenerator().generate(text, language, output_path, quiet)
+
+
+def fast_merge_audio_files(parts: List[str], output_path: str) -> None:
+    """Merge audio parts using the best available strategy, with fallbacks."""
+    if not parts:
+        raise ValueError("No parts to merge")
+    if os.path.exists(output_path):
+        os.remove(output_path)
+    if len(parts) == 1:
+        if os.path.abspath(parts[0]) != os.path.abspath(output_path):
+            shutil.copy2(parts[0], output_path)
+        return
+
+    mergers: List[AudioMerger] = []
+    if HAS_SOUNDFILE:
+        mergers.append(SoundFileMerger())
+    if HAS_PYDUB:
+        mergers.append(PydubMerger())
+    mergers.append(FFmpegMerger())
+
+    last_error: Optional[Exception] = None
+    for merger in mergers:
+        try:
+            merger.merge(parts, output_path)
+            return
+        except Exception as exc:
+            last_error = exc
+
+    raise RuntimeError(f"All merge strategies failed: {last_error}")
+
+
 def play_audio(file_path: str) -> None:
-    """Fast audio playback with platform optimization."""
+    """Play an audio file using a platform-appropriate command."""
     try:
         abs_path = os.path.abspath(file_path)
-        if sys.platform.startswith('win'):
-            # Fastest Windows playback
+        if sys.platform.startswith("win"):
             os.startfile(abs_path)
-        elif sys.platform == 'darwin':
+        elif sys.platform == "darwin":
             os.system(f"open '{abs_path}' &")
         else:
-            # Linux - try multiple fast players
             for cmd in [f"mpv '{abs_path}' &", f"vlc '{abs_path}' &", f"xdg-open '{abs_path}' &"]:
                 if os.system(cmd) == 0:
                     break
-    except Exception:
+    except OSError:
         pass
 
 
-async def cleanup_http():
-    """Clean up HTTP client resources."""
+async def cleanup_http() -> None:
+    """Close and discard the shared HTTP client."""
     global _http_client
     if _http_client:
         await _http_client.aclose()

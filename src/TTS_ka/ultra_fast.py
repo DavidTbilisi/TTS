@@ -5,7 +5,6 @@ import os
 import sys
 from typing import List
 from concurrent.futures import ThreadPoolExecutor
-import multiprocessing as mp
 
 try:
     import uvloop
@@ -14,11 +13,12 @@ except ImportError:
     HAS_UVLOOP = False
 
 from .fast_audio import fast_generate_audio, fast_merge_audio_files
-from .rich_progress import create_progress_display, animate_loading
+from .rich_progress import create_progress_display
 from .streaming_player import StreamingAudioPlayer
+from .constants import MAX_PARALLEL_WORKERS, STREAMING_CHUNK_SECONDS
 
 # Optimal worker count
-OPTIMAL_WORKERS = min(32, (os.cpu_count() or 1) * 4)
+OPTIMAL_WORKERS = min(MAX_PARALLEL_WORKERS, (os.cpu_count() or 1) * 4)
 
 
 async def ultra_fast_parallel_generation(chunks: List[str], language: str, 
@@ -62,6 +62,7 @@ async def ultra_fast_parallel_generation(chunks: List[str], language: str,
     sem = asyncio.Semaphore(max_workers)
     
     async def worker(i: int, text: str, output: str):
+        """Generate audio for a single chunk, notifying the streaming player on success."""
         async with sem:
             try:
                 result = await fast_generate_audio(text, language, output, quiet=True)
@@ -116,10 +117,9 @@ def ultra_fast_cleanup_parts(parts: List[str], keep_parts: bool = False) -> None
                 time.sleep(0.1)
                 if os.path.exists(part):
                     os.remove(part)
-            except Exception:
-                # If still can't remove, silently continue (file will be cleaned up later)
-                pass
-        except Exception:
+            except OSError:
+                pass  # File will be cleaned up on next run
+        except OSError:
             pass
     
     # Use thread pool for parallel file deletion
@@ -145,7 +145,7 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
     for old_part in glob.glob('.part_*.mp3'):
         try:
             os.remove(old_part)
-        except Exception:
+        except OSError:
             pass
     
     start = time.perf_counter()
@@ -169,7 +169,9 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
         chunk_seconds = optimal_chunk_seconds
     
     chunks = split_text_into_chunks(text, approx_seconds=chunk_seconds)
-    
+    if not chunks:
+        raise ValueError("No text chunks to process — input text may be empty or whitespace-only")
+
     if len(chunks) == 1 and not enable_streaming:
         # Still short enough for direct generation (unless streaming is requested)
         await fast_generate_audio(text, language, output_path)
@@ -185,9 +187,10 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
         streaming_player = StreamingAudioPlayer(show_gui=show_gui)
         # Enforce GUI-only mode when requested: require VLC be available
         if show_gui:
-            detected = streaming_player._find_streaming_player()
+            from .streaming_player import PlayerDetector
+            detected = PlayerDetector.find()
             if not detected or 'vlc' not in os.path.basename(detected).lower():
-                print("ERROR: GUI mode requested but VLC was not found. Install VLC or run without GUI.")
+                print("Error: GUI mode requested but VLC was not found. Install VLC or run without GUI.")
                 raise SystemExit(1)
         streaming_player.start()
         if sys.platform.startswith('win'):
@@ -234,8 +237,8 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
                         if os.path.exists(backup_path):
                             try:
                                 shutil.move(backup_path, output_path)
-                            except Exception:
-                                pass
+                            except OSError as restore_err:
+                                print(f"⚠️  Could not restore backup: {restore_err}")
             # For single chunk streaming, file is already complete in output_path
         else:
             # Normal merge for non-streaming
