@@ -94,8 +94,13 @@ class TestMain:
 
     def test_keyboard_interrupt_handled(self, capsys):
         """KeyboardInterrupt during asyncio.run is caught gracefully."""
+        def interrupt_before_run(coro):
+            if hasattr(coro, "close"):
+                coro.close()
+            raise KeyboardInterrupt
+
         with patch('sys.argv', ['TTS_ka', 'hi', '--lang', 'en', '--no-play']):
-            with patch('asyncio.run', side_effect=KeyboardInterrupt):
+            with patch('asyncio.run', side_effect=interrupt_before_run):
                 from TTS_ka.main import main
                 main()
         assert "cancelled" in capsys.readouterr().out.lower()

@@ -192,6 +192,10 @@ class StreamingAudioPlayer:
             self._play_mpv(player)
         elif "ffplay" in player:
             self._play_ffplay(player)
+        elif "mplayer" in player:
+            self._play_mplayer(player)
+        else:
+            self._unix_fallback()
 
     def _unix_fallback(self) -> None:
         """Drain queue, play only the first chunk with the system default."""
@@ -201,12 +205,19 @@ class StreamingAudioPlayer:
             if chunk is None:
                 break
             chunks.append(chunk)
-        if chunks:
-            default = "afplay" if sys.platform == "darwin" else "mpg123"
-            try:
-                os.system(f"{default} '{chunks[0]}' &")
-            except OSError:
-                pass
+        if not chunks:
+            return
+        default = "afplay" if sys.platform == "darwin" else "mpg123"
+        path = os.path.abspath(chunks[0])
+        try:
+            self.process = subprocess.Popen(
+                [default, path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError:
+            pass
 
     def _play_vlc_unix(self, player: str) -> None:
         chunks: List[str] = []
@@ -269,15 +280,33 @@ class StreamingAudioPlayer:
             if chunk is None:
                 break
             chunks.append(chunk)
-            if len(chunks) == 1:
-                try:
-                    self.process = subprocess.Popen(
-                        [player, "-nodisp", "-autoexit", "-loglevel", "quiet", chunk],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                except OSError as e:
-                    print(f"⚠️  Could not start ffplay: {e}")
+        if chunks:
+            try:
+                self.process = subprocess.Popen(
+                    [player, "-nodisp", "-autoexit", "-loglevel", "quiet"] + chunks,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except OSError as e:
+                print(f"⚠️  Could not start ffplay: {e}")
+
+    def _play_mplayer(self, player: str) -> None:
+        chunks: List[str] = []
+        while True:
+            chunk = self.chunk_queue.get()
+            if chunk is None:
+                break
+            chunks.append(chunk)
+        if chunks:
+            try:
+                print(f"🔊 Starting mplayer with {len(chunks)} chunks")
+                self.process = subprocess.Popen(
+                    [player, "-really-quiet", "-noconsolecontrols"] + chunks,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception as e:
+                print(f"⚠️  mplayer playback error: {e}")
 
     def _create_vlc_playlist(self, chunks: List[str]) -> Optional[str]:
         """Write an M3U playlist file for seamless VLC playback."""

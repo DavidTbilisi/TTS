@@ -1,7 +1,10 @@
 """Tests for ultra_fast module."""
 
-import pytest
+import asyncio
 import os
+import time
+
+import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 from TTS_ka.ultra_fast import (
     ultra_fast_parallel_generation,
@@ -177,3 +180,51 @@ class TestSmartGenerateLongText:
         output_path = str(tmp_path / f"out_{lang}.mp3")
         with patch('TTS_ka.ultra_fast.fast_generate_audio', new=AsyncMock(return_value=True)):
             await smart_generate_long_text("hello", lang, output_path=output_path)
+
+
+@pytest.mark.slow
+class TestBigTextParallelVsSequentialTiming:
+    """Demonstrate why asyncio parallelism matters for many chunks (simulated I/O latency)."""
+
+    async def test_parallel_wall_clock_beats_sequential(self, tmp_path):
+        """Many chunks × fixed async sleep: parallel=1 ~ n×sleep; parallel=8 ~ ⌈n/8⌉×sleep."""
+        n_chunks = 20
+        per_chunk_sleep = 0.04
+        # Long-ish strings per chunk (similar to real chunk payloads)
+        chunks = [f"paragraph {i} " + ("word " * 40) for i in range(n_chunks)]
+        output_path = str(tmp_path / "out.mp3")
+
+        async def fake_io_bound_generate(text, language, out_path, quiet=False):
+            await asyncio.sleep(per_chunk_sleep)
+            with open(out_path, "wb") as f:
+                f.write(b"\x00")
+            return True
+
+        mock_progress = MagicMock()
+        cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with patch("TTS_ka.ultra_fast.fast_generate_audio", new=fake_io_bound_generate), \
+                 patch("TTS_ka.ultra_fast.create_progress_display", return_value=mock_progress):
+                t0 = time.perf_counter()
+                await ultra_fast_parallel_generation(
+                    chunks, "en", parallel=1, output_path=output_path
+                )
+                t_sequential = time.perf_counter() - t0
+
+                for p in tmp_path.glob(".part_*.mp3"):
+                    p.unlink(missing_ok=True)
+
+                t0 = time.perf_counter()
+                await ultra_fast_parallel_generation(
+                    chunks, "en", parallel=8, output_path=output_path
+                )
+                t_parallel = time.perf_counter() - t0
+        finally:
+            os.chdir(cwd)
+
+        # Sequential ≈ n·sleep; high parallelism ≈ ⌈n/p⌉·sleep (+ overhead).
+        assert t_parallel < t_sequential * 0.55, (
+            f"expected parallel (workers=8) wall time << sequential (workers=1); "
+            f"got parallel={t_parallel:.3f}s vs sequential={t_sequential:.3f}s"
+        )

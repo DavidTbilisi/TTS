@@ -11,7 +11,6 @@ import time
 
 from .fast_audio import fast_generate_audio, play_audio, cleanup_http
 from .ultra_fast import smart_generate_long_text, get_optimal_settings, OPTIMAL_WORKERS
-from .chunking import should_chunk_text
 from .simple_help import show_simple_help, show_troubleshooting
 from .constants import STREAMING_CHUNK_SECONDS
 

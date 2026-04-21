@@ -227,6 +227,44 @@ class TestStreamingAudioPlayer:
             result = PlayerDetector._locate_unix("mpv")
         assert result is None
 
+    @patch('subprocess.Popen')
+    def test_unix_fallback_subprocess_argv_linux(self, mock_popen, temp_dir):
+        """Unix fallback uses argv list (no shell) so paths with quotes are safe."""
+        player = StreamingAudioPlayer()
+        chunk = os.path.join(temp_dir, "chunk's path.mp3")
+        with open(chunk, 'wb') as f:
+            f.write(b'audio')
+        player.chunk_queue.put(chunk)
+        player.chunk_queue.put(None)
+
+        with patch('sys.platform', 'linux'):
+            player._unix_fallback()
+
+        mock_popen.assert_called_once()
+        cmd = mock_popen.call_args[0][0]
+        assert cmd[0] == 'mpg123'
+        assert os.path.isabs(cmd[1])
+        assert cmd[1].endswith("chunk's path.mp3")
+
+    @patch('subprocess.Popen')
+    def test_unix_fallback_subprocess_argv_darwin(self, mock_popen, temp_dir):
+        from TTS_ka.streaming_player import StreamingAudioPlayer as SAP
+
+        player = SAP()
+        chunk = os.path.join(temp_dir, "a.mp3")
+        with open(chunk, 'wb') as f:
+            f.write(b'x')
+        player.chunk_queue.put(chunk)
+        player.chunk_queue.put(None)
+
+        with patch('sys.platform', 'darwin'):
+            player._unix_fallback()
+
+        mock_popen.assert_called_once()
+        cmd = mock_popen.call_args[0][0]
+        assert cmd[0] == 'afplay'
+        assert os.path.isabs(cmd[1])
+
     def test_stop_with_process_oserror(self):
         """stop() handles OSError when terminating the player process."""
         player = StreamingAudioPlayer()

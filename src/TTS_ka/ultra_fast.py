@@ -69,10 +69,10 @@ async def ultra_fast_parallel_generation(chunks: List[str], language: str,
                 # If streaming is enabled, add chunk to player as soon as it's ready
                 if result and streaming_player:
                     streaming_player.add_chunk(output)
-                return result
+                return (i, result)
             except Exception as e:
                 print(f"⚠️  Error generating part {i}: {e}")
-                return False
+                return (i, False)
     
     # Create all tasks at once for better scheduling
     tasks = [asyncio.create_task(worker(i, chunks[i], parts[i])) 
@@ -83,14 +83,11 @@ async def ultra_fast_parallel_generation(chunks: List[str], language: str,
     
     try:
         # Process tasks as they complete with rich progress updates
-        completed_tasks = []
         for coro in asyncio.as_completed(tasks):
-            result = await coro
-            completed_tasks.append(result)
-            
-            # Update progress with chunk word count
-            chunk_idx = len(completed_tasks) - 1
-            chunk_words = len(chunks[chunk_idx].split()) if chunk_idx < len(chunks) else 0
+            chunk_idx, _result = await coro
+            chunk_words = (
+                len(chunks[chunk_idx].split()) if 0 <= chunk_idx < len(chunks) else 0
+            )
             progress.update(chunk_words)
         
         progress.finish(success=True)

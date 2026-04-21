@@ -1,8 +1,7 @@
 """Tests for main module CLI functionality."""
 
 import pytest
-import asyncio
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, AsyncMock
 from TTS_ka.main import get_input_text, main
 
 
@@ -37,17 +36,15 @@ class TestMain:
         assert result == "nonexistent.txt"
 
     def test_main_basic_flow(self):
-        """Test basic main function flow (main() is sync; it calls asyncio.run internally)."""
-        test_args = ["test_script", "Hello world"]
+        """Exercise main() with real asyncio.run so inner coroutine is fully awaited."""
+        test_args = ["test_script", "Hello world", "--lang", "en", "--no-play"]
 
         with patch('sys.argv', test_args), \
-             patch('TTS_ka.main.asyncio') as mock_asyncio, \
+             patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)), \
+             patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
+             patch('TTS_ka.main.get_optimal_settings', return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}), \
              patch('builtins.print'):
-            mock_asyncio.run = MagicMock()
-            try:
-                main()
-            except SystemExit:
-                pass
+            main()
 
     def test_get_input_text_unicode(self):
         """Test processing Unicode text."""
