@@ -86,6 +86,17 @@ class TestFastGenerateAudio:
         assert result is True
         mock_fb.assert_called_once()
 
+    async def test_tts_ka_skip_http_skips_bing_request(self, temp_dir, monkeypatch):
+        monkeypatch.setenv("TTS_KA_SKIP_HTTP", "1")
+        out = os.path.join(temp_dir, "out.mp3")
+        with patch("TTS_ka.fast_audio.get_http_client", new=AsyncMock()) as mock_http, \
+             patch.object(
+                 EdgeTTSGenerator, "generate", new_callable=AsyncMock, return_value=True
+             ) as mock_edge:
+            await fast_generate_audio("Hi", "en", out, quiet=True)
+        mock_http.assert_not_called()
+        mock_edge.assert_called_once()
+
     async def test_http_error_falls_back(self, temp_dir):
         import httpx
         out = os.path.join(temp_dir, "out.mp3")

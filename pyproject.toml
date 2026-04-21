@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "TTS_ka"
-version = "1.4.3"
+version = "1.4.4"
 authors = [
   { name="David Chincharashvili", email="davidchincharashvili@gmail.com" },
 ]
@@ -20,7 +20,7 @@ classifiers = [
 ]
 license = { file = "LICENSE" }
 dependencies = [
-    "edge-tts>=6.1.9",
+    "edge-tts>=7.2.7",
     "pydub>=0.25.1",  # optional / recommended runtime helpers
     "tqdm>=4.65.0",
     "httpx>=0.28.1",

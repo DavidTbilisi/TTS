@@ -218,7 +218,7 @@ python -m TTS_ka clipboard --lang en
 
 **Required:**
 ```bash
-pip install edge-tts>=6.1.9        # Core TTS engine
+pip install "edge-tts>=7.2.7"      # Core TTS engine
 pip install pydub>=0.25.1          # Audio processing  
 pip install tqdm>=4.65.0           # Progress bars
 pip install pyperclip>=1.8.2       # Clipboard support
@@ -288,7 +288,7 @@ python -m TTS_ka "Installation successful!" --turbo --lang en
 
 **1. "No module named 'edge_tts'"**
 ```bash
-pip install edge-tts>=6.1.9
+pip install "edge-tts>=7.2.7"
 ```
 
 **2. "FFmpeg not found"**
@@ -314,6 +314,19 @@ python -m TTS_ka "text" --no-turbo --lang en
 ```bash
 # Ensure text is copied first
 # Then run: python -m TTS_ka clipboard --turbo --lang en
+```
+
+**5. `403` / `Invalid response status` (HTTP or edge-tts)**
+```bash
+# Microsoft rotates access; upgrade edge-tts (includes updated websocket tokens)
+pip install -U "edge-tts>=7.2.7"
+
+# Optional: skip the unofficial Bing HTTP path and use edge-tts only
+set TTS_KA_SKIP_HTTP=1   # Windows CMD
+# export TTS_KA_SKIP_HTTP=1   # macOS / Linux
+
+# If many parallel chunks still fail, reduce workers
+python -m TTS_ka "your long text" --lang en --parallel 2
 ```
 
 ### Performance Optimization

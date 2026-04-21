@@ -24,6 +24,9 @@ from __future__ import annotations
 
 import os
 import sys
+
+# If set, skip unofficial Bing HTTP TTS (often 401/403) and use edge-tts only.
+_SKIP_HTTP_ENV = "TTS_KA_SKIP_HTTP"
 import asyncio
 import shutil
 from typing import List, Optional, Protocol, runtime_checkable
@@ -146,8 +149,21 @@ class HttpAudioGenerator:
             return False
 
 
+def _env_truthy(name: str) -> bool:
+    v = os.environ.get(name, "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
+def _edge_tts_transient(err: BaseException) -> bool:
+    msg = str(err).lower()
+    return "403" in msg or "invalid response status" in msg or "429" in msg
+
+
 class EdgeTTSGenerator:
     """Fallback generator using the ``edge-tts`` library."""
+
+    _EDGE_RETRIES = 3
+    _EDGE_RETRY_BASE_DELAY = 0.45
 
     async def generate(self, text: str, language: str, output_path: str,
                        quiet: bool = False) -> bool:
@@ -156,18 +172,37 @@ class EdgeTTSGenerator:
             if not quiet:
                 print(f"❌ Language '{language}' not supported. Use: {', '.join(VOICE_MAP)}")
             return False
-        try:
-            from edge_tts import Communicate
-            clean_text = replace_not_readable(text)
-            communicate = Communicate(clean_text, voice)
-            await communicate.save(output_path)
-            if not quiet:
-                print(f"Generated (fallback): {os.path.abspath(output_path)}")
-            return True
-        except Exception as e:
-            if not quiet:
-                print(f"Error generating audio: {e}")
-            return False
+        from edge_tts import Communicate
+
+        clean_text = replace_not_readable(text)
+        last_err: Optional[BaseException] = None
+        for attempt in range(self._EDGE_RETRIES):
+            try:
+                communicate = Communicate(clean_text, voice)
+                await communicate.save(output_path)
+                if not quiet:
+                    print(f"Generated (fallback): {os.path.abspath(output_path)}")
+                return True
+            except Exception as e:
+                last_err = e
+                if (
+                    attempt < self._EDGE_RETRIES - 1
+                    and _edge_tts_transient(e)
+                ):
+                    await asyncio.sleep(
+                        self._EDGE_RETRY_BASE_DELAY * (2**attempt)
+                    )
+                    continue
+                break
+        if not quiet:
+            print(f"Error generating audio: {last_err}")
+            if last_err is not None and _edge_tts_transient(last_err):
+                print(
+                    "Hint: Microsoft often returns 403 until edge-tts tokens are updated. "
+                    "Try: pip install -U 'edge-tts>=7.2.7' "
+                    f"or set {_SKIP_HTTP_ENV}=1 to skip the fast HTTP path."
+                )
+        return False
 
 
 # ── AudioMerger implementations ───────────────────────────────────────────────
@@ -249,11 +284,17 @@ class MergerFactory:
 
 async def fast_generate_audio(text: str, language: str, output_path: str,
                                quiet: bool = False) -> bool:
-    """Generate audio: try HTTP first, fall back to edge-tts on any failure."""
+    """Generate audio: try HTTP first, fall back to edge-tts on any failure.
+
+    Set environment variable ``TTS_KA_SKIP_HTTP=1`` to skip the unofficial Bing
+    HTTP shortcut (often blocked with 401/403) and use edge-tts only.
+    """
     if HAS_UVLOOP and sys.platform != "win32":
         asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
-    if await HttpAudioGenerator().generate(text, language, output_path, quiet=True):
+    if not _env_truthy(_SKIP_HTTP_ENV) and await HttpAudioGenerator().generate(
+        text, language, output_path, quiet=True
+    ):
         if not quiet:
             print(f"⚡ Generated: {os.path.abspath(output_path)}")
         return True
