@@ -325,6 +325,9 @@ pip install -U "edge-tts>=7.2.7"
 set TTS_KA_SKIP_HTTP=1   # Windows CMD
 # export TTS_KA_SKIP_HTTP=1   # macOS / Linux
 
+# Optional: log when the app falls back from HTTP to edge-tts (off by default)
+set TTS_KA_VERBOSE=1
+
 # If many parallel chunks still fail, reduce workers
 python -m TTS_ka "your long text" --lang en --parallel 2
 ```

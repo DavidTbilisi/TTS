@@ -286,8 +286,12 @@ async def fast_generate_audio(text: str, language: str, output_path: str,
                                quiet: bool = False) -> bool:
     """Generate audio: try HTTP first, fall back to edge-tts on any failure.
 
-    Set environment variable ``TTS_KA_SKIP_HTTP=1`` to skip the unofficial Bing
-    HTTP shortcut (often blocked with 401/403) and use edge-tts only.
+    Environment variables:
+
+    * ``TTS_KA_SKIP_HTTP=1`` — skip the unofficial Bing HTTP shortcut (often
+      blocked with 401/403) and use edge-tts only.
+    * ``TTS_KA_VERBOSE=1`` — print a notice when falling back from HTTP to
+      edge-tts (off by default; HTTP failure is normal for many networks).
     """
     if HAS_UVLOOP and sys.platform != "win32":
         asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
@@ -299,8 +303,8 @@ async def fast_generate_audio(text: str, language: str, output_path: str,
             print(f"⚡ Generated: {os.path.abspath(output_path)}")
         return True
 
-    if not quiet:
-        print(f"Warning: fast HTTP failed, falling back to edge-tts")
+    if _env_truthy("TTS_KA_VERBOSE") and not quiet:
+        print("Notice: Bing HTTP TTS unavailable; using edge-tts.", flush=True)
     return await EdgeTTSGenerator().generate(text, language, output_path, quiet)
 
 
