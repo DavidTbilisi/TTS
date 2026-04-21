@@ -1,0 +1,68 @@
+#Requires AutoHotkey v2.0
+
+readClipboardAndSpeak(lang) {
+    Send("^c")
+    if (ClipWait(1)) {
+        Sleep(50)
+        TrayTip()
+        cmd := "cmd /k py -m TTS_ka --lang " . lang . " clipboard"
+
+
+        Run(cmd)
+    } else {
+        TrayTip("Clipboard", "Failed to copy text to clipboard")
+        Sleep(1000)
+        TrayTip()
+    }
+}
+
+!e::readClipboardAndSpeak("en")
+!r::readClipboardAndSpeak("ru")
+!x::readClipboardAndSpeak("ka")
+
+svv := "D:\Bin\SoundVolumeView.exe"
+
+; Ctrl + Shift + Alt + Win + 1 → Speakers (Realtek)
+^+#!1::
+{
+    Run(svv ' /SetDefault "Realtek(R) Audio" 0')
+    Run(svv ' /SetDefault "Realtek(R) Audio" 1')
+    Run(svv ' /SetDefault "Realtek(R) Audio" 2')
+}
+
+; Ctrl + Shift + Alt + Win + 2 → Headphones (AMD)
+^+#!2::
+{
+    Run(svv ' /SetDefault "2- AMD High Definition Audio Device" 0')
+    Run(svv ' /SetDefault "2- AMD High Definition Audio Device" 1')
+    Run(svv ' /SetDefault "2- AMD High Definition Audio Device" 2')
+}
+
+
+
+#Requires AutoHotkey v2.0
+
+toggle := false
+
+F6:: {
+    global toggle
+    toggle := !toggle
+
+    if toggle {
+        SetTimer(ClickLoop, 50) ; 50 ms = fast (~20 CPS)
+        ToolTip("AutoClick: ON")
+    } else {
+        SetTimer(ClickLoop, 0)
+        ToolTip("AutoClick: OFF")
+    }
+
+    SetTimer(() => ToolTip(), -1000) ; hide tooltip after 1s
+}
+
+ClickLoop() {
+    Click
+}
+
+
+
+^r::Reload
