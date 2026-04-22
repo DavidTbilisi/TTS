@@ -84,6 +84,7 @@ python -m TTS_ka [TEXT_SOURCE] [OPTIONS]
 | Option | Description | Examples |
 |--------|-------------|----------|
 | `--lang` | `ka` Georgian (female), `ka-m` Georgian (male), `ru`, `en` | `--lang ka` |
+| `-o`, `--output` | Output MP3 path (default `data.mp3`) | `-o speech.mp3` |
 | `--stream` | 🆕 Enable streaming playback (audio starts while generating) | `--stream` |
 | `--chunk-seconds` | Chunk size in seconds (0=auto, 20-60 optimal) | `--chunk-seconds 30` |
 | `--parallel` | Workers (0=auto, 2-8 recommended) | `--parallel 6` |
