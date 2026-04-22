@@ -78,6 +78,28 @@ def _terminate_process_quietly(proc: Optional[subprocess.Popen]) -> None:
         pass
 
 
+# Last started ``StreamingAudioPlayer`` (streaming mode) — stopped on Ctrl+C.
+_active_streaming_player: Optional["StreamingAudioPlayer"] = None
+
+
+def register_active_streaming_player(player: Optional["StreamingAudioPlayer"]) -> None:
+    global _active_streaming_player
+    _active_streaming_player = player
+
+
+def unregister_active_streaming_player(player: "StreamingAudioPlayer") -> None:
+    global _active_streaming_player
+    if _active_streaming_player is player:
+        _active_streaming_player = None
+
+
+def stop_active_streaming_player() -> None:
+    """Terminate VLC / playback for the active streaming session (e.g. Ctrl+C)."""
+    p = _active_streaming_player
+    if p is not None:
+        p.stop()
+
+
 # ── Player detection ──────────────────────────────────────────────────────────
 
 class PlayerDetector:
@@ -187,6 +209,8 @@ class StreamingAudioPlayer:
 
     def finish_generation(self) -> None:
         """Signal that no more chunks will be added."""
+        if self.finished_generating:
+            return
         self.finished_generating = True
         with self._order_lock:
             while self._next_play_index in self._pending:
@@ -206,11 +230,15 @@ class StreamingAudioPlayer:
             target=self._playback_worker, daemon=True
         )
         self.playback_thread.start()
+        register_active_streaming_player(self)
 
     def wait_for_completion(self) -> None:
         """Block until the playback thread exits or the timeout elapses."""
-        if self.playback_thread:
-            self.playback_thread.join(timeout=PLAYBACK_JOIN_TIMEOUT)
+        if not self.playback_thread:
+            return
+        deadline = time.monotonic() + float(PLAYBACK_JOIN_TIMEOUT)
+        while self.playback_thread.is_alive() and time.monotonic() < deadline:
+            self.playback_thread.join(timeout=0.25)
 
     def stop(self) -> None:
         """Terminate the current player process."""
@@ -232,6 +260,8 @@ class StreamingAudioPlayer:
                 self._playback_worker_unix()
         except Exception as e:
             print(f"⚠️  Playback error: {e}")
+        finally:
+            unregister_active_streaming_player(self)
 
     def _vlc_rc_cmd(
         self,

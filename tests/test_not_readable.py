@@ -17,6 +17,18 @@ def test_big_number():
     assert replace_not_readable("value 12345678 end") == "value a large number end"
 
 
+def test_math_symbols_spoken():
+    out = replace_not_readable("A => B and x <= y, sum ∑, infinity ∞")
+    assert "implies" in out
+    assert "less than or equal to" in out
+    assert "sum" in out
+    assert "infinity" in out
+    assert "⇒" not in out
+    assert "≤" not in out
+    assert "∑" not in out
+    assert "∞" not in out
+
+
 def test_combined():
     out = replace_not_readable("Here is `a` and ```b``` and http://x.com and 1000000")
     assert "you can see code in text" in out

@@ -16,7 +16,8 @@ default four-filter pipeline.
 from __future__ import annotations
 
 import re
-from typing import Callable, List, Optional, Pattern
+import unicodedata
+from typing import Callable, List, Optional, Pattern, Tuple
 
 __all__ = [
     "TextFilter",
@@ -25,6 +26,7 @@ __all__ = [
     "filter_code_blocks",
     "filter_inline_code",
     "filter_urls",
+    "filter_symbols_to_words",
     "filter_big_numbers",
 ]
 
@@ -66,6 +68,130 @@ def filter_big_numbers(text: str) -> str:
     return BIG_NUMBER_RE.sub(" a large number ", text)
 
 
+# Multi-character and symbolic tokens first (longest wins when using sequential replace).
+_SYMBOL_PHRASES: Tuple[Tuple[str, str], ...] = (
+    ("<=>", " if and only if "),
+    ("<->", " if and only if "),
+    ("==>", " implies "),
+    ("=>", " implies "),
+    ("->", " maps to "),
+    ("<-", " gets value from "),
+    ("<=", " less than or equal to "),
+    (">=", " greater than or equal to "),
+    ("!=", " not equal to "),
+    ("==", " equals "),
+    ("...", " dot dot dot "),
+    ("\u2026", " dot dot dot "),
+    ("||", " or "),
+    ("&&", " and "),
+    ("**", " to the power "),
+    ("+=", " plus equals "),
+    ("-=", " minus equals "),
+    ("*=", " times equals "),
+    ("/=", " divided by equals "),
+    ("±", " plus or minus "),
+    ("×", " times "),
+    ("÷", " divided by "),
+    ("·", " dot "),
+    ("⋅", " dot "),
+    ("→", " right arrow "),
+    ("←", " left arrow "),
+    ("↔", " bidirectional arrow "),
+    ("↦", " maps to "),
+    ("⇒", " implies "),
+    ("⟹", " implies "),
+    ("⇐", " implied by "),
+    ("⇔", " if and only if "),
+    ("⟺", " if and only if "),
+    ("∀", " for all "),
+    ("∃", " there exists "),
+    ("∄", " there does not exist "),
+    ("∧", " and "),
+    ("∨", " or "),
+    ("¬", " not "),
+    ("⊢", " proves "),
+    ("⊤", " top "),
+    ("⊥", " bottom "),
+    ("∈", " in "),
+    ("∉", " not in "),
+    ("⊂", " subset of "),
+    ("⊆", " subset of or equal to "),
+    ("∪", " union "),
+    ("∩", " intersection "),
+    ("∅", " empty set "),
+    ("∞", " infinity "),
+    ("∑", " sum "),
+    ("∏", " product "),
+    ("∫", " integral "),
+    ("∮", " contour integral "),
+    ("∂", " partial "),
+    ("∇", " gradient "),
+    ("√", " square root "),
+    ("∝", " proportional to "),
+    ("≈", " approximately "),
+    ("≃", " asymptotically equal to "),
+    ("≡", " equivalent to "),
+    ("≠", " not equal to "),
+    ("≤", " less than or equal to "),
+    ("≥", " greater than or equal to "),
+    ("≪", " much less than "),
+    ("≫", " much greater than "),
+    ("∼", " tilde operator "),
+    ("≅", " approximately equal to "),
+    ("°", " degrees "),
+    ("′", " prime "),
+    ("″", " double prime "),
+    ("…", " dot dot dot "),
+    ("–", " dash "),
+    ("—", " em dash "),
+    ("−", " minus "),
+    ("⁄", " divided by "),
+    ("½", " one half "),
+    ("¼", " one quarter "),
+    ("¾", " three quarters "),
+    ("¹", " to the first "),
+    ("²", " squared "),
+    ("³", " cubed "),
+    ("⁰", " to the zero "),
+    ("⁻", " superscript minus "),
+    ("€", " euros "),
+    ("£", " pounds "),
+    ("¥", " yen "),
+    ("¢", " cents "),
+    ("™", " trademark "),
+    ("®", " registered trademark "),
+    ("©", " copyright "),
+    ("¶", " paragraph "),
+    ("§", " section sign "),
+    ("•", " bullet "),
+    ("◦", " hollow bullet "),
+    ("|", " vertical bar "),
+    ("\\", " backslash "),
+    ("#", " hash "),
+    ("@", " at "),
+    ("%", " percent "),
+    ("&", " ampersand "),
+    ("*", " star "),
+    ("`", " backtick "),
+    ("~", " tilde "),
+    ("^", " caret "),
+)
+
+
+def filter_symbols_to_words(text: str) -> str:
+    """Replace common math / logic / punctuation symbols with spoken phrases."""
+    if not text:
+        return text
+    try:
+        normalized = unicodedata.normalize("NFKC", text)
+    except (TypeError, ValueError):
+        normalized = text
+    out = normalized
+    for old, new in _SYMBOL_PHRASES:
+        out = out.replace(old, new)
+    return out
+
+
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 
 class TextProcessingPipeline:
@@ -84,6 +210,7 @@ class TextProcessingPipeline:
         filter_code_blocks,
         filter_inline_code,
         filter_urls,
+        filter_symbols_to_words,
         filter_big_numbers,
     ]
 
@@ -114,7 +241,8 @@ def replace_not_readable(text: str) -> str:
     1. Code blocks
     2. Inline code
     3. URLs
-    4. Big numbers
+    4. Math / logic / punctuation symbols as short phrases
+    5. Big numbers
 
     The result is whitespace-normalized.
     """

@@ -3,7 +3,7 @@
 import asyncio
 import os
 import sys
-from typing import List
+from typing import List, Optional
 from concurrent.futures import ThreadPoolExecutor
 
 try:
@@ -13,12 +13,26 @@ except ImportError:
     HAS_UVLOOP = False
 
 from .fast_audio import fast_generate_audio, fast_merge_audio_files
+from .not_reading import replace_not_readable
 from .rich_progress import create_progress_display
-from .streaming_player import StreamingAudioPlayer
+from .streaming_player import StreamingAudioPlayer, stop_active_streaming_player
 from .constants import MAX_PARALLEL_WORKERS, STREAMING_CHUNK_SECONDS
 
 # Optimal worker count
 OPTIMAL_WORKERS = min(MAX_PARALLEL_WORKERS, (os.cpu_count() or 1) * 4)
+
+
+def _interrupt_streaming_cleanup(
+    streaming_player: Optional[StreamingAudioPlayer], parts: List[str]
+) -> None:
+    """Finish playback queue, stop media, and remove partial part files."""
+    if streaming_player:
+        try:
+            streaming_player.finish_generation()
+        except Exception:
+            pass
+        stop_active_streaming_player()
+    ultra_fast_cleanup_parts(parts or [], keep_parts=False)
 
 
 async def ultra_fast_parallel_generation(chunks: List[str], language: str, 
@@ -133,7 +147,10 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
                                   parallel: int = OPTIMAL_WORKERS, output_path: str = 'data.mp3',
                                   keep_parts: bool = False, enable_streaming: bool = False, show_gui: bool = True) -> None:
     """Smart generation with dynamic optimization based on text length and optional streaming playback."""
-    
+    text = replace_not_readable(text)
+    if not text.strip():
+        raise ValueError("No readable text after filtering — input empty or only symbols/URLs/code.")
+
     from .chunking import split_text_into_chunks
     import time
     import glob
@@ -201,67 +218,58 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
             print("🔊 Streaming playback enabled - audio will start playing immediately")
     
     # Generate chunks in parallel
-    parts = await ultra_fast_parallel_generation(chunks, language, parallel, streaming_player, output_path)
-    
+    parts: List[str] = []
     try:
-        # Signal streaming completion
+        parts = await ultra_fast_parallel_generation(
+            chunks, language, parallel, streaming_player, output_path
+        )
+
         if streaming_player:
             streaming_player.finish_generation()
-        
+
         # For streaming: ensure final complete audio is in output_path
         if streaming_player:
             if len(parts) > 1:
                 remaining_parts = [p for p in parts[1:] if os.path.exists(p)]
                 if remaining_parts:
-                    # Wait for media player to release the file
-                    time.sleep(0.3)
-                    
-                    # Create backup of first chunk
+                    await asyncio.sleep(0.3)
+
                     backup_path = output_path + ".backup"
                     try:
                         import shutil
+
                         shutil.copy2(output_path, backup_path)
-                        
-                        # Merge all parts directly to output_path
+
                         all_parts = [backup_path] + remaining_parts
                         fast_merge_audio_files(all_parts, output_path)
-                        
-                        # Clean up backup
+
                         if os.path.exists(backup_path):
                             os.remove(backup_path)
-                            
+
                     except Exception as e:
                         print(f"⚠️  Merge warning: {e}")
-                        # Restore backup if merge failed
                         if os.path.exists(backup_path):
                             try:
                                 shutil.move(backup_path, output_path)
                             except OSError as restore_err:
                                 print(f"⚠️  Could not restore backup: {restore_err}")
-            # For single chunk streaming, file is already complete in output_path
         else:
-            # Normal merge for non-streaming
             fast_merge_audio_files(parts, output_path)
-        
-        # Fast cleanup (but keep output_path)
+
         cleanup_parts = [p for p in parts if p != output_path]
         ultra_fast_cleanup_parts(cleanup_parts, keep_parts)
-        
-        # Wait for streaming playback to complete if enabled
+
         if streaming_player:
             print("⏸️  Waiting for playback to complete...")
             streaming_player.wait_for_completion()
-            # Small delay to ensure files are released by media player
-            time.sleep(0.2)
-        
+            await asyncio.sleep(0.2)
+
         elapsed = time.perf_counter() - start
         print(f"⚡ Completed in {elapsed:.2f}s ({len(chunks)} chunks, {parallel} workers)")
     except KeyboardInterrupt:
-        # Cleanup on interruption
-        ultra_fast_cleanup_parts(parts, keep_parts=False)
+        _interrupt_streaming_cleanup(streaming_player, parts)
         raise
-    except Exception as e:
-        # Cleanup on error
+    except Exception:
         ultra_fast_cleanup_parts(parts, keep_parts=False)
         raise
 

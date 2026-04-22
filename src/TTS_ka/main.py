@@ -10,6 +10,7 @@ import sys
 import time
 
 from .fast_audio import fast_generate_audio, play_audio, cleanup_http
+from .streaming_player import stop_active_streaming_player
 from .ultra_fast import smart_generate_long_text, get_optimal_settings, OPTIMAL_WORKERS
 from .simple_help import show_simple_help, show_troubleshooting
 from .constants import STREAMING_CHUNK_SECONDS
@@ -160,7 +161,8 @@ For comprehensive help with examples: %(prog)s --help-full
         return
 
     text = get_input_text(args.text)
-    if not text:
+    if not text.strip():
+        print("Error: No text provided")
         return
     output_path = os.path.abspath(args.output)
 
@@ -214,6 +216,7 @@ For comprehensive help with examples: %(prog)s --help-full
     try:
         asyncio.run(run_generation())
     except KeyboardInterrupt:
+        stop_active_streaming_player()
         print("\n⚡ Generation cancelled")
 
 
