@@ -12,6 +12,43 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 
+def _popen_argv_head(argv):
+    if not argv:
+        return ""
+    return os.path.basename(os.fsdecode(argv[0])).lower()
+
+
+@pytest.fixture(autouse=True)
+def _silence_windows_real_media_players():
+    """Do not spawn VLC / media players for fake ``*.mp3`` paths during tests (Windows).
+
+    ``PlayerDetector`` uses ``subprocess.run`` → ``Popen`` for ``where``/``which``; a
+    blanket ``Popen`` mock breaks that. We only stub Popen for real player binaries.
+    """
+    if not sys.platform.startswith("win"):
+        yield
+        return
+
+    import subprocess as _sp
+
+    _real_popen = _sp.Popen
+
+    def _selective_popen(*args, **kwargs):
+        argv = args[0] if args else kwargs.get("args", ())
+        if isinstance(argv, (list, tuple)) and argv:
+            head = _popen_argv_head(argv)
+            if head in ("where.exe", "where", "which", "which.exe"):
+                return _real_popen(*args, **kwargs)
+        mock_proc = MagicMock()
+        mock_proc.wait = MagicMock(return_value=0)
+        mock_proc.terminate = MagicMock()
+        return mock_proc
+
+    with patch.object(_sp, "Popen", side_effect=_selective_popen), \
+         patch("TTS_ka.fast_audio.os.startfile"):
+        yield
+
+
 @pytest.fixture
 def temp_dir():
     """Create a temporary directory for tests."""
