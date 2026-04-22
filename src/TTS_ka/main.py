@@ -85,6 +85,7 @@ EXAMPLES:
   %(prog)s "გამარჯობა" --lang ka                    # Georgian with auto-optimization
   %(prog)s file.txt --lang ru                       # Russian from file
   %(prog)s clipboard                                 # From clipboard (fastest workflow)
+  %(prog)s "text" --lang ka -o out/clip.mp3          # Custom output path
 
 LANGUAGES: 🇬🇪 ka / ka-m (Georgian female/male) | 🇷🇺 ru | 🇬🇧 en
 For comprehensive help with examples: %(prog)s --help-full
@@ -113,6 +114,13 @@ For comprehensive help with examples: %(prog)s --help-full
         type=int,
         default=0,
         help=f"Parallel workers (0=auto, 2-8 recommended, max={OPTIMAL_WORKERS})",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        default="data.mp3",
+        metavar="PATH",
+        help="Output MP3 file path (default: data.mp3)",
     )
     parser.add_argument("--no-play", action="store_true", help="Skip automatic audio playback")
     parser.add_argument(
@@ -154,7 +162,7 @@ For comprehensive help with examples: %(prog)s --help-full
     text = get_input_text(args.text)
     if not text:
         return
-    output_path = "data.mp3"
+    output_path = os.path.abspath(args.output)
 
     if not args.no_turbo:
         optimal = get_optimal_settings(text)

@@ -143,6 +143,25 @@ class TestMain:
                 from TTS_ka.main import main
                 main()
 
+    def test_output_flag_passes_abspath_to_generator(self, tmp_path):
+        """-o/--output is forwarded as absolute path to fast_generate_audio."""
+        out_mp3 = str(tmp_path / "custom.mp3")
+        with patch(
+            "sys.argv",
+            ["TTS_ka", "hi", "--lang", "en", "--no-play", "-o", out_mp3],
+        ):
+            with patch(
+                "TTS_ka.main.fast_generate_audio", new=AsyncMock(return_value=True)
+            ) as mfa, patch("TTS_ka.main.cleanup_http", new=AsyncMock()), patch(
+                "TTS_ka.main.get_optimal_settings",
+                return_value={"method": "direct", "chunk_seconds": 0, "parallel": 1},
+            ):
+                from TTS_ka.main import main
+
+                main()
+        mfa.assert_called_once()
+        assert mfa.call_args[0][2] == os.path.abspath(out_mp3)
+
     def test_no_turbo_skips_optimization(self, capsys):
         """--no-turbo skips the optimization block."""
         with patch('sys.argv', ['TTS_ka', 'hello', '--lang', 'en', '--no-play', '--no-turbo']):
