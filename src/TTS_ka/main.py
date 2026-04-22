@@ -138,7 +138,7 @@ For comprehensive help with examples: %(prog)s --help-full
         dest="show_player",
         action="store_false",
         default=True,
-        help="Disable VLC player GUI when streaming (use headless playback)",
+        help="Streaming: headless VLC (dummy). Default: one GUI window, playlist grows with chunks (Windows).",
     )
     parser.add_argument(
         "--help-full",

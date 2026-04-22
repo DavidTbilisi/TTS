@@ -43,6 +43,40 @@ class TestStreamingAudioPlayer:
         # Verify it was added
         assert not player.chunk_queue.empty()
         assert player.chunk_queue.get() == chunk_path
+
+    def test_add_chunk_orders_by_index_parallel_completion(self, temp_dir):
+        """Out-of-order completion still yields playback order 0,1,2."""
+        player = StreamingAudioPlayer()
+
+        def p(i: int) -> str:
+            path = os.path.join(temp_dir, f"seg{i}.mp3")
+            with open(path, "wb") as f:
+                f.write(b"x")
+            return path
+
+        player.add_chunk(p(2), 2)
+        player.add_chunk(p(0), 0)
+        assert player.chunk_queue.get() == p(0)
+        player.add_chunk(p(1), 1)
+        assert player.chunk_queue.get() == p(1)
+        assert player.chunk_queue.get() == p(2)
+        assert player.chunk_queue.empty()
+
+    def test_infer_chunk_index_from_part_basename(self, temp_dir):
+        """``.part_<n>.mp3`` implies index when chunk_index is omitted."""
+        player = StreamingAudioPlayer()
+        p2 = os.path.join(temp_dir, ".part_2.mp3")
+        p0 = os.path.join(temp_dir, ".part_0.mp3")
+        for path in (p2, p0):
+            with open(path, "wb") as f:
+                f.write(b"x")
+        player.add_chunk(p2)
+        assert player.chunk_queue.empty()
+        player.add_chunk(p0)
+        assert player.chunk_queue.get() == p0
+        player.finish_generation()
+        assert player.chunk_queue.get() == p2
+        assert player.chunk_queue.get() is None
     
     def test_add_nonexistent_chunk(self):
         """Test that nonexistent chunks are not added."""
@@ -125,6 +159,79 @@ class TestStreamingAudioPlayer:
         
         assert player.is_playing is False
     
+    @patch.dict(os.environ, {"TTS_KA_VLC_RC": "1"}, clear=False)
+    @patch('TTS_ka.streaming_player.subprocess.Popen')
+    @patch('TTS_ka.streaming_player._connect_vlc_rc')
+    @patch.object(StreamingAudioPlayer, '_vlc_rc_wait_until_finished')
+    @patch.object(StreamingAudioPlayer, '_vlc_rc_cmd')
+    def test_windows_vlc_rc_playlist_single_process(
+        self, mock_rc_cmd, mock_wait, mock_connect, mock_popen, temp_dir
+    ):
+        """Windows + VLC uses TCP oldrc: one Popen, add + enqueue over the socket."""
+        from TTS_ka.streaming_player import PlayerDetector
+
+        mock_sock = MagicMock()
+        mock_connect.return_value = mock_sock
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = 0
+        mock_proc.wait.return_value = 0
+        mock_popen.return_value = mock_proc
+
+        chunk1 = os.path.join(temp_dir, "c1.mp3")
+        chunk2 = os.path.join(temp_dir, "c2.mp3")
+        for p in (chunk1, chunk2):
+            with open(p, "wb") as f:
+                f.write(b"x")
+
+        player = StreamingAudioPlayer(show_gui=True)
+        player.chunk_queue.put(chunk1)
+        player.chunk_queue.put(chunk2)
+        player.chunk_queue.put(None)
+
+        with patch("sys.platform", "win32"), patch.object(
+            PlayerDetector, "find", return_value="vlc"
+        ):
+            player._playback_worker_windows()
+
+        mock_popen.assert_called_once()
+        argv = mock_popen.call_args[0][0]
+        assert "oldrc" in argv
+        assert any("127.0.0.1:" in str(x) for x in argv)
+        flat = " ".join(repr(c) for c in mock_rc_cmd.call_args_list)
+        assert "add " in flat and "enqueue" in flat
+        mock_wait.assert_called_once_with(mock_sock, mock_proc)
+
+    @patch.dict(os.environ, {"TTS_KA_VLC_RC": "0"}, clear=False)
+    @patch('TTS_ka.streaming_player.subprocess.Popen')
+    def test_windows_vlc_rc_disabled_uses_sequential_popen(self, mock_popen, temp_dir):
+        """TTS_KA_VLC_RC=0 skips oldrc and runs one subprocess per chunk."""
+        from TTS_ka.streaming_player import PlayerDetector
+
+        mock_proc = MagicMock()
+        mock_proc.wait.return_value = 0
+        mock_popen.return_value = mock_proc
+
+        chunk1 = os.path.join(temp_dir, "a.mp3")
+        chunk2 = os.path.join(temp_dir, "b.mp3")
+        for p in (chunk1, chunk2):
+            with open(p, "wb") as f:
+                f.write(b"x")
+
+        player = StreamingAudioPlayer(show_gui=True)
+        player.chunk_queue.put(chunk1)
+        player.chunk_queue.put(chunk2)
+        player.chunk_queue.put(None)
+
+        with patch("sys.platform", "win32"), patch.object(
+            PlayerDetector, "find", return_value="vlc"
+        ):
+            player._playback_worker_windows()
+
+        assert mock_popen.call_count == 2
+        for call in mock_popen.call_args_list:
+            argv = call[0][0]
+            assert "--play-and-exit" in argv
+
     @patch('os.startfile')
     def test_windows_playback(self, mock_startfile, temp_dir):
         """Test Windows playback path (no VLC, falls back to os.startfile)."""

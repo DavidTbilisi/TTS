@@ -68,7 +68,7 @@ async def ultra_fast_parallel_generation(chunks: List[str], language: str,
                 result = await fast_generate_audio(text, language, output, quiet=True)
                 # If streaming is enabled, add chunk to player as soon as it's ready
                 if result and streaming_player:
-                    streaming_player.add_chunk(output)
+                    streaming_player.add_chunk(output, i)
                 return (i, result)
             except Exception as e:
                 print(f"⚠️  Error generating part {i}: {e}")
@@ -192,9 +192,11 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
         streaming_player.start()
         if sys.platform.startswith('win'):
             if show_gui:
-                print("🔊 Streaming enabled - first chunk will play in VLC GUI (Windows mode)")
+                print(
+                    "🔊 Streaming enabled - VLC GUI, one window (playlist + controls; Windows)"
+                )
             else:
-                print("🔊 Streaming enabled - first chunk will play immediately (Windows mode)")
+                print("🔊 Streaming enabled - VLC headless, one playlist session (Windows)")
         else:
             print("🔊 Streaming playback enabled - audio will start playing immediately")
     

@@ -120,7 +120,7 @@ python -m TTS_ka clipboard --stream
 **How It Works:**
 1. Text is split into chunks (if needed)
 2. Chunks generate in parallel (2-8 workers)
-3. **First chunk plays immediately** (~2-3 seconds)
+3. **First chunk plays quickly** (~2-3 seconds); with VLC (default on Windows), **one window** builds a playlist as chunks finish (`--no-gui` uses a headless session). Set `TTS_KA_VLC_RC=0` to fall back to one VLC launch per chunk.
 4. Remaining chunks continue generating in background
 5. Final merged audio file is saved
 
