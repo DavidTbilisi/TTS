@@ -6,7 +6,7 @@ from .streaming_player import StreamingAudioPlayer
 from .chunking import split_text_into_chunks, should_chunk_text
 from .main import main
 
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 __all__ = [
     'fast_generate_audio',
     'fast_merge_audio_files',

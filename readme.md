@@ -18,6 +18,8 @@
 - 🎵 **High-Quality Voices**: Premium neural voices for all languages
 - 📁 **File Support**: Process text files directly
 - 🔄 **Real-time Playback**: Automatic audio playback with system player
+- **Speakable text cleanup**: Before TTS, the pipeline rewrites noisy input so the voice does not read raw syntax — fenced and inline code, URLs, shebang lines, HTML-like tags, file extensions (for example `.ts` → “TypeScript”), common IT acronyms (HTTPS, JSON, API, …), math symbols (for example `⇒` → “implies”), and very long digit runs. Implemented in `TTS_ka.not_reading` (`replace_not_readable`).
+- **Ctrl+C**: Cancels generation and stops active streaming playback (including VLC) without waiting for the full join timeout.
 
 ## 🎯 Quick Start
 
@@ -89,8 +91,24 @@ python -m TTS_ka [TEXT_SOURCE] [OPTIONS]
 | `--chunk-seconds` | Chunk size in seconds (0=auto, 20-60 optimal) | `--chunk-seconds 30` |
 | `--parallel` | Workers (0=auto, 2-8 recommended) | `--parallel 6` |
 | `--no-play` | Skip automatic audio playback | `--no-play` |
+| `--no-gui` | With `--stream`: headless VLC (dummy UI). Default is one GUI window on Windows. | `--stream --no-gui` |
 | `--no-turbo` | Disable auto-optimization (legacy mode) | `--no-turbo` |
 | `--help-full` | Show comprehensive help with examples | `--help-full` |
+
+### Text cleanup rules (summary)
+
+| Kind of input | What you hear instead |
+|----------------|----------------------|
+| `` ```code``` `` / `` `inline` `` | Short phrases like “omitted fenced code block” / “omitted inline code snippet” |
+| `https://…` / `www.…` | “omitted hyperlink” |
+| `#!/usr/bin/env python` | “omitted script shebang line” |
+| `<div>…</div>`-style tags | “omitted markup tag” |
+| `file.ts`, `app.py` | Spoken language or format name (TypeScript, Python, …) |
+| `API`, `HTTPS`, `JSON`, … | Letter-by-letter or expanded forms (A P I, H T T P S, …) |
+| `=>`, `≤`, `∞`, … | Words (“implies”, “less than or equal to”, “infinity”, …) |
+| 7+ digit numbers | “a large number” |
+
+Chunk playback order matches document order even when chunks finish generating in parallel.
 
 ## 🏃‍♂️ Performance Examples
 
@@ -120,7 +138,7 @@ python -m TTS_ka clipboard --stream
 **How It Works:**
 1. Text is split into chunks (if needed)
 2. Chunks generate in parallel (2-8 workers)
-3. **First chunk plays quickly** (~2-3 seconds); with VLC (default on Windows), **one window** builds a playlist as chunks finish (`--no-gui` uses a headless session). Set `TTS_KA_VLC_RC=0` to fall back to one VLC launch per chunk.
+3. **First chunk plays quickly** (~2-3 seconds); with VLC (default on Windows), **one window** builds a playlist **in text order** as chunks finish (`--no-gui` uses a headless session). Set `TTS_KA_VLC_RC=0` to fall back to launching VLC once per chunk instead of one remote-control session.
 4. Remaining chunks continue generating in background
 5. Final merged audio file is saved
 
@@ -334,6 +352,13 @@ set TTS_KA_VERBOSE=1
 # If many parallel chunks still fail, reduce workers
 python -m TTS_ka "your long text" --lang en --parallel 2
 ```
+
+**6. Streaming / VLC (Windows)**  
+- Default: one VLC window with a growing playlist (TCP remote control).  
+- `TTS_KA_VLC_RC=0`: disable that mode and use one VLC process per chunk (legacy).
+
+**7. Ctrl+C**  
+Press **Ctrl+C** to cancel synthesis and stop streaming playback; partial part files are cleaned up.
 
 ### Performance Optimization
 
