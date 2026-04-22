@@ -52,7 +52,7 @@ Environment variables (see `fast_audio.py`, `readme.md`):
 
 | Module | Responsibility |
 |--------|----------------|
-| `main.py` | CLI parsing, input sourcing, routing |
+| `main.py` | CLI parsing, input sourcing, routing; `-V` / `--version` → `format_cli_version_info()` (runtime + `importlib.metadata` when installed) |
 | `ultra_fast.py` | Parallel async generation, auto-optimization |
 | `fast_audio.py` | Per-chunk TTS (HTTP + edge-tts), merge, playback helpers |
 | `streaming_player.py` | Queue-based background playback thread |

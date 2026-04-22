@@ -26,6 +26,7 @@ class TestShowSimpleHelp:
         out = self._get_output()
         assert "SUPPORTED LANGUAGES" in out
         assert "ka" in out
+        assert "ka-m" in out
         assert "ru" in out
         assert "en" in out
         assert "Georgian" in out

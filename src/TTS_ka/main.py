@@ -16,6 +16,57 @@ from .simple_help import show_simple_help, show_troubleshooting
 from .constants import STREAMING_CHUNK_SECONDS
 
 
+def format_cli_version_info() -> str:
+    """Return version line, runtime facts, and PyPI distribution metadata when available."""
+    from . import __version__ as pkg_ver
+
+    lines = [
+        f"TTS_ka {pkg_ver}",
+        f"Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        f"Executable: {sys.executable}",
+        f"Platform: {sys.platform}",
+    ]
+    try:
+        from importlib.metadata import PackageNotFoundError, metadata, version
+
+        dist_ver = version("TTS_ka")
+        lines.append(f"Distribution version: {dist_ver}")
+        meta = metadata("TTS_ka")
+        name = meta.get("Name")
+        if name:
+            lines.append(f"Name: {name}")
+        summary = meta.get("Summary")
+        if summary:
+            lines.append(f"Summary: {summary}")
+        author = meta.get("Author")
+        if author:
+            lines.append(f"Author: {author}")
+        author_email = meta.get("Author-email")
+        if author_email:
+            lines.append(f"Author-email: {author_email}")
+        license_name = meta.get("License")
+        if license_name:
+            lines.append(f"License: {license_name}")
+        home = meta.get("Home-page")
+        if home:
+            lines.append(f"Home-page: {home}")
+        rp = meta.get("Requires-Python")
+        if rp:
+            lines.append(f"Requires-Python: {rp}")
+        req = meta.get_all("Requires-Dist")
+        if req:
+            preview = ", ".join(req[:8])
+            if len(req) > 8:
+                preview += f", … (+{len(req) - 8} more)"
+            lines.append(f"Requires-Dist: {preview}")
+    except PackageNotFoundError:
+        lines.append("Distribution: not installed as a package (metadata unavailable)")
+    except Exception as exc:  # pragma: no cover - defensive
+        lines.append(f"Distribution metadata: unavailable ({exc})")
+
+    return "\n".join(lines)
+
+
 def _read_clipboard() -> str:
     """Read clipboard text using stdlib — no third-party dependencies.
 
@@ -87,10 +138,19 @@ EXAMPLES:
   %(prog)s file.txt --lang ru                       # Russian from file
   %(prog)s clipboard                                 # From clipboard (fastest workflow)
   %(prog)s "text" --lang ka -o out/clip.mp3          # Custom output path
+  %(prog)s --version                                 # Version and metadata
 
 LANGUAGES: 🇬🇪 ka / ka-m (Georgian female/male) | 🇷🇺 ru | 🇬🇧 en
 For comprehensive help with examples: %(prog)s --help-full
         """,
+    )
+
+    parser.add_argument(
+        "-V",
+        "--version",
+        action="store_true",
+        dest="show_version",
+        help="Print version, Python, platform, and package metadata, then exit.",
     )
 
     parser.add_argument(
@@ -125,6 +185,11 @@ For comprehensive help with examples: %(prog)s --help-full
     )
     parser.add_argument("--no-play", action="store_true", help="Skip automatic audio playback")
     parser.add_argument(
+        "--turbo",
+        action="store_true",
+        help="No-op: auto-optimization is already the default (kept for scripts and older docs).",
+    )
+    parser.add_argument(
         "--no-turbo",
         action="store_true",
         help="Disable auto-optimization (legacy mode)",
@@ -148,6 +213,10 @@ For comprehensive help with examples: %(prog)s --help-full
     )
 
     args = parser.parse_args()
+
+    if args.show_version:
+        print(format_cli_version_info())
+        return
 
     if args.help_full:
         show_simple_help()

@@ -4,7 +4,7 @@ import pytest
 import sys
 import os
 from unittest.mock import MagicMock, patch, AsyncMock
-from TTS_ka.main import get_input_text, _read_clipboard
+from TTS_ka.main import get_input_text, _read_clipboard, format_cli_version_info
 
 
 class TestGetInputText:
@@ -38,8 +38,38 @@ class TestGetInputText:
         assert result == "nonexistent_xyz.txt"
 
 
+class TestFormatCliVersionInfo:
+    """Tests for format_cli_version_info()."""
+
+    def test_contains_runtime_and_version(self):
+        out = format_cli_version_info()
+        assert "TTS_ka" in out
+        assert "Python" in out
+        assert "Platform:" in out
+        assert "Executable:" in out
+
+
 class TestMain:
     """Tests for main() entry point."""
+
+    def test_version_flag_exits_without_text(self, capsys):
+        """-V/--version prints metadata and does not require positional text."""
+        with patch("sys.argv", ["TTS_ka", "--version"]):
+            from TTS_ka import __version__
+            from TTS_ka.main import main
+
+            main()
+        out = capsys.readouterr().out
+        assert __version__ in out
+        assert "TTS_ka" in out
+        assert "Python" in out
+
+    def test_version_short_flag(self, capsys):
+        with patch("sys.argv", ["TTS_ka", "-V"]):
+            from TTS_ka.main import main
+
+            main()
+        assert "TTS_ka" in capsys.readouterr().out
 
     def test_no_text_shows_help(self, capsys):
         """main() with no text argument prints help and returns."""
@@ -62,6 +92,16 @@ class TestMain:
     def test_direct_generation_no_play(self):
         """Short text goes through fast_generate_audio; --no-play skips playback."""
         with patch('sys.argv', ['TTS_ka', 'Hello', '--lang', 'en', '--no-play']):
+            with patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)) as mfa, \
+                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
+                 patch('TTS_ka.main.get_optimal_settings', return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
+                from TTS_ka.main import main
+                main()
+        mfa.assert_called_once()
+
+    def test_turbo_flag_accepted(self):
+        """--turbo is accepted (no-op; kept for scripts and older docs)."""
+        with patch('sys.argv', ['TTS_ka', 'Hello', '--lang', 'en', '--no-play', '--turbo']):
             with patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)) as mfa, \
                  patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
                  patch('TTS_ka.main.get_optimal_settings', return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):

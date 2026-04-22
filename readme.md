@@ -94,6 +94,7 @@ python -m TTS_ka [TEXT_SOURCE] [OPTIONS]
 | `--no-gui` | With `--stream`: headless VLC (dummy UI). Default is one GUI window on Windows. | `--stream --no-gui` |
 | `--no-turbo` | Disable auto-optimization (legacy mode) | `--no-turbo` |
 | `--help-full` | Show comprehensive help with examples | `--help-full` |
+| `-V`, `--version` | Print version, Python, platform, and PyPI package metadata | `--version` |
 
 ### Text cleanup rules (summary)
 
@@ -237,12 +238,12 @@ python -m TTS_ka clipboard --lang en
 
 ### Dependencies
 
-**Required:**
+**Required (same as `pip install TTS_ka`):**
 ```bash
 pip install "edge-tts>=7.2.7"      # Core TTS engine
-pip install pydub>=0.25.1          # Audio processing  
-pip install tqdm>=4.65.0           # Progress bars
-pip install pyperclip>=1.8.2       # Clipboard support
+pip install pydub>=0.25.1        # Audio processing
+pip install tqdm>=4.65.0         # Progress bars
+pip install "httpx>=0.28.1"      # Async HTTP (CLI)
 ```
 
 **System Requirements:**
@@ -263,7 +264,7 @@ cd TTS
 pip install -e .
 
 # Method 3: Manual dependencies
-pip install edge-tts pydub tqdm pyperclip
+pip install "edge-tts>=7.2.7" pydub tqdm "httpx>=0.28.1"
 
 # Verify installation
 python -m TTS_ka "Installation successful!" --turbo --lang en
@@ -566,7 +567,7 @@ pip install --upgrade TTS_ka
 python -m TTS_ka --version
 
 # Update dependencies
-pip install --upgrade edge-tts pydub tqdm pyperclip
+pip install --upgrade edge-tts pydub tqdm httpx
 ```
 
 ### Health Check
