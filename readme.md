@@ -54,6 +54,8 @@ TTS_ka-gui
 
 On Debian/Ubuntu, install Tk if needed: `sudo apt install python3-tk`.
 
+The GUI picks a system font that supports **Georgian and Cyrillic** when available (for example **Noto Sans Georgian** / **Noto Sans** on Linux, **Segoe UI** on Windows). Install Google **Noto** fonts if characters still appear as boxes.
+
 ### 2. Basic Usage (Auto-Optimized by Default)
 
 ```bash

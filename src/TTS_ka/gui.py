@@ -27,6 +27,73 @@ def _gui_output_path() -> str:
     return str(Path.home() / ".tts_ka_gui_last.mp3")
 
 
+# Tk default fonts often miss Georgian (Mkhedruli) and sometimes Cyrillic. Pick the
+# first installed family that usually covers Latin + Cyrillic + Georgian.
+_UNICODE_FONT_PRIORITY = (
+    "noto sans georgian",
+    "noto sans",
+    "noto sans symbols 2",
+    "segoe ui",
+    "segoe ui symbol",
+    "sylfaen",
+    "microsoft yahei ui",
+    "tahoma",
+    "dejavu sans",
+    "liberation sans",
+    "cantarell",
+    "arial",
+)
+
+
+def _pick_unicode_font_family(root: Any) -> tuple[str, int] | None:
+    import tkinter.font as tkfont
+
+    canon: dict[str, str] = {}
+    for fam in tkfont.families():
+        canon[fam.lower()] = fam
+    for want in _UNICODE_FONT_PRIORITY:
+        if want in canon:
+            return (canon[want], 10)
+    return None
+
+
+def apply_unicode_ui_fonts(root: Any, size: int = 10) -> tuple[str, int] | None:
+    """Set Tk/ttk fonts to a Unicode-capable system family when one is available."""
+    import tkinter.font as tkfont
+    from tkinter import TclError, ttk
+
+    picked = _pick_unicode_font_family(root)
+    if not picked:
+        return None
+    family, _ = picked
+    for name in (
+        "TkDefaultFont",
+        "TkTextFont",
+        "TkFixedFont",
+        "TkHeadingFont",
+        "TkMenuFont",
+        "TkTooltipFont",
+    ):
+        try:
+            tkfont.nametofont(name).configure(family=family, size=size)
+        except TclError:
+            pass
+    style = ttk.Style(root)
+    ft = (family, size)
+    for elem in (
+        "TLabel",
+        "TButton",
+        "TCheckbutton",
+        "TRadiobutton",
+        "TCombobox",
+    ):
+        try:
+            style.configure(elem, font=ft)
+        except TclError:
+            pass
+    return (family, size)
+
+
 def _run_async_speak(
     text: str,
     lang: str,
@@ -97,6 +164,7 @@ class TTSSpeakApp:
         self.root.title("TTS_ka")
         self.root.minsize(420, 320)
         self.defs = defs
+        self._ui_font = apply_unicode_ui_fonts(self.root)
 
         frm = ttk.Frame(self.root, padding=8)
         frm.pack(fill=tk.BOTH, expand=True)
@@ -130,7 +198,10 @@ class TTSSpeakApp:
         )
 
         ttk.Label(frm, text="Text").grid(row=4, column=0, sticky=(tk.N, tk.W), pady=(8, 0))
-        self.text = scrolledtext.ScrolledText(frm, height=10, wrap=tk.WORD)
+        text_kw: Dict[str, Any] = {"height": 10, "wrap": tk.WORD}
+        if self._ui_font:
+            text_kw["font"] = self._ui_font
+        self.text = scrolledtext.ScrolledText(frm, **text_kw)
         self.text.grid(row=5, column=0, columnspan=2, sticky=(tk.N, tk.S, tk.E, tk.W), pady=(4, 0))
         frm.rowconfigure(5, weight=1)
         frm.columnconfigure(1, weight=1)
