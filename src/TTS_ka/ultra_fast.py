@@ -3,7 +3,8 @@
 import asyncio
 import os
 import sys
-from typing import List, Optional
+import threading
+from typing import Callable, List, Optional
 from concurrent.futures import ThreadPoolExecutor
 
 try:
@@ -22,6 +23,37 @@ from .constants import MAX_PARALLEL_WORKERS, STREAMING_CHUNK_SECONDS
 OPTIMAL_WORKERS = min(MAX_PARALLEL_WORKERS, (os.cpu_count() or 1) * 4)
 
 
+class GenerationCancelled(Exception):
+    """Raised when the user cancels generation (e.g. GUI Stop)."""
+
+
+async def _await_with_cancel(awaitable, cancel_event: Optional[threading.Event]):
+    """Await *awaitable* (e.g. ``fast_generate_audio(...)``) unless *cancel_event* is set."""
+    if cancel_event is None:
+        return await awaitable
+    task = asyncio.create_task(awaitable)
+
+    async def _cancel_poll() -> None:
+        while not cancel_event.is_set():
+            await asyncio.sleep(0.12)
+        if not task.done():
+            task.cancel()
+
+    poller = asyncio.create_task(_cancel_poll())
+    try:
+        return await task
+    except asyncio.CancelledError:
+        if cancel_event.is_set():
+            raise GenerationCancelled() from None
+        raise
+    finally:
+        poller.cancel()
+        try:
+            await poller
+        except asyncio.CancelledError:
+            pass
+
+
 def _interrupt_streaming_cleanup(
     streaming_player: Optional[StreamingAudioPlayer], parts: List[str]
 ) -> None:
@@ -35,11 +67,17 @@ def _interrupt_streaming_cleanup(
     ultra_fast_cleanup_parts(parts or [], keep_parts=False)
 
 
-async def ultra_fast_parallel_generation(chunks: List[str], language: str, 
-                                       parallel: int = OPTIMAL_WORKERS,
-                                       streaming_player: StreamingAudioPlayer = None,
-                                       output_path: str = 'data.mp3') -> List[str]:
-    """Ultra-fast parallel generation with optimized concurrency and optional streaming playback."""
+async def ultra_fast_parallel_generation(
+    chunks: List[str],
+    language: str,
+    parallel: int = OPTIMAL_WORKERS,
+    streaming_player: StreamingAudioPlayer = None,
+    output_path: str = "data.mp3",
+    *,
+    cancel_event: Optional[threading.Event] = None,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+) -> List[str]:
+    """Ultra-fast parallel generation with optional cancel and progress (*done*, *total* chunks)."""
     
     # Use uvloop for maximum performance on Unix systems
     if HAS_UVLOOP and sys.platform != 'win32':
@@ -89,26 +127,56 @@ async def ultra_fast_parallel_generation(chunks: List[str], language: str,
                 return (i, False)
     
     # Create all tasks at once for better scheduling
-    tasks = [asyncio.create_task(worker(i, chunks[i], parts[i])) 
-             for i in range(len(chunks))]
-    
-    # Rich progress display with statistics
-    progress = create_progress_display(chunks, language)
-    
+    tasks = [asyncio.create_task(worker(i, chunks[i], parts[i])) for i in range(len(chunks))]
+
+    if cancel_event is not None and cancel_event.is_set():
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        ultra_fast_cleanup_parts(parts, keep_parts=False)
+        raise GenerationCancelled()
+
+    progress = None
+    if progress_callback is None:
+        progress = create_progress_display(chunks, language)
+    else:
+        progress_callback(0, len(chunks))
+
     try:
-        # Process tasks as they complete with rich progress updates
+        done_count = 0
         for coro in asyncio.as_completed(tasks):
+            if cancel_event is not None and cancel_event.is_set():
+                for t in tasks:
+                    if not t.done():
+                        t.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                if progress:
+                    progress.finish(success=False)
+                ultra_fast_cleanup_parts(parts, keep_parts=False)
+                raise GenerationCancelled()
             chunk_idx, _result = await coro
+            done_count += 1
             chunk_words = (
                 len(chunks[chunk_idx].split()) if 0 <= chunk_idx < len(chunks) else 0
             )
-            progress.update(chunk_words)
-        
-        progress.finish(success=True)
+            if progress:
+                progress.update(chunk_words)
+            if progress_callback:
+                progress_callback(done_count, len(chunks))
+
+        if progress:
+            progress.finish(success=True)
+        elif progress_callback:
+            progress_callback(len(chunks), len(chunks))
+    except GenerationCancelled:
+        if progress:
+            progress.finish(success=False)
+        raise
     except Exception as e:
-        progress.finish(success=False)
+        if progress:
+            progress.finish(success=False)
         raise e
-    
+
     return parts
 
 
@@ -143,10 +211,20 @@ def ultra_fast_cleanup_parts(parts: List[str], keep_parts: bool = False) -> None
             remove_file(part)
 
 
-async def smart_generate_long_text(text: str, language: str, chunk_seconds: int = 30, 
-                                  parallel: int = OPTIMAL_WORKERS, output_path: str = 'data.mp3',
-                                  keep_parts: bool = False, enable_streaming: bool = False, show_gui: bool = True) -> None:
-    """Smart generation with dynamic optimization based on text length and optional streaming playback."""
+async def smart_generate_long_text(
+    text: str,
+    language: str,
+    chunk_seconds: int = 30,
+    parallel: int = OPTIMAL_WORKERS,
+    output_path: str = "data.mp3",
+    keep_parts: bool = False,
+    enable_streaming: bool = False,
+    show_gui: bool = True,
+    *,
+    cancel_event: Optional[threading.Event] = None,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+) -> None:
+    """Smart generation with optional *cancel_event* and *progress_callback(done, total)*."""
     text = replace_not_readable(text)
     if not text.strip():
         raise ValueError("No readable text after filtering — input empty or only symbols/URLs/code.")
@@ -168,7 +246,11 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
     word_count = len(text.split())
     if word_count < 200 and not enable_streaming:
         # Very short text - direct generation is fastest (unless streaming is requested)
-        await fast_generate_audio(text, language, output_path)
+        if progress_callback:
+            progress_callback(0, 1)
+        await _await_with_cancel(fast_generate_audio(text, language, output_path), cancel_event)
+        if progress_callback:
+            progress_callback(1, 1)
         elapsed = time.perf_counter() - start
         print(f"⚡ Completed in {elapsed:.2f}s (direct)")
         return
@@ -188,7 +270,11 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
 
     if len(chunks) == 1 and not enable_streaming:
         # Still short enough for direct generation (unless streaming is requested)
-        await fast_generate_audio(text, language, output_path)
+        if progress_callback:
+            progress_callback(0, 1)
+        await _await_with_cancel(fast_generate_audio(text, language, output_path), cancel_event)
+        if progress_callback:
+            progress_callback(1, 1)
         elapsed = time.perf_counter() - start
         print(f"⚡ Completed in {elapsed:.2f}s (direct)")
         return
@@ -221,7 +307,13 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
     parts: List[str] = []
     try:
         parts = await ultra_fast_parallel_generation(
-            chunks, language, parallel, streaming_player, output_path
+            chunks,
+            language,
+            parallel,
+            streaming_player,
+            output_path,
+            cancel_event=cancel_event,
+            progress_callback=progress_callback,
         )
 
         if streaming_player:
@@ -266,6 +358,9 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
 
         elapsed = time.perf_counter() - start
         print(f"⚡ Completed in {elapsed:.2f}s ({len(chunks)} chunks, {parallel} workers)")
+    except GenerationCancelled:
+        _interrupt_streaming_cleanup(streaming_player, parts)
+        raise
     except KeyboardInterrupt:
         _interrupt_streaming_cleanup(streaming_player, parts)
         raise

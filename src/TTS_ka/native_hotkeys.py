@@ -11,21 +11,28 @@ Default bindings (clipboard is read the same way as ``TTS_ka clipboard``):
 * ``Ctrl+Alt+3`` — Georgian (female)
 * ``Ctrl+Alt+4`` — Georgian (male)
 
+Override or extend via JSON config (same file as other TTS_ka settings), key ``hotkeys``:
+map of pynput combo string to language code; use ``null`` to remove a default binding.
+See ``extras/tts_config.example.json``.
+
 Run standalone (until you press Enter)::
 
     TTS_ka-hotkeys
     python -m TTS_ka.native_hotkeys
 
-Or enable from the GUI **Windows shell** tab when ``pynput`` is installed.
+Or enable from the GUI **Hotkeys** tab when ``pynput`` is installed.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 import threading
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, Mapping, Optional
+
+from .user_config import load_user_config, merge_hotkey_bindings
 
 # combo string -> --lang value (must match CLI)
 DEFAULT_HOTKEY_LANG: Dict[str, str] = {
@@ -54,7 +61,7 @@ def spawn_clipboard_tts(lang: str) -> None:
     subprocess.Popen(argv, **kw)
 
 
-def default_hotkey_callbacks() -> Dict[str, Callable[[], None]]:
+def _callbacks_from_lang_map(lang_by_combo: Mapping[str, str]) -> Dict[str, Callable[[], None]]:
     """Map pynput combo string -> no-arg callback."""
 
     def make(lang: str) -> Callable[[], None]:
@@ -66,7 +73,24 @@ def default_hotkey_callbacks() -> Dict[str, Callable[[], None]]:
 
         return _cb
 
-    return {combo: make(lang) for combo, lang in DEFAULT_HOTKEY_LANG.items()}
+    return {combo: make(lang) for combo, lang in lang_by_combo.items()}
+
+
+def resolved_hotkey_lang_map(cfg: Mapping[str, Any] | None) -> Dict[str, str]:
+    """Defaults merged with ``cfg['hotkeys']`` when *cfg* is not ``None``."""
+    if cfg is None:
+        return dict(DEFAULT_HOTKEY_LANG)
+    return merge_hotkey_bindings(cfg, DEFAULT_HOTKEY_LANG)
+
+
+def hotkey_callbacks_for_config(cfg: Mapping[str, Any] | None) -> Dict[str, Callable[[], None]]:
+    """Build pynput callbacks from merged config (``hotkeys`` + defaults)."""
+    return _callbacks_from_lang_map(resolved_hotkey_lang_map(cfg))
+
+
+def default_hotkey_callbacks(cfg: Mapping[str, Any] | None = None) -> Dict[str, Callable[[], None]]:
+    """Backward-compatible name: same as :func:`hotkey_callbacks_for_config`."""
+    return hotkey_callbacks_for_config(cfg)
 
 
 class NativeHotkeyManager:
@@ -84,8 +108,17 @@ class NativeHotkeyManager:
         with self._lock:
             return self._listener is not None
 
-    def start(self, mapping: Optional[Dict[str, Callable[[], None]]] = None) -> bool:
-        """Register global hotkeys. Returns False if ``pynput`` is missing or not Windows."""
+    def start(
+        self,
+        mapping: Optional[Dict[str, Callable[[], None]]] = None,
+        *,
+        config: Optional[Mapping[str, Any]] = None,
+    ) -> bool:
+        """Register global hotkeys.
+
+        Pass ``mapping`` for full control, or ``config`` (loaded JSON) to use ``hotkeys`` + defaults,
+        or omit both to load config from ``TTS_KA_CONFIG`` / default ``~/.tts_config.json`` chain.
+        """
         if not self.available():
             return False
         from pynput import keyboard
@@ -93,7 +126,13 @@ class NativeHotkeyManager:
         with self._lock:
             if self._listener is not None:
                 return True
-            hot = mapping if mapping is not None else default_hotkey_callbacks()
+            if mapping is not None:
+                hot = mapping
+            elif config is not None:
+                hot = hotkey_callbacks_for_config(dict(config))
+            else:
+                ex = os.environ.get("TTS_KA_CONFIG", "").strip() or None
+                hot = hotkey_callbacks_for_config(load_user_config(ex))
             self._listener = keyboard.GlobalHotKeys(hot)
             self._listener.start()
         return True
@@ -112,15 +151,25 @@ class NativeHotkeyManager:
             except Exception:
                 pass
 
+    def restart(
+        self,
+        mapping: Optional[Dict[str, Callable[[], None]]] = None,
+        *,
+        config: Optional[Mapping[str, Any]] = None,
+    ) -> bool:
+        """Stop the listener if running, then :meth:`start` with the same arguments."""
+        self.stop()
+        return self.start(mapping=mapping, config=config)
 
-def print_hotkey_help() -> None:
+
+def print_hotkey_help(cfg: Mapping[str, Any] | None = None) -> None:
     lines = [
         "TTS_ka native global hotkeys (Windows, clipboard)",
         "Requires: pip install 'TTS_ka[hotkeys]'",
         "",
-        "Defaults:",
+        "Effective bindings (defaults + ~/.tts_config.json hotkeys):",
     ]
-    for combo, lang in DEFAULT_HOTKEY_LANG.items():
+    for combo, lang in resolved_hotkey_lang_map(cfg).items():
         lines.append(f"  {combo:24}  ->  clipboard --lang {lang}")
     lines.extend(
         [
@@ -139,9 +188,11 @@ def main() -> None:
     if not NativeHotkeyManager.available():
         print("Install the optional dependency: pip install 'TTS_ka[hotkeys]'", file=sys.stderr)
         sys.exit(1)
-    print_hotkey_help()
+    ex = os.environ.get("TTS_KA_CONFIG", "").strip() or None
+    cfg = load_user_config(ex)
+    print_hotkey_help(cfg)
     mgr = NativeHotkeyManager()
-    if not mgr.start():
+    if not mgr.start(config=cfg):
         sys.exit(1)
     try:
         input()

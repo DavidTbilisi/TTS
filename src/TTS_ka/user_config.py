@@ -10,6 +10,35 @@ from typing import Any, Dict, Mapping
 LANG_CODES = frozenset({"ka", "ka-m", "ru", "en"})
 
 
+def merge_hotkey_bindings(
+    cfg: Mapping[str, Any],
+    defaults: Mapping[str, str],
+) -> dict[str, str]:
+    """Merge optional ``cfg["hotkeys"]`` onto *defaults* (pynput combo string -> ``--lang``).
+
+    Values must be one of ``ka``, ``ka-m``, ``ru``, ``en``. JSON ``null`` removes that combo
+    from the effective map (including overriding a default).
+    """
+    merged = dict(defaults)
+    hm = cfg.get("hotkeys")
+    if not isinstance(hm, dict):
+        return merged
+    for k, v in hm.items():
+        if not isinstance(k, str):
+            continue
+        key = k.strip()
+        if not key:
+            continue
+        if v is None:
+            merged.pop(key, None)
+            continue
+        if isinstance(v, str):
+            lang = v.strip()
+            if lang in LANG_CODES:
+                merged[key] = lang
+    return merged
+
+
 def default_config_path() -> Path:
     """Default file: ``~/.tts_config.json`` (same path documented in the readme)."""
     return Path.home() / ".tts_config.json"

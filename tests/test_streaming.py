@@ -824,8 +824,10 @@ class TestStreamingIntegrationWithMainSystem:
              patch.object(PlayerDetector, 'find', return_value=None):
 
             # Mock multi-chunk generation — use absolute paths so exists() checks pass
-            async def multi_chunk_gen(chunks_arg, lang_arg, parallel_arg,
-                                      streaming_player_arg=None, actual_output=None):
+            async def multi_chunk_gen(*args, **kwargs):
+                actual_output = kwargs.get("output_path")
+                if actual_output is None and len(args) >= 5:
+                    actual_output = args[4]
                 actual_output = actual_output or output_path
                 with open(actual_output, 'wb') as f:
                     f.write(b'first chunk')

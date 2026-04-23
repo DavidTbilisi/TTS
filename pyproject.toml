@@ -43,6 +43,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/DavidTbilisi/TTS"
+Documentation = "https://github.com/DavidTbilisi/TTS/blob/main/readme.md"
 Repository = "https://github.com/DavidTbilisi/TTS"
 Issues = "https://github.com/DavidTbilisi/TTS/issues"
 Changelog = "https://github.com/DavidTbilisi/TTS/releases"
@@ -55,6 +56,9 @@ TTS_ka-hotkeys = "TTS_ka.native_hotkeys:main"
 [project.optional-dependencies]
 hotkeys = [
     "pynput>=1.7.6",
+]
+soundfile = [
+    "soundfile>=0.12.1",
 ]
 test = [
     "pytest>=7.0.0",

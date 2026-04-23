@@ -5,6 +5,7 @@ import os
 import time
 
 import pytest
+import threading
 from unittest.mock import MagicMock, patch, AsyncMock
 from TTS_ka.ultra_fast import (
     ultra_fast_parallel_generation,
@@ -12,6 +13,7 @@ from TTS_ka.ultra_fast import (
     smart_generate_long_text,
     get_optimal_settings,
     OPTIMAL_WORKERS,
+    GenerationCancelled,
 )
 
 
@@ -96,6 +98,32 @@ class TestUltraFastCleanupParts:
 
 
 class TestUltraFastParallelGeneration:
+    async def test_cancel_before_start_raises(self, tmp_path):
+        chunks = ["a", "b"]
+        output_path = str(tmp_path / "out.mp3")
+        ev = threading.Event()
+        ev.set()
+        with patch("TTS_ka.ultra_fast.fast_generate_audio", new=AsyncMock(return_value=True)):
+            with pytest.raises(GenerationCancelled):
+                await ultra_fast_parallel_generation(
+                    chunks, "en", parallel=2, output_path=output_path, cancel_event=ev
+                )
+
+    async def test_progress_callback_invoked(self, tmp_path):
+        chunks = ["Hello", "world"]
+        output_path = str(tmp_path / "out.mp3")
+        seen: list[tuple[int, int]] = []
+
+        def cb(done: int, total: int) -> None:
+            seen.append((done, total))
+
+        with patch("TTS_ka.ultra_fast.fast_generate_audio", new=AsyncMock(return_value=True)):
+            await ultra_fast_parallel_generation(
+                chunks, "en", parallel=2, output_path=output_path, progress_callback=cb
+            )
+        assert (0, 2) in seen
+        assert seen[-1] == (2, 2)
+
     async def test_success_returns_parts(self, tmp_path):
         chunks = ["Hello world", "Second chunk"]
         output_path = str(tmp_path / "out.mp3")

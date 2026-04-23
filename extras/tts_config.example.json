@@ -9,5 +9,12 @@
   "no_gui": false,
   "skip_http": false,
   "verbose": false,
-  "vlc_rc": true
+  "vlc_rc": true,
+  "hotkeys": {
+    "<ctrl>+<alt>+1": "en",
+    "<ctrl>+<alt>+2": "ru",
+    "<ctrl>+<alt>+3": "ka",
+    "<ctrl>+<alt>+5": "ka-m",
+    "<ctrl>+<alt>+4": null
+  }
 }

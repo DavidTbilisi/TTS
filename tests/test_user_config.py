@@ -10,6 +10,7 @@ from TTS_ka.user_config import (
     apply_env_from_config,
     argparse_defaults_from_config,
     load_user_config,
+    merge_hotkey_bindings,
     resolved_playback_flags,
     resolve_config_path,
     write_user_config,
@@ -94,6 +95,26 @@ class TestResolveConfigPath:
         p = tmp_path / "x.json"
         p.write_text("{}", encoding="utf-8")
         assert resolve_config_path(str(p)) == p
+
+
+class TestMergeHotkeyBindings:
+    def test_overlay_and_remove(self):
+        defaults = {"<a>": "en", "<b>": "ru"}
+        cfg = {"hotkeys": {"<a>": "ka", "<c>": "en", "<b>": None}}
+        m = merge_hotkey_bindings(cfg, defaults)
+        assert m["<a>"] == "ka"
+        assert "<b>" not in m
+        assert m["<c>"] == "en"
+
+    def test_invalid_lang_skipped(self):
+        defaults = {"<a>": "en"}
+        cfg = {"hotkeys": {"<a>": "not-a-lang"}}
+        m = merge_hotkey_bindings(cfg, defaults)
+        assert m["<a>"] == "en"
+
+    def test_non_dict_hotkeys_ignored(self):
+        m = merge_hotkey_bindings({"hotkeys": [1, 2]}, {"x": "en"})
+        assert m == {"x": "en"}
 
 
 class TestWriteUserConfig:

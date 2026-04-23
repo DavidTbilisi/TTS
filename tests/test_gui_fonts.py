@@ -59,6 +59,25 @@ def test_pick_unicode_font_falls_back_to_segoe() -> None:
         root.destroy()
 
 
+def test_pick_unicode_font_prefers_sylfaen_over_segoe_ui_variable() -> None:
+    """Sylfaen carries Mkhedruli reliably in Tk Text; prefer it over Segoe UI Variable."""
+    pytest.importorskip("tkinter")
+
+    from TTS_ka.gui import _pick_unicode_font_family
+
+    root = _tk_root()
+    try:
+        with patch(
+            "tkinter.font.families",
+            return_value=("Segoe UI Variable", "Sylfaen", "Arial"),
+        ):
+            got = _pick_unicode_font_family(root)
+        assert got is not None
+        assert got[0] == "Sylfaen"
+    finally:
+        root.destroy()
+
+
 def test_pick_unicode_font_segoe_before_noto_symbols2() -> None:
     """Symbol fonts lack Mkhedruli; Segoe UI must win when both are installed."""
     pytest.importorskip("tkinter")
