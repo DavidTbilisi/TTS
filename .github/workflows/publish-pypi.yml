@@ -10,6 +10,8 @@
 #     password: ${{ secrets.PYPI_API_TOKEN }}
 # on the pypa/gh-action-pypi-publish step (and you can remove id-token permission if not using OIDC).
 #
+# OIDC: `id-token: write` must be on the SAME JOB as gh-action-pypi-publish (workflow-level alone can fail).
+#
 name: Publish to PyPI
 
 on:
@@ -17,15 +19,16 @@ on:
     types: [published]
   workflow_dispatch:
 
-permissions:
-  contents: read
-  id-token: write
-
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
-    # Uncomment after creating a GitHub Environment named "pypi" (optional; must match PyPI publisher):
-    # environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    # If PyPI trusted publisher uses a GitHub Environment name, uncomment and match PyPI exactly:
+    # environment:
+    #   name: pypi
+    #   url: https://pypi.org/project/TTS-ka/
 
     steps:
       - uses: actions/checkout@v4
