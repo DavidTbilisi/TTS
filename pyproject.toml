@@ -11,8 +11,8 @@ authors = [
 ]
 description = "A simple text to speech program using edge-tts library"
 readme = "readme.md"
-# asyncio is stdlib; entrypoint uses asyncio.run() (3.7+). httpx 0.28+ requires 3.8+.
-requires-python = ">=3.8"
+# asyncio is stdlib; httpx 0.28+ supports 3.8+, but setuptools>=77 (PEP 639 metadata) needs 3.9+ to build.
+requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",

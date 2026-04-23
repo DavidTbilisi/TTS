@@ -4,7 +4,7 @@
 
 > ✨ **Simplified UX**: Auto-optimization is now enabled by default. Just specify `--lang` and go!
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ## ✨ Features
@@ -231,7 +231,7 @@ python -m TTS_ka clipboard --lang en
 ## 🔧 Installation & Requirements
 
 ### System Requirements
-- **Python**: 3.8+ (required: async CLI and `httpx`)
+- **Python**: 3.9+ (required: async CLI, `httpx`, and PEP 639 build metadata)
 - **OS**: Windows, macOS, Linux
 - **Memory**: 256MB+ available RAM
 - **Network**: Internet connection for voice synthesis
@@ -606,7 +606,7 @@ python -m TTS_ka "System check" --turbo --lang en
 ffmpeg -version
 
 # Check Python version
-python --version  # Should be 3.8+
+python --version  # Should be 3.9+
 ```
 
 ## 🤝 Contributing
