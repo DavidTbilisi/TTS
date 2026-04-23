@@ -22,7 +22,8 @@ def _tk_root():
     return root
 
 
-def test_pick_unicode_font_prefers_noto_georgian() -> None:
+def test_pick_unicode_font_prefers_noto_georgian_without_segoe() -> None:
+    """When Windows UI fonts are absent, Noto Sans Georgian is used."""
     pytest.importorskip("tkinter")
 
     from TTS_ka.gui import _pick_unicode_font_family
@@ -31,7 +32,7 @@ def test_pick_unicode_font_prefers_noto_georgian() -> None:
     try:
         with patch(
             "tkinter.font.families",
-            return_value=("Noto Sans Georgian", "Segoe UI", "Arial"),
+            return_value=("Noto Sans Georgian", "DejaVu Sans", "Arial"),
         ):
             got = _pick_unicode_font_family(root)
         assert got is not None
@@ -50,6 +51,25 @@ def test_pick_unicode_font_falls_back_to_segoe() -> None:
         with patch(
             "tkinter.font.families",
             return_value=("Segoe UI", "Arial"),
+        ):
+            got = _pick_unicode_font_family(root)
+        assert got is not None
+        assert got[0] == "Segoe UI"
+    finally:
+        root.destroy()
+
+
+def test_pick_unicode_font_segoe_before_noto_symbols2() -> None:
+    """Symbol fonts lack Mkhedruli; Segoe UI must win when both are installed."""
+    pytest.importorskip("tkinter")
+
+    from TTS_ka.gui import _pick_unicode_font_family
+
+    root = _tk_root()
+    try:
+        with patch(
+            "tkinter.font.families",
+            return_value=("Noto Sans Symbols 2", "Segoe UI", "Arial"),
         ):
             got = _pick_unicode_font_family(root)
         assert got is not None

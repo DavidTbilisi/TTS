@@ -29,19 +29,25 @@ def _gui_output_path() -> str:
 
 # Tk default fonts often miss Georgian (Mkhedruli) and sometimes Cyrillic. Pick the
 # first installed family that usually covers Latin + Cyrillic + Georgian.
+#
+# IMPORTANT: Do not put "Noto Sans Symbols 2" / "Segoe UI Symbol" before full UI fonts.
+# Symbol fonts often lack Mkhedruli; Tk then shows "?" for Georgian letters.
 _UNICODE_FONT_PRIORITY = (
+    "segoe ui variable",
+    "segoe ui",
+    "sylfaen",
     "noto sans georgian",
     "noto sans",
-    "noto sans symbols 2",
-    "segoe ui",
-    "segoe ui symbol",
-    "sylfaen",
     "microsoft yahei ui",
+    "microsoft sans serif",
     "tahoma",
     "dejavu sans",
     "liberation sans",
     "cantarell",
+    "arial unicode ms",
     "arial",
+    "segoe ui symbol",
+    "noto sans symbols 2",
 )
 
 
@@ -92,6 +98,16 @@ def apply_unicode_ui_fonts(root: Any, size: int = 10) -> tuple[str, int] | None:
         except TclError:
             pass
     return (family, size)
+
+
+def _enable_input_methods(root: Any) -> None:
+    """Allow system IME (Georgian, Russian, …) in Tk text fields where supported."""
+    from tkinter import TclError
+
+    try:
+        root.tk.call("tk", "useinputmethods", 1)
+    except TclError:
+        pass
 
 
 def _run_async_speak(
@@ -164,6 +180,7 @@ class TTSSpeakApp:
         self.root.title("TTS_ka")
         self.root.minsize(420, 320)
         self.defs = defs
+        _enable_input_methods(self.root)
         self._ui_font = apply_unicode_ui_fonts(self.root)
 
         frm = ttk.Frame(self.root, padding=8)
@@ -199,12 +216,26 @@ class TTSSpeakApp:
 
         ttk.Label(frm, text="Text").grid(row=4, column=0, sticky=(tk.N, tk.W), pady=(8, 0))
         text_kw: Dict[str, Any] = {"height": 10, "wrap": tk.WORD}
+        self._text_font_obj = None
         if self._ui_font:
-            text_kw["font"] = self._ui_font
+            import tkinter.font as tkfont
+
+            self._text_font_obj = tkfont.Font(
+                root=self.root,
+                family=self._ui_font[0],
+                size=self._ui_font[1],
+            )
+            text_kw["font"] = self._text_font_obj
         self.text = scrolledtext.ScrolledText(frm, **text_kw)
         self.text.grid(row=5, column=0, columnspan=2, sticky=(tk.N, tk.S, tk.E, tk.W), pady=(4, 0))
         frm.rowconfigure(5, weight=1)
         frm.columnconfigure(1, weight=1)
+
+        # ttk theme setup can reset named fonts; re-apply after widgets exist.
+        self._ui_font = apply_unicode_ui_fonts(self.root)
+        if self._ui_font and self._text_font_obj is not None:
+            self._text_font_obj.configure(family=self._ui_font[0], size=self._ui_font[1])
+            self.text.configure(font=self._text_font_obj)
 
         btn_row = ttk.Frame(frm)
         btn_row.grid(row=6, column=0, columnspan=2, sticky=tk.EW, pady=(8, 0))
