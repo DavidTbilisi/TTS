@@ -39,6 +39,14 @@ def load_user_config(explicit: str | None = None) -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def write_user_config(path: str | os.PathLike[str], data: Mapping[str, Any]) -> None:
+    """Write *data* as UTF-8 JSON to *path* (parent directories are created)."""
+    p = Path(os.path.expanduser(os.fspath(path)))
+    p.parent.mkdir(parents=True, exist_ok=True)
+    payload = dict(data)
+    p.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def apply_env_from_config(cfg: Mapping[str, Any]) -> None:
     """Apply ``skip_http`` / ``verbose`` / ``vlc_rc`` to the process environment if not already set."""
     if not cfg:

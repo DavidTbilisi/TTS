@@ -21,7 +21,7 @@ def show_simple_help():
     print("  python -m TTS_ka clipboard --lang ka")
     print("  python -m TTS_ka file.txt --lang en")
     print("  python -m TTS_ka --check-deps          # ffmpeg, players, Python stack")
-    print("  TTS_ka-gui                             # optional paste-to-speech window (tkinter)")
+    print("  TTS_ka-gui                             # Speak / Config / Windows context menu (tkinter)")
     print()
 
     print("PERFORMANCE OPTIONS:")

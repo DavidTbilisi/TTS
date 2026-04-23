@@ -19,7 +19,7 @@
 - 📁 **File Support**: Process text files directly
 - 🔄 **Real-time Playback**: Automatic audio playback with system player
 - **Dependency check**: `python -m TTS_ka --check-deps` reports ffmpeg, streaming players (VLC/mpv/ffplay), and Python packages; exits with code 1 if critical pieces are missing.
-- **Optional GUI**: `TTS_ka-gui` opens a small window to paste text, choose language, and speak (stdlib **tkinter**).
+- **Optional GUI**: `TTS_ka-gui` (**tkinter**) — **Speak** tab (paste or UTF-8 file path), **Config** tab (JSON path, defaults, Save/Reload), and on Windows **Windows shell** (install/uninstall Explorer context menu via `extras/windows/context_menu/Install-TTS_ka-ContextMenu.ps1` when that file is available next to the repo).
 - **Speakable text cleanup**: Before TTS, the pipeline rewrites noisy input so the voice does not read raw syntax — fenced and inline code, URLs, shebang lines, HTML-like tags, file extensions (for example `.ts` → “TypeScript”), common IT acronyms (HTTPS, JSON, API, …), math symbols (for example `⇒` → “implies”), and very long digit runs. Implemented in `TTS_ka.not_reading` (`replace_not_readable`).
 - **Ctrl+C**: Cancels generation and stops active streaming playback (including VLC) without waiting for the full join timeout.
 

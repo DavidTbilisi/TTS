@@ -12,6 +12,7 @@ from TTS_ka.user_config import (
     load_user_config,
     resolved_playback_flags,
     resolve_config_path,
+    write_user_config,
 )
 
 
@@ -93,3 +94,24 @@ class TestResolveConfigPath:
         p = tmp_path / "x.json"
         p.write_text("{}", encoding="utf-8")
         assert resolve_config_path(str(p)) == p
+
+
+class TestWriteUserConfig:
+    def test_write_then_load_roundtrip(self, tmp_path):
+        p = tmp_path / "out.json"
+        write_user_config(
+            p,
+            {
+                "lang": "ka",
+                "output": "speech.mp3",
+                "chunk_seconds": 30,
+                "parallel": 2,
+                "no_play": True,
+            },
+        )
+        cfg = load_user_config(str(p))
+        assert cfg["lang"] == "ka"
+        assert cfg["output"] == "speech.mp3"
+        assert cfg["chunk_seconds"] == 30
+        assert cfg["parallel"] == 2
+        assert cfg["no_play"] is True
