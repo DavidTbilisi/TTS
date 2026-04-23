@@ -1,0 +1,13 @@
+{
+  "lang": "en",
+  "output": "data.mp3",
+  "chunk_seconds": 0,
+  "parallel": 0,
+  "no_play": false,
+  "stream": false,
+  "no_turbo": false,
+  "no_gui": false,
+  "skip_http": false,
+  "verbose": false,
+  "vlc_rc": true
+}

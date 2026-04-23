@@ -72,6 +72,10 @@ class TestShowSimpleHelp:
         out = self._get_output()
         assert "--lang" in out
 
+    def test_contains_config_section(self):
+        out = self._get_output()
+        assert "CONFIG FILE" in out
+
     def test_prints_multiple_lines(self, capsys):
         show_simple_help()
         out = capsys.readouterr().out

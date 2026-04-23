@@ -272,37 +272,64 @@ python -m TTS_ka "Installation successful!" --turbo --lang en
 
 ## 🎮 AutoHotkey Integration (Windows)
 
-### Quick Setup
-1. Install [AutoHotkey v2](https://www.autohotkey.com/)
-2. Create `tts_hotkeys.ahk`:
+Bundled scripts live under [`extras/autohotkey/`](extras/autohotkey/): a **commented template** (`TTS_ka_hotkeys.ahk`) and a **Startup installer** (`Install-TTS_ka-Hotkeys.ps1`). Defaults match the old readme: **Alt+E** / **Alt+R** / **Alt+X** for English, Russian, Georgian (clipboard).
 
-```autohotkey
-; Ultra-fast TTS hotkeys
-!e::  ; Alt+E - English
-{
-    Run("cmd /k python -m TTS_ka clipboard --lang en")
-}
+### One-time install (recommended)
 
-!r::  ; Alt+R - Russian  
-{
-    Run("cmd /k python -m TTS_ka clipboard --lang ru")
-}
+1. Install [AutoHotkey v2](https://www.autohotkey.com/) (64-bit is typical).
+2. From the **repository root**, run PowerShell:
 
-!x::  ; Alt+X - Georgian
-{
-    Run("cmd /k python -m TTS_ka clipboard --lang ka")
-}
+```powershell
+powershell -ExecutionPolicy Bypass -File .\extras\autohotkey\Install-TTS_ka-Hotkeys.ps1
 ```
 
-3. Double-click to run, then:
-   - Copy text → **Alt+E** for English
-   - Copy text → **Alt+R** for Russian  
-   - Copy text → **Alt+X** for Georgian
+This copies `TTS_ka_hotkeys.ahk` into your user **Startup** folder and launches it. Re-run the same command after you edit the script in the repo to refresh the Startup copy.
 
-### Daily Workflow
-1. **Browse web** → Copy interesting text  
-2. **Press Alt+E** → Instant speech
-3. **Continue browsing** while listening
+Options:
+
+| Flag | Meaning |
+|------|--------|
+| `-WhatIf` | Print paths only; no copy/start |
+| `-NoStart` | Copy to Startup but do not launch now |
+| `-Uninstall` | Remove the script from Startup |
+
+3. Confirm Python works in a new Command Prompt: `python -m TTS_ka --version` (use the same `python` / `py` you set in `g_Python` inside the `.ahk` file).
+
+### Manual install
+
+1. Copy `extras/autohotkey/TTS_ka_hotkeys.ahk` anywhere (e.g. `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\`).
+2. Double-click the `.ahk` file (or right-click → Run with AutoHotkey).
+
+### Customising
+
+Open `TTS_ka_hotkeys.ahk` in a text editor. At the top, set **`g_Python`**, **`g_CopyFirst`** (send Ctrl+C before TTS), **`g_ExtraFlags`** (e.g. `--stream`), and **`g_CmdKeepOpen`**. Further down, many hotkeys and variants are **commented** with `;` — delete the semicolon on the lines you want.
+
+### Daily workflow
+
+1. **Copy** (or highlight and set `g_CopyFirst := true`) your text  
+2. **Alt+E** / **Alt+R** / **Alt+X** → speech in that language  
+3. Right-click the **green H** tray icon → Reload / Exit
+
+### Select text → “Read” → language (Windows limits)
+
+**Inside Chrome, Edge, Word, etc.**, Windows does **not** let third parties add a “Read” item to the **native** right‑click menu for a text selection (that menu is drawn by each app). Two supported options:
+
+1. **AutoHotkey (in-app)** — with `TTS_ka_hotkeys.ahk` loaded: **select text**, then either press the **Menu / Apps** key (next to Right Ctrl) or **Ctrl+Alt+right‑click**; a small **language menu** appears at the cursor (the script sends Ctrl+C first). Comment those lines in the script if they clash with other tools.
+
+2. **Explorer / Desktop context menu** — after **Ctrl+C**, right‑click **empty** space in a folder window or on the **desktop**, then **Read with TTS_ka** → choose a language (nested menu). Installer:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\extras\windows\context_menu\Install-TTS_ka-ContextMenu.ps1
+```
+
+| Flag | Meaning |
+|------|--------|
+| `-FlatMenu` | One top-level item per language instead of a submenu |
+| `-Languages @('en','ru')` | Subset of languages (PowerShell array) |
+| `-IncludeTextFiles` | Add “read this file” on `.txt` right‑click |
+| `-Uninstall` | Remove TTS_ka menu entries |
+
+On **Windows 11**, classic shell entries may appear under **Show more options**.
 
 ## 🔍 Troubleshooting
 

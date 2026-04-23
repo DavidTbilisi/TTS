@@ -1,10 +1,16 @@
 """Tests for main module CLI functionality."""
 
+import json
 import pytest
 import sys
 import os
 from unittest.mock import MagicMock, patch, AsyncMock
-from TTS_ka.main import get_input_text, _read_clipboard, format_cli_version_info
+from TTS_ka.main import (
+    get_input_text,
+    _read_clipboard,
+    format_cli_version_info,
+    resolve_positional_text_source,
+)
 
 
 class TestGetInputText:
@@ -36,6 +42,25 @@ class TestGetInputText:
     def test_nonexistent_file_treated_as_text(self):
         result = get_input_text("nonexistent_xyz.txt")
         assert result == "nonexistent_xyz.txt"
+
+
+class TestResolvePositionalTextSource:
+    """Clipboard keyword shorthands (cb / clip / paste)."""
+
+    def test_cb_maps_to_clipboard(self):
+        assert resolve_positional_text_source("cb") == "clipboard"
+        assert resolve_positional_text_source("CLIP") == "clipboard"
+
+    def test_non_alias_unchanged(self):
+        assert resolve_positional_text_source("hello") == "hello"
+        assert resolve_positional_text_source("clipboard") == "clipboard"
+
+    def test_existing_file_named_cb(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        p = tmp_path / "cb"
+        p.write_text("x", encoding="utf-8")
+        assert resolve_positional_text_source("cb") == "cb"
+        assert get_input_text(resolve_positional_text_source("cb")) == "x"
 
 
 class TestFormatCliVersionInfo:
@@ -82,6 +107,16 @@ class TestMain:
     def test_help_full_calls_show_simple_help(self, capsys):
         """--help-full calls show_simple_help and show_troubleshooting."""
         with patch('sys.argv', ['TTS_ka', 'hello', '--help-full']):
+            with patch('TTS_ka.main.show_simple_help') as msh, \
+                 patch('TTS_ka.main.show_troubleshooting') as mst:
+                from TTS_ka.main import main
+                main()
+        msh.assert_called_once()
+        mst.assert_called_once()
+
+    def test_help_full_short_flag(self):
+        """-H is an alias for --help-full."""
+        with patch('sys.argv', ['TTS_ka', '-H']):
             with patch('TTS_ka.main.show_simple_help') as msh, \
                  patch('TTS_ka.main.show_troubleshooting') as mst:
                 from TTS_ka.main import main
@@ -172,6 +207,26 @@ class TestMain:
                 from TTS_ka.main import main
                 main()
 
+    def test_cb_positional_same_as_clipboard(self):
+        """Positional cb reads clipboard like 'clipboard'."""
+        with patch('sys.argv', ['TTS_ka', 'cb', '-l', 'en', '-n']):
+            with patch('TTS_ka.main._read_clipboard', return_value='short'), \
+                 patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)), \
+                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
+                 patch('TTS_ka.main.get_optimal_settings', return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
+                from TTS_ka.main import main
+                main()
+
+    def test_short_stream_flag(self):
+        """-s enables streaming like --stream."""
+        with patch('sys.argv', ['TTS_ka', 'word ' * 50, '-l', 'en', '-s', '-n']):
+            with patch('TTS_ka.main.smart_generate_long_text', new=AsyncMock()) as msg, \
+                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
+                 patch('TTS_ka.main.get_optimal_settings', return_value={'method': 'chunked', 'chunk_seconds': 30, 'parallel': 4}):
+                from TTS_ka.main import main
+                main()
+        assert msg.call_args[1].get('enable_streaming') is True
+
     def test_file_input_via_main(self, tmp_path):
         """File path text arg reads the file content."""
         f = tmp_path / "input.txt"
@@ -210,6 +265,31 @@ class TestMain:
                 from TTS_ka.main import main
                 main()
         assert "OPTIMIZED MODE" not in capsys.readouterr().out
+
+    def test_legacy_alias_skips_optimization(self, capsys):
+        """--legacy is an alias for --no-turbo."""
+        with patch('sys.argv', ['TTS_ka', 'hello', '-l', 'en', '-n', '--legacy']):
+            with patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)), \
+                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()):
+                from TTS_ka.main import main
+                main()
+        assert "OPTIMIZED MODE" not in capsys.readouterr().out
+
+    def test_config_file_sets_default_lang(self, tmp_path):
+        """--config JSON supplies default --lang when -l is omitted."""
+        cfg = tmp_path / "prefs.json"
+        cfg.write_text(json.dumps({"lang": "ru"}), encoding="utf-8")
+        with patch("sys.argv", ["TTS_ka", "--config", str(cfg), "hi", "-n"]):
+            with patch(
+                "TTS_ka.main.fast_generate_audio", new=AsyncMock(return_value=True)
+            ) as mfa, patch("TTS_ka.main.cleanup_http", new=AsyncMock()), patch(
+                "TTS_ka.main.get_optimal_settings",
+                return_value={"method": "direct", "chunk_seconds": 0, "parallel": 1},
+            ):
+                from TTS_ka.main import main
+
+                main()
+        assert mfa.call_args[0][1] == "ru"
 
 
 class TestReadClipboard:

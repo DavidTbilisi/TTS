@@ -14,6 +14,13 @@ from .streaming_player import stop_active_streaming_player
 from .ultra_fast import smart_generate_long_text, get_optimal_settings, OPTIMAL_WORKERS
 from .simple_help import show_simple_help, show_troubleshooting
 from .constants import STREAMING_CHUNK_SECONDS
+from .user_config import (
+    apply_env_from_config,
+    argparse_defaults_from_config,
+    default_config_path,
+    load_user_config,
+    resolved_playback_flags,
+)
 
 
 def format_cli_version_info() -> str:
@@ -111,6 +118,22 @@ def _read_clipboard() -> str:
     return ""
 
 
+def resolve_positional_text_source(text: str) -> str:
+    """Map clipboard shorthands to ``clipboard`` unless they name a real file.
+
+    Recognizes ``cb``, ``clip``, and ``paste`` (case-insensitive). If such a
+    string is an existing file path, it is left unchanged.
+    """
+    stripped = text.strip()
+    lowered = stripped.lower()
+    if lowered not in {"cb", "clip", "paste"}:
+        return text
+    candidate = os.path.expanduser(stripped)
+    if os.path.isfile(candidate):
+        return stripped
+    return "clipboard"
+
+
 def get_input_text(text_input: str) -> str:
     """Process text input — handle clipboard, file paths, or direct text."""
     if text_input == "clipboard":
@@ -128,21 +151,33 @@ def get_input_text(text_input: str) -> str:
 
 
 def main() -> None:
+    cfg_parser = argparse.ArgumentParser(add_help=False)
+    cfg_parser.add_argument("--config", metavar="PATH", default=None)
+    cfg_ns, argv_rest = cfg_parser.parse_known_args()
+
+    cfg = load_user_config(cfg_ns.config)
+    apply_env_from_config(cfg)
+    defs = argparse_defaults_from_config(cfg)
+
+    dc = str(default_config_path()).replace("\\", "/")
+    epilog = f"""
+EXAMPLES:
+  %(prog)s "Hello world" -l en                     # Quick English (-l = --lang)
+  %(prog)s "გამარჯობა" --lang ka                   # Georgian with auto-optimization
+  %(prog)s file.txt -l ru                          # Russian from file
+  %(prog)s cb                                      # Clipboard: cb / clip / paste
+  %(prog)s "text" --lang ka -o out/clip.mp3       # Custom output path
+  %(prog)s --version                               # Version and metadata
+
+LANGUAGES: 🇬🇪 ka / ka-m (Georgian female/male) | 🇷🇺 ru | 🇬🇧 en
+CONFIG: %(prog)s --config PATH.json  |  env TTS_KA_CONFIG  |  {dc}
+For comprehensive help with examples: %(prog)s --help-full
+"""
+
     parser = argparse.ArgumentParser(
         description="🚀 Ultra-Fast TTS - Georgian, Russian, English generation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-EXAMPLES:
-  %(prog)s "Hello world" --lang en                  # Quick English generation
-  %(prog)s "გამარჯობა" --lang ka                    # Georgian with auto-optimization
-  %(prog)s file.txt --lang ru                       # Russian from file
-  %(prog)s clipboard                                 # From clipboard (fastest workflow)
-  %(prog)s "text" --lang ka -o out/clip.mp3          # Custom output path
-  %(prog)s --version                                 # Version and metadata
-
-LANGUAGES: 🇬🇪 ka / ka-m (Georgian female/male) | 🇷🇺 ru | 🇬🇧 en
-For comprehensive help with examples: %(prog)s --help-full
-        """,
+        epilog=epilog,
     )
 
     parser.add_argument(
@@ -156,34 +191,43 @@ For comprehensive help with examples: %(prog)s --help-full
     parser.add_argument(
         "text",
         nargs="?",
-        help='Text to convert (file path, "clipboard", or direct text)',
+        help='Text to convert (file path, "clipboard", cb/clip/paste, or direct text)',
     )
     parser.add_argument(
+        "-l",
         "--lang",
-        default="en",
+        default=defs["lang"],
         choices=["ka", "ka-m", "ru", "en"],
         help="Language: ka=Georgian female, ka-m=Georgian male, ru=Russian, en=English",
     )
     parser.add_argument(
+        "-c",
         "--chunk-seconds",
         type=int,
-        default=0,
+        default=defs["chunk_seconds"],
         help="Chunk size in seconds (0=auto-detect, 20-60 recommended)",
     )
     parser.add_argument(
+        "-j",
         "--parallel",
         type=int,
-        default=0,
+        default=defs["parallel"],
         help=f"Parallel workers (0=auto, 2-8 recommended, max={OPTIMAL_WORKERS})",
     )
     parser.add_argument(
         "-o",
         "--output",
-        default="data.mp3",
+        default=defs["output"],
         metavar="PATH",
         help="Output MP3 file path (default: data.mp3)",
     )
-    parser.add_argument("--no-play", action="store_true", help="Skip automatic audio playback")
+    parser.add_argument(
+        "-n",
+        "--no-play",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Skip automatic audio playback",
+    )
     parser.add_argument(
         "--turbo",
         action="store_true",
@@ -191,28 +235,40 @@ For comprehensive help with examples: %(prog)s --help-full
     )
     parser.add_argument(
         "--no-turbo",
+        "--legacy",
         action="store_true",
-        help="Disable auto-optimization (legacy mode)",
+        default=argparse.SUPPRESS,
+        dest="no_turbo",
+        help="Disable auto-optimization (legacy mode); --legacy is an alias",
     )
     parser.add_argument(
+        "-s",
         "--stream",
         action="store_true",
+        default=argparse.SUPPRESS,
         help="Enable streaming playback (audio starts playing while still generating)",
     )
     parser.add_argument(
         "--no-gui",
-        dest="show_player",
-        action="store_false",
-        default=True,
+        action="store_true",
+        default=argparse.SUPPRESS,
+        dest="no_gui",
         help="Streaming: headless VLC (dummy). Default: one GUI window, playlist grows with chunks (Windows).",
     )
     parser.add_argument(
+        "-H",
         "--help-full",
         action="store_true",
         help="Show comprehensive help with examples and workflows",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv_rest)
+
+    flags = resolved_playback_flags(args, defs)
+    no_play = flags["no_play"]
+    stream = flags["stream"]
+    no_turbo = flags["no_turbo"]
+    show_player = flags["show_player"]
 
     if args.show_version:
         print(format_cli_version_info())
@@ -226,47 +282,50 @@ For comprehensive help with examples: %(prog)s --help-full
     if not args.text:
         show_simple_help()
         print("Error: No text provided")
-        print("Try: python -m TTS_ka 'your text' --lang en")
+        print("Try: python -m TTS_ka 'your text' -l en")
         return
 
-    text = get_input_text(args.text)
+    text = get_input_text(resolve_positional_text_source(args.text))
     if not text.strip():
         print("Error: No text provided")
         return
     output_path = os.path.abspath(args.output)
 
-    if not args.no_turbo:
-        optimal = get_optimal_settings(text)
-        if args.chunk_seconds == 0:
-            args.chunk_seconds = optimal["chunk_seconds"]
-        if args.parallel == 0:
-            args.parallel = optimal["parallel"]
+    chunk_seconds = args.chunk_seconds
+    parallel = args.parallel
 
-        if args.stream and args.chunk_seconds == 0:
-            args.chunk_seconds = STREAMING_CHUNK_SECONDS
+    if not no_turbo:
+        optimal = get_optimal_settings(text)
+        if chunk_seconds == 0:
+            chunk_seconds = optimal["chunk_seconds"]
+        if parallel == 0:
+            parallel = optimal["parallel"]
+
+        if stream and chunk_seconds == 0:
+            chunk_seconds = STREAMING_CHUNK_SECONDS
             optimal["method"] = "smart"
             print(f"🔊 Streaming enabled - forcing chunked generation ({STREAMING_CHUNK_SECONDS}s chunks)")
 
         lang_names = {"ka": "Georgian", "ka-m": "Georgian (male)", "ru": "Russian", "en": "English"}
         lang_name = lang_names.get(args.lang, "Unknown")
         print(f"OPTIMIZED MODE - {lang_name}")
-        print(f"Strategy: {optimal['method']} generation, {args.parallel} workers")
+        print(f"Strategy: {optimal['method']} generation, {parallel} workers")
         print(f"Processing: {len(text.split())} words, {len(text)} characters")
 
-    if args.parallel == 0:
-        args.parallel = min(4, OPTIMAL_WORKERS)
+    if parallel == 0:
+        parallel = min(4, OPTIMAL_WORKERS)
 
     async def run_generation() -> None:
         try:
-            if args.chunk_seconds > 0 or len(text.split()) > 200 or args.stream:
+            if chunk_seconds > 0 or len(text.split()) > 200 or stream:
                 await smart_generate_long_text(
                     text,
                     args.lang,
-                    chunk_seconds=args.chunk_seconds or 30,
-                    parallel=args.parallel,
+                    chunk_seconds=chunk_seconds or 30,
+                    parallel=parallel,
                     output_path=output_path,
-                    enable_streaming=args.stream,
-                    show_gui=args.show_player,
+                    enable_streaming=stream,
+                    show_gui=show_player,
                 )
             else:
                 start = time.perf_counter()
@@ -274,7 +333,7 @@ For comprehensive help with examples: %(prog)s --help-full
                 elapsed = time.perf_counter() - start
                 print(f"⚡ Completed in {elapsed:.2f}s (direct)")
 
-            if not args.no_play and not args.stream:
+            if not no_play and not stream:
                 play_audio(output_path)
         finally:
             try:

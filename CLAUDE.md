@@ -59,6 +59,8 @@ Environment variables (see `fast_audio.py`, `readme.md`):
 | `chunking.py` | WPM-based text splitting |
 | `not_reading.py` | Text sanitization before generation |
 | `constants.py` | `VOICE_MAP` (`ka`, `ka-m`, `ru`, `en`, `en-US`), `SSML_LANG_MAP`, HTTP/stream limits |
+| `extras/autohotkey/` | Windows: `TTS_ka_hotkeys.ahk` (hotkeys + Apps key / Ctrl+Alt+RButton language menu), `Install-TTS_ka-Hotkeys.ps1` (Startup) |
+| `extras/windows/context_menu/` | `Install-TTS_ka-ContextMenu.ps1` — nested “Read with TTS_ka” on Explorer/Desktop background (clipboard) |
 
 ### Non-obvious design decisions
 
