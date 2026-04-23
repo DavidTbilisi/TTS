@@ -20,6 +20,8 @@ def show_simple_help():
     print("  python -m TTS_ka \"Привет мир\" --lang ru")
     print("  python -m TTS_ka clipboard --lang ka")
     print("  python -m TTS_ka file.txt --lang en")
+    print("  python -m TTS_ka --check-deps          # ffmpeg, players, Python stack")
+    print("  TTS_ka-gui                             # optional paste-to-speech window (tkinter)")
     print()
 
     print("PERFORMANCE OPTIONS:")
@@ -36,6 +38,7 @@ def show_simple_help():
     print("  -c SECS    --chunk-seconds          -j N      --parallel")
     print("  -s         --stream                 -n        --no-play")
     print("  -H         --help-full              -V        --version")
+    print("             --check-deps")
     print("  cb | clip | paste      same as positional word 'clipboard' (if not a filename)")
     print()
 

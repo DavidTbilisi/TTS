@@ -9,8 +9,21 @@ version = "1.7.0"
 authors = [
   { name="David Chincharashvili", email="davidchincharashvili@gmail.com" },
 ]
-description = "A simple text to speech program using edge-tts library"
+description = "Ultra-fast CLI TTS for Georgian, Russian, and English (edge-tts): smart chunking, optional streaming, clipboard, dependency checker, and optional tkinter GUI."
 readme = "readme.md"
+keywords = [
+    "tts",
+    "text-to-speech",
+    "georgian",
+    "russian",
+    "english",
+    "edge-tts",
+    "accessibility",
+    "speech",
+    "clipboard",
+    "streaming",
+    "mp3",
+]
 # asyncio is stdlib; httpx 0.28+ supports 3.8+, but setuptools>=77 (PEP 639 metadata) needs 3.9+ to build.
 requires-python = ">=3.9"
 classifiers = [
@@ -29,10 +42,14 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/DavidTbilisi/TTS.git"
+Homepage = "https://github.com/DavidTbilisi/TTS"
+Repository = "https://github.com/DavidTbilisi/TTS"
+Issues = "https://github.com/DavidTbilisi/TTS/issues"
+Changelog = "https://github.com/DavidTbilisi/TTS/releases"
 
 [project.scripts]
 TTS_ka = "TTS_ka.main:main"
+TTS_ka-gui = "TTS_ka.gui:main"
 
 [project.optional-dependencies]
 test = [

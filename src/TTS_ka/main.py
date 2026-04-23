@@ -168,6 +168,7 @@ EXAMPLES:
   %(prog)s cb                                      # Clipboard: cb / clip / paste
   %(prog)s "text" --lang ka -o out/clip.mp3       # Custom output path
   %(prog)s --version                               # Version and metadata
+  %(prog)s --check-deps                            # ffmpeg, players, Python deps
 
 LANGUAGES: 🇬🇪 ka / ka-m (Georgian female/male) | 🇷🇺 ru | 🇬🇧 en
 CONFIG: %(prog)s --config PATH.json  |  env TTS_KA_CONFIG  |  {dc}
@@ -186,6 +187,11 @@ For comprehensive help with examples: %(prog)s --help-full
         action="store_true",
         dest="show_version",
         help="Print version, Python, platform, and package metadata, then exit.",
+    )
+    parser.add_argument(
+        "--check-deps",
+        action="store_true",
+        help="Print ffmpeg, streaming player, and Python dependency status; exit 1 if critical deps missing.",
     )
 
     parser.add_argument(
@@ -273,6 +279,11 @@ For comprehensive help with examples: %(prog)s --help-full
     if args.show_version:
         print(format_cli_version_info())
         return
+
+    if args.check_deps:
+        from .deps import run_dependency_check
+
+        sys.exit(run_dependency_check())
 
     if args.help_full:
         show_simple_help()

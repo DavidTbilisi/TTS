@@ -1,6 +1,6 @@
 # TTS_ka 🚀 Ultra-Fast Text-to-Speech
 
-**Ultra-Fast Text-to-Speech CLI tool** with maximum speed generation, smart chunking, and parallel processing. **Auto-optimized by default** - no complex flags needed! Converts text to high-quality speech in **Georgian (🇬🇪)**, **Russian (🇷🇺)**, and **English (🇬🇧)** languages.
+**Ultra-fast text-to-speech** (CLI + optional **desktop GUI**): smart chunking, parallel generation, clipboard input, optional streaming playback, and a **`--check-deps`** sanity check for ffmpeg and players. **Auto-optimized by default.** Languages: **Georgian (🇬🇪)**, **Russian (🇷🇺)**, **English (🇬🇧)**.
 
 > ✨ **Simplified UX**: Auto-optimization is now enabled by default. Just specify `--lang` and go!
 
@@ -18,6 +18,8 @@
 - 🎵 **High-Quality Voices**: Premium neural voices for all languages
 - 📁 **File Support**: Process text files directly
 - 🔄 **Real-time Playback**: Automatic audio playback with system player
+- **Dependency check**: `python -m TTS_ka --check-deps` reports ffmpeg, streaming players (VLC/mpv/ffplay), and Python packages; exits with code 1 if critical pieces are missing.
+- **Optional GUI**: `TTS_ka-gui` opens a small window to paste text, choose language, and speak (stdlib **tkinter**).
 - **Speakable text cleanup**: Before TTS, the pipeline rewrites noisy input so the voice does not read raw syntax — fenced and inline code, URLs, shebang lines, HTML-like tags, file extensions (for example `.ts` → “TypeScript”), common IT acronyms (HTTPS, JSON, API, …), math symbols (for example `⇒` → “implies”), and very long digit runs. Implemented in `TTS_ka.not_reading` (`replace_not_readable`).
 - **Ctrl+C**: Cancels generation and stops active streaming playback (including VLC) without waiting for the full join timeout.
 
@@ -34,6 +36,23 @@ git clone https://github.com/DavidTbilisi/TTS.git
 cd TTS
 pip install -e .
 ```
+
+Verify **ffmpeg** is on your `PATH` (required for merging chunks and reliable MP3 handling). Then:
+
+```bash
+python -m TTS_ka --check-deps
+```
+
+You should see `[OK]` for **edge-tts**, **pydub**, and **ffmpeg**. A streaming player (VLC, mpv, …) is optional unless you use `--stream`.
+
+**Optional desktop window** (paste → Speak):
+
+```bash
+TTS_ka-gui
+# or: python -m TTS_ka.gui
+```
+
+On Debian/Ubuntu, install Tk if needed: `sudo apt install python3-tk`.
 
 ### 2. Basic Usage (Auto-Optimized by Default)
 
@@ -69,6 +88,32 @@ python -m TTS_ka document.txt --lang en
 python -m TTS_ka large_file.txt --chunk-seconds 30 --parallel 6 --lang ru
 ```
 
+### 5. Demo: ~60 seconds in the terminal
+
+```text
+$ pip install TTS_ka
+$ python -m TTS_ka --check-deps
+TTS_ka dependency check
+========================================
+  [OK]  edge-tts   import ok (…)
+  [OK]  pydub      import ok (…)
+  [OK]  ffmpeg     ffmpeg version …
+  [opt] soundfile  optional …            # faster merges if installed
+  [OK]  streaming player  first match: vlc   # [opt] if none — only needed for --stream
+
+$ python -m TTS_ka "Hello from TTS_ka" --lang en
+OPTIMIZED MODE - English
+…
+⚡ Completed in …s (direct)
+
+$ python -m TTS_ka clipboard --lang ka    # after copying Georgian text to the clipboard
+…
+
+$ TTS_ka-gui    # optional: paste text in the window and click Speak
+```
+
+*(Timings and exact log lines depend on your machine and network.)*
+
 ## 📖 Complete Usage Guide
 
 ### Command Syntax
@@ -95,6 +140,7 @@ python -m TTS_ka [TEXT_SOURCE] [OPTIONS]
 | `--no-turbo` | Disable auto-optimization (legacy mode) | `--no-turbo` |
 | `--help-full` | Show comprehensive help with examples | `--help-full` |
 | `-V`, `--version` | Print version, Python, platform, and PyPI package metadata | `--version` |
+| `--check-deps` | Print dependency status (ffmpeg, players, Python stack); exit code 1 if critical deps missing | `--check-deps` |
 
 ### Text cleanup rules (summary)
 

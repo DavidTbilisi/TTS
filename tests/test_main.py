@@ -372,3 +372,25 @@ class TestReadClipboard:
              patch('sys.platform', 'linux'):
             result = _read_clipboard()
         assert result == ""
+
+
+class TestCheckDepsFlag:
+    """--check-deps exits with dependency checker return code."""
+
+    def test_check_deps_exits_zero(self):
+        with patch.object(sys, "argv", ["TTS_ka", "--check-deps"]):
+            with patch("TTS_ka.deps.run_dependency_check", return_value=0):
+                with pytest.raises(SystemExit) as exc:
+                    from TTS_ka.main import main
+
+                    main()
+        assert exc.value.code == 0
+
+    def test_check_deps_exits_one(self):
+        with patch.object(sys, "argv", ["TTS_ka", "--check-deps"]):
+            with patch("TTS_ka.deps.run_dependency_check", return_value=1):
+                with pytest.raises(SystemExit) as exc:
+                    from TTS_ka.main import main
+
+                    main()
+        assert exc.value.code == 1
