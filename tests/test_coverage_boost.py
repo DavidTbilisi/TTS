@@ -80,7 +80,7 @@ class TestCoverageBoost:
         f = os.path.join(temp_dir, "test.mp3")
         with open(f, "wb") as fp:
             fp.write(b"fake")
-        with patch('sys.platform', 'win32'), patch('os.startfile') as mock_start:
+        with patch('sys.platform', 'win32'), patch('os.startfile', create=True) as mock_start:
             play_audio(f)
         mock_start.assert_called_once()
 
@@ -90,7 +90,7 @@ class TestCoverageBoost:
         with open(f, "wb") as fp:
             fp.write(b"fake")
         with patch('sys.platform', 'win32'), \
-             patch('os.startfile', side_effect=OSError("locked")):
+             patch('os.startfile', side_effect=OSError("locked"), create=True):
             play_audio(f)  # must not raise
 
     # === Main / clipboard tests ===

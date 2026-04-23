@@ -45,7 +45,7 @@ def _silence_windows_real_media_players():
         return mock_proc
 
     with patch.object(_sp, "Popen", side_effect=_selective_popen), \
-         patch("TTS_ka.fast_audio.os.startfile"):
+         patch("TTS_ka.fast_audio.os.startfile", create=True):
         yield
 
 

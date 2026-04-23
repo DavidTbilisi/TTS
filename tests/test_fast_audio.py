@@ -272,7 +272,7 @@ class TestFastPlayAudio:
         f = os.path.join(temp_dir, "t.mp3")
         with open(f, "wb") as fp:
             fp.write(b"x")
-        with patch('sys.platform', 'win32'), patch('os.startfile') as m:
+        with patch('sys.platform', 'win32'), patch('os.startfile', create=True) as m:
             play_audio(f)
         m.assert_called_once()
 
@@ -295,7 +295,7 @@ class TestFastPlayAudio:
         f = os.path.join(temp_dir, "t.mp3")
         with open(f, "wb") as fp:
             fp.write(b"x")
-        with patch('sys.platform', 'win32'), patch('os.startfile', side_effect=OSError):
+        with patch('sys.platform', 'win32'), patch('os.startfile', side_effect=OSError, create=True):
             play_audio(f)  # must not raise
 
 

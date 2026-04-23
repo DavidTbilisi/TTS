@@ -193,8 +193,15 @@ class TestStreamingAudioPlayer:
         ):
             player._playback_worker_windows()
 
-        mock_popen.assert_called_once()
-        argv = mock_popen.call_args[0][0]
+        oldrc_calls = [
+            c
+            for c in mock_popen.call_args_list
+            if c[0]
+            and isinstance(c[0][0], (list, tuple))
+            and any("oldrc" in str(x) for x in c[0][0])
+        ]
+        assert len(oldrc_calls) == 1, mock_popen.call_args_list
+        argv = oldrc_calls[0][0][0]
         assert "oldrc" in argv
         assert any("127.0.0.1:" in str(x) for x in argv)
         flat = " ".join(repr(c) for c in mock_rc_cmd.call_args_list)
@@ -232,7 +239,7 @@ class TestStreamingAudioPlayer:
             argv = call[0][0]
             assert "--play-and-exit" in argv
 
-    @patch('os.startfile')
+    @patch('os.startfile', create=True)
     def test_windows_playback(self, mock_startfile, temp_dir):
         """Test Windows playback path (no VLC, falls back to os.startfile)."""
         from TTS_ka.streaming_player import PlayerDetector
@@ -394,7 +401,7 @@ class TestStreamingAudioPlayer:
         # Should finish quickly (not hit 300s timeout)
         assert elapsed < 5
     
-    @patch('os.startfile')
+    @patch('os.startfile', create=True)
     def test_full_streaming_workflow(self, mock_startfile, temp_dir):
         """Test complete streaming workflow (no VLC, uses os.startfile)."""
         from TTS_ka.streaming_player import PlayerDetector
@@ -505,7 +512,8 @@ class TestStreamingIntegration:
                     chunk_seconds=15,
                     parallel=2,
                     output_path=output_path,
-                    enable_streaming=True
+                    enable_streaming=True,
+                    show_gui=False,
                 )
                 
                 # Verify output was created
@@ -564,7 +572,7 @@ class TestStreamingEdgeCases:
         
         assert player.finished_generating is True
     
-    @patch('os.startfile', side_effect=Exception("Playback error"))
+    @patch('os.startfile', side_effect=Exception("Playback error"), create=True)
     def test_playback_error_handling(self, mock_startfile, temp_dir):
         """Test that playback errors don't crash the system (no VLC, uses os.startfile)."""
         from TTS_ka.streaming_player import PlayerDetector
@@ -761,7 +769,8 @@ class TestStreamingIntegrationWithMainSystem:
                     chunk_seconds=15,
                     parallel=1,
                     output_path=output_path,
-                    enable_streaming=True
+                    enable_streaming=True,
+                    show_gui=False,
                 )
                 
                 # Should use parallel generation, not direct
@@ -791,11 +800,12 @@ class TestStreamingIntegrationWithMainSystem:
                 
                 await smart_generate_long_text(
                     text="Single chunk text",
-                    language="en", 
+                    language="en",
                     chunk_seconds=15,
                     parallel=1,
                     output_path=output_path,
-                    enable_streaming=True
+                    enable_streaming=True,
+                    show_gui=False,
                 )
                 
                 # Should not attempt to merge single chunk
@@ -889,7 +899,7 @@ class TestStreamingPlayerRobustness:
         assert player.chunk_queue.empty()
     
     @patch('sys.platform', 'win32')
-    @patch('os.startfile')
+    @patch('os.startfile', create=True)
     def test_windows_playback_error_recovery(self, mock_startfile, temp_dir):
         """Test Windows playback error recovery."""
         # Mock os.startfile to fail

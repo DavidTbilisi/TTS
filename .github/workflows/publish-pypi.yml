@@ -25,10 +25,10 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    # If PyPI trusted publisher uses a GitHub Environment name, uncomment and match PyPI exactly:
-    # environment:
-    #   name: pypi
-    #   url: https://pypi.org/project/TTS-ka/
+    # Must match PyPI Trusted Publisher → "Environment name" (e.g. `pypi`).
+    environment:
+      name: pypi
+      url: https://pypi.org/project/TTS-ka/
 
     steps:
       - uses: actions/checkout@v4
