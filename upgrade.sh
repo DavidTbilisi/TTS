@@ -2,6 +2,14 @@
 
 set -e  # Exit on error
 
+# Local editable install (no version bump, no PyPI, no auto-commit).
+if [ "${1:-}" = "local" ] || [ "${1:-}" = "install" ]; then
+    echo "Installing TTS_ka in editable mode from $(pwd) ..."
+    py -m pip install -e ".[test]"
+    echo "Done. Try: py -m TTS_ka --version"
+    exit 0
+fi
+
 if ! git diff-index --quiet HEAD --; then
     # On Windows, files named 'nul' (reserved device name) can cause
     # "invalid path 'nul'" errors when adding to git. Detect and remove
@@ -28,7 +36,9 @@ done
 
 # Check if a version bump type is provided
 if [ -z "$1" ]; then
-    echo "Usage: $0 [major|minor|patch]"
+    echo "Usage:"
+    echo "  $0 local|install     # editable install for development (pip install -e .[test])"
+    echo "  $0 major|minor|patch # bump version, build, upload to PyPI, pip upgrade TTS_ka"
     exit 1
 fi
 
