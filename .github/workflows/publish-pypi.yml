@@ -1,0 +1,48 @@
+# Build and upload sdist + wheel to PyPI.
+#
+# Recommended: PyPI "Trusted Publisher" (OIDC) — no API token in GitHub secrets.
+#   1. PyPI.org → Your project → Manage → Publishing → Add a new pending publisher
+#   2. Provider: GitHub, owner/repo: match this repository, workflow: publish-pypi.yml
+#   3. Environment name: leave blank unless you use `environment:` below (then match exactly)
+#
+# Alternative: create a PyPI API token and add repository secret PYPI_API_TOKEN, then set:
+#   with:
+#     password: ${{ secrets.PYPI_API_TOKEN }}
+# on the pypa/gh-action-pypi-publish step (and you can remove id-token permission if not using OIDC).
+#
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    # Uncomment after creating a GitHub Environment named "pypi" (optional; must match PyPI publisher):
+    # environment: pypi
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install build
+        run: pip install -U pip build
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # with:
+        #   password: ${{ secrets.PYPI_API_TOKEN }}
