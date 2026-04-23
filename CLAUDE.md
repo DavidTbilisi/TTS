@@ -17,6 +17,10 @@ pytest tests/test_chunking.py -v
 # Skip slow/integration tests
 pytest -m "not slow"
 
+# Release: bump version, commit, tag vX.Y.Z, push (then publish GitHub Release → PyPI)
+python scripts/release.py patch   # or minor | major
+python scripts/release.py patch --dry-run
+
 # Format / lint / type-check
 black src/ tests/
 flake8 src/ tests/
