@@ -22,6 +22,7 @@ def show_simple_help():
     print("  python -m TTS_ka file.txt --lang en")
     print("  python -m TTS_ka --check-deps          # ffmpeg, players, Python stack")
     print("  TTS_ka-gui                             # Speak / Config / Windows context menu (tkinter)")
+    print("  TTS_ka-hotkeys                         # global Ctrl+Alt+1..4 clipboard TTS (needs pip install TTS_ka[hotkeys])")
     print()
 
     print("PERFORMANCE OPTIONS:")

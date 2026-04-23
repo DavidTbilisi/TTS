@@ -189,6 +189,10 @@ class TTSSpeakApp:
             config_explicit if (config_explicit or "").strip() else None
         )
 
+        from .native_hotkeys import NativeHotkeyManager
+
+        self._hotkey_mgr = NativeHotkeyManager() if sys.platform == "win32" else None
+
         outer = ttk.Frame(self.root, padding=4)
         outer.pack(fill=tk.BOTH, expand=True)
         nb = ttk.Notebook(outer)
@@ -206,6 +210,8 @@ class TTSSpeakApp:
             tab_win = ttk.Frame(nb, padding=8)
             nb.add(tab_win, text="Windows shell")
             self._build_windows_tab(tab_win)
+
+        self.root.protocol("WM_DELETE_WINDOW", self._on_quit)
 
         self._worker: threading.Thread | None = None
 
@@ -288,7 +294,7 @@ class TTSSpeakApp:
         self.speak_btn = ttk.Button(btn_row, text="Speak", command=self._on_speak)
         self.speak_btn.pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_row, text="Check deps", command=self._on_check_deps).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_row, text="Quit", command=self.root.destroy).pack(side=tk.RIGHT)
+        ttk.Button(btn_row, text="Quit", command=self._on_quit).pack(side=tk.RIGHT)
 
         self.status = tk.StringVar(value="Ready.")
         ttk.Label(frm, textvariable=self.status, foreground="#333").grid(
@@ -366,12 +372,38 @@ class TTSSpeakApp:
         import tkinter as tk
         from tkinter import ttk
 
+        from .native_hotkeys import DEFAULT_HOTKEY_LANG
+
+        ttk.Label(frm, text="Global hotkeys (native, optional)").grid(row=0, column=0, sticky=tk.W)
+        self.hk_native_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            frm,
+            text="Enable Ctrl+Alt+1..4 -> speak clipboard (en / ru / ka / ka-m)",
+            variable=self.hk_native_var,
+            command=self._on_toggle_native_hotkeys,
+        ).grid(row=1, column=0, sticky=tk.W, pady=(4, 0))
+
+        hk_lines = "\n".join(f"  {c}  ->  --lang {lang}" for c, lang in DEFAULT_HOTKEY_LANG.items())
+        ttk.Label(
+            frm,
+            text=(
+                "Uses the optional pip extra: pip install 'TTS_ka[hotkeys]' (pynput).\n"
+                "Runs a separate ``python -m TTS_ka clipboard`` process per key press.\n"
+                "Standalone: TTS_ka-hotkeys\n\n"
+                f"{hk_lines}"
+            ),
+            wraplength=500,
+            justify=tk.LEFT,
+        ).grid(row=2, column=0, sticky=tk.W, pady=(6, 0))
+
+        ttk.Separator(frm, orient=tk.HORIZONTAL).grid(row=3, column=0, sticky=(tk.E, tk.W), pady=14)
+
         self.cm_include_txt = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             frm,
             text='Add "read this .txt file" entries (per-language) to right-click on .txt',
             variable=self.cm_include_txt,
-        ).grid(row=0, column=0, sticky=tk.W)
+        ).grid(row=4, column=0, sticky=tk.W)
 
         ttk.Label(
             frm,
@@ -380,10 +412,10 @@ class TTSSpeakApp:
             "(not shipped in the PyPI wheel unless you have that tree next to the package).",
             wraplength=480,
             justify=tk.LEFT,
-        ).grid(row=1, column=0, sticky=tk.W, pady=(8, 0))
+        ).grid(row=5, column=0, sticky=tk.W, pady=(8, 0))
 
         bf = ttk.Frame(frm)
-        bf.grid(row=2, column=0, sticky=tk.W, pady=(12, 0))
+        bf.grid(row=6, column=0, sticky=tk.W, pady=(12, 0))
         ttk.Button(bf, text="Install context menu", command=self._on_install_context_menu).pack(
             side=tk.LEFT, padx=(0, 8)
         )
@@ -391,8 +423,28 @@ class TTSSpeakApp:
 
         self.cm_status = tk.StringVar(value="")
         ttk.Label(frm, textvariable=self.cm_status, wraplength=480, justify=tk.LEFT).grid(
-            row=3, column=0, sticky=tk.W, pady=(10, 0)
+            row=7, column=0, sticky=tk.W, pady=(10, 0)
         )
+
+    def _on_quit(self) -> None:
+        if self._hotkey_mgr is not None:
+            self._hotkey_mgr.stop()
+        self.root.destroy()
+
+    def _on_toggle_native_hotkeys(self) -> None:
+        from tkinter import messagebox
+
+        if self._hotkey_mgr is None:
+            return
+        if self.hk_native_var.get():
+            if not self._hotkey_mgr.start():
+                messagebox.showwarning(
+                    "TTS_ka hotkeys",
+                    "Install the optional dependency, then try again:\n\n  pip install 'TTS_ka[hotkeys]'",
+                )
+                self.hk_native_var.set(False)
+        else:
+            self._hotkey_mgr.stop()
 
     def mainloop(self) -> None:
         self.root.mainloop()

@@ -50,8 +50,12 @@ Changelog = "https://github.com/DavidTbilisi/TTS/releases"
 [project.scripts]
 TTS_ka = "TTS_ka.main:main"
 TTS_ka-gui = "TTS_ka.gui:main"
+TTS_ka-hotkeys = "TTS_ka.native_hotkeys:main"
 
 [project.optional-dependencies]
+hotkeys = [
+    "pynput>=1.7.6",
+]
 test = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
@@ -78,6 +82,7 @@ omit = [
     "*/venv/*",
     "*/.venv/*",
     "*/TTS_ka/gui.py",
+    "*/TTS_ka/native_hotkeys.py",
 ]
 
 [tool.coverage.report]
