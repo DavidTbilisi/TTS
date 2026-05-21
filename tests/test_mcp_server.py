@@ -312,6 +312,129 @@ class TestListSessions:
             await _call(server, "stream_close", session_id=b)
 
 
+class TestProsody:
+    """Config-driven prosody defaults + per-call overrides."""
+
+    @pytest.mark.asyncio
+    async def test_default_prosody_applied_to_session(self):
+        """stream_open with no rate uses the server's default_prosody."""
+        from TTS_ka.prosody import ProsodyOpts
+        sessions = {}
+        default = ProsodyOpts(rate="+30%", pitch="+0Hz", volume="+0%")
+        server = build_server(sessions=sessions, default_prosody=default)
+        sid = await _call(server, "stream_open", lang="en")
+        sess = sessions[sid]
+        assert sess.prosody is not None
+        assert sess.prosody.rate == "+30%"
+
+    @pytest.mark.asyncio
+    async def test_per_call_rate_overrides_default(self):
+        from TTS_ka.prosody import ProsodyOpts
+        sessions = {}
+        default = ProsodyOpts(rate="+30%")
+        server = build_server(sessions=sessions, default_prosody=default)
+        sid = await _call(server, "stream_open", lang="en", rate="-20%")
+        assert sessions[sid].prosody.rate == "-20%"
+
+    @pytest.mark.asyncio
+    async def test_per_call_pitch_keeps_default_rate(self):
+        """Partial override: pitch from agent, rate from config."""
+        from TTS_ka.prosody import ProsodyOpts
+        sessions = {}
+        default = ProsodyOpts(rate="+30%")
+        server = build_server(sessions=sessions, default_prosody=default)
+        sid = await _call(server, "stream_open", lang="en", pitch="+5Hz")
+        sess = sessions[sid]
+        assert sess.prosody.rate == "+30%"
+        assert sess.prosody.pitch == "+5Hz"
+
+    @pytest.mark.asyncio
+    async def test_all_defaults_zero_means_no_prosody(self):
+        """ProsodyOpts() with all zeros → session.prosody is None (no SSML wrap)."""
+        from TTS_ka.prosody import ProsodyOpts
+        sessions = {}
+        server = build_server(sessions=sessions, default_prosody=ProsodyOpts())
+        sid = await _call(server, "stream_open", lang="en")
+        assert sessions[sid].prosody is None
+
+    @pytest.mark.asyncio
+    async def test_speak_passes_prosody_to_generator(self):
+        """The speak tool merges default+override and forwards to fast_generate_audio."""
+        from TTS_ka.prosody import ProsodyOpts
+        captured = {}
+
+        async def fake(text, lang, output, *, voice=None, prosody=None):
+            captured["prosody"] = prosody
+            with open(output, "wb") as f:
+                f.write(b"x")
+
+        default = ProsodyOpts(rate="+30%")
+        server = build_server(default_prosody=default)
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=fake), \
+             patch("TTS_ka.mcp_server.play_audio"):
+            await _call(server, "speak", text="hi", lang="en")
+        assert captured["prosody"] is not None
+        assert captured["prosody"].rate == "+30%"
+
+    @pytest.mark.asyncio
+    async def test_session_status_includes_prosody(self):
+        """session_status surfaces rate/pitch/volume so the agent can confirm."""
+        from TTS_ka.prosody import ProsodyOpts
+        sessions = {}
+        default = ProsodyOpts(rate="+30%", pitch="+5Hz")
+        server = build_server(sessions=sessions, default_prosody=default)
+        sid = await _call(server, "stream_open", lang="en")
+        snap = await _call(server, "session_status", session_id=sid)
+        assert snap["rate"] == "+30%"
+        assert snap["pitch"] == "+5Hz"
+        assert snap["volume"] == "+0%"
+
+    @pytest.mark.asyncio
+    async def test_bad_per_call_rate_falls_back_to_default(self):
+        """A bogus rate from the agent doesn't crash the server."""
+        from TTS_ka.prosody import ProsodyOpts
+        sessions = {}
+        default = ProsodyOpts(rate="+30%")
+        server = build_server(sessions=sessions, default_prosody=default)
+        sid = await _call(server, "stream_open", lang="en", rate="garbage")
+        # Bad input → fall back to the full default ProsodyOpts.
+        assert sessions[sid].prosody.rate == "+30%"
+
+
+class TestLoadDefaultProsody:
+    """`_load_default_prosody` is what production calls when build_server doesn't override."""
+
+    def test_no_config_returns_default(self, monkeypatch, tmp_path):
+        from TTS_ka import mcp_server
+        from TTS_ka.prosody import ProsodyOpts
+        monkeypatch.setenv("TTS_KA_CONFIG", str(tmp_path / "missing.json"))
+        # Also point HOME so the fallback default_config_path() also misses.
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.setenv("HOME", str(tmp_path))
+        assert mcp_server._load_default_prosody() == ProsodyOpts()
+
+    def test_config_rate_applied(self, monkeypatch, tmp_path):
+        from TTS_ka import mcp_server
+        import json
+        cfg = tmp_path / "tts.json"
+        cfg.write_text(json.dumps({"rate": "+30%"}), encoding="utf-8")
+        monkeypatch.setenv("TTS_KA_CONFIG", str(cfg))
+        defaults = mcp_server._load_default_prosody()
+        assert defaults.rate == "+30%"
+        assert defaults.pitch == "+0Hz"
+        assert defaults.volume == "+0%"
+
+    def test_invalid_config_rate_swallowed(self, monkeypatch, tmp_path):
+        """Typo in the config doesn't kill the MCP server — falls back to defaults."""
+        from TTS_ka import mcp_server
+        from TTS_ka.prosody import ProsodyOpts
+        import json
+        cfg = tmp_path / "tts.json"
+        cfg.write_text(json.dumps({"rate": "not a percentage"}), encoding="utf-8")
+        monkeypatch.setenv("TTS_KA_CONFIG", str(cfg))
+        assert mcp_server._load_default_prosody() == ProsodyOpts()
+
+
 class TestListVoices:
     @pytest.mark.asyncio
     async def test_list_all(self):

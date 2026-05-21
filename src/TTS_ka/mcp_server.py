@@ -29,7 +29,9 @@ from typing import Dict, List, Optional
 from .fast_audio import cleanup_http, fast_generate_audio, play_audio
 from .live_stream import DEFAULT_IDLE_FLUSH_MS, SentenceBuffer
 from .not_reading import replace_not_readable
+from .prosody import ProsodyOpts, parse_pitch, parse_rate, parse_volume
 from .streaming_player import StreamingAudioPlayer, stop_active_streaming_player
+from .user_config import argparse_defaults_from_config, load_user_config
 from . import voices as _voices
 
 
@@ -40,9 +42,11 @@ MAX_CONCURRENT_PER_SESSION = 4
 class _LiveSession:
     """Long-lived sentence buffer + streaming player for one MCP stream."""
 
-    def __init__(self, lang: str, voice: Optional[str]) -> None:
+    def __init__(self, lang: str, voice: Optional[str],
+                 prosody: Optional[ProsodyOpts] = None) -> None:
         self.lang = lang
         self.voice = voice
+        self.prosody = prosody
         self.buf = SentenceBuffer(idle_flush_ms=DEFAULT_IDLE_FLUSH_MS)
         self.player = StreamingAudioPlayer(show_gui=False)
         self.player.start()
@@ -73,6 +77,9 @@ class _LiveSession:
         return {
             "lang": self.lang,
             "voice": self.voice,
+            "rate": self.prosody.rate if self.prosody else None,
+            "pitch": self.prosody.pitch if self.prosody else None,
+            "volume": self.prosody.volume if self.prosody else None,
             "closed": self._closed,
             "total_sentences": self._queued,
             "synths_pending": self.synths_pending(),
@@ -90,7 +97,7 @@ class _LiveSession:
             path = os.path.join(self.tmp_dir, f".part_{idx:04d}.mp3")
             try:
                 await fast_generate_audio(cleaned, self.lang, path,
-                                          voice=self.voice, prosody=None)
+                                          voice=self.voice, prosody=self.prosody)
                 self.player.add_chunk(path, chunk_index=idx)
             except Exception as exc:  # noqa: BLE001
                 print(f"⚠️  synth failed (idx={idx}): {exc}", file=sys.stderr)
@@ -135,10 +142,49 @@ class _LiveSession:
 # ── Server factory ────────────────────────────────────────────────────────────
 
 
-def build_server(sessions: Optional[Dict[str, _LiveSession]] = None):
+def _resolve_prosody(rate: Optional[str], pitch: Optional[str], volume: Optional[str],
+                     default: ProsodyOpts) -> Optional[ProsodyOpts]:
+    """Merge per-call rate/pitch/volume on top of the config-driven *default*.
+
+    Returns ``None`` if both per-call and default are all-zero (no SSML wrap).
+    Bad per-call values raise SystemExit inside parse_*; we map those to
+    silently falling back to the default so a typo from the agent doesn't
+    crash the MCP session.
+    """
+    try:
+        merged = ProsodyOpts(
+            rate=parse_rate(rate) if rate is not None else default.rate,
+            pitch=parse_pitch(pitch) if pitch is not None else default.pitch,
+            volume=parse_volume(volume) if volume is not None else default.volume,
+        )
+    except SystemExit:
+        merged = default
+    return None if merged.is_default() else merged
+
+
+def _load_default_prosody() -> ProsodyOpts:
+    """Read rate/pitch/volume from the user config; tolerate any bad input."""
+    try:
+        cfg = load_user_config()
+        defs = argparse_defaults_from_config(cfg)
+        rate, pitch, volume = defs.get("rate"), defs.get("pitch"), defs.get("volume")
+        if rate is None and pitch is None and volume is None:
+            return ProsodyOpts()
+        return ProsodyOpts(
+            rate=parse_rate(rate) if rate is not None else "+0%",
+            pitch=parse_pitch(pitch) if pitch is not None else "+0Hz",
+            volume=parse_volume(volume) if volume is not None else "+0%",
+        )
+    except (SystemExit, Exception):
+        return ProsodyOpts()
+
+
+def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
+                 default_prosody: Optional[ProsodyOpts] = None):
     """Construct a FastMCP server with the TTS_ka tools registered.
 
     *sessions* is the session dict — exposed so tests can inspect state.
+    *default_prosody* overrides the config-derived default (useful for tests).
     """
     from mcp.server.fastmcp import FastMCP  # local import: optional extra
 
@@ -151,20 +197,30 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None):
         ),
     )
     sessions = sessions if sessions is not None else {}
+    default_prosody = default_prosody if default_prosody is not None else _load_default_prosody()
 
     @server.tool()
     async def speak(text: str, lang: str = "en",
                     voice: Optional[str] = None,
+                    rate: Optional[str] = None,
+                    pitch: Optional[str] = None,
+                    volume: Optional[str] = None,
                     blocking: bool = False) -> str:
-        """Speak *text* immediately. Returns when synth starts (or finishes if blocking)."""
+        """Speak *text* immediately. Returns when synth starts (or finishes if blocking).
+
+        rate / pitch / volume are signed percentages or Hz (rate '+30%',
+        pitch '+5Hz' or '-10%', volume '-25%'). Unspecified values fall
+        back to the server-wide defaults from ``~/.tts_config.json``.
+        """
         cleaned = replace_not_readable(text)
         if not cleaned.strip():
             return "skipped: empty"
+        prosody = _resolve_prosody(rate, pitch, volume, default_prosody)
         tmp_dir = tempfile.mkdtemp(prefix="ttska-mcp-one-")
         path = os.path.join(tmp_dir, "out.mp3")
         try:
             await fast_generate_audio(cleaned, lang, path,
-                                      voice=voice, prosody=None)
+                                      voice=voice, prosody=prosody)
         except Exception as exc:  # noqa: BLE001
             shutil.rmtree(tmp_dir, ignore_errors=True)
             return f"error: {exc}"
@@ -179,12 +235,21 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None):
 
     @server.tool()
     async def stream_open(lang: str = "en",
-                          voice: Optional[str] = None) -> str:
-        """Open a streaming session. Returns the session_id to use with stream_append/close."""
+                          voice: Optional[str] = None,
+                          rate: Optional[str] = None,
+                          pitch: Optional[str] = None,
+                          volume: Optional[str] = None) -> str:
+        """Open a streaming session. Returns the session_id to use with stream_append/close.
+
+        Prosody (rate / pitch / volume) is locked in at open time and applies
+        to every sentence in the session. Unspecified values fall back to
+        the server-wide defaults from ``~/.tts_config.json``.
+        """
         if len(sessions) >= MAX_SESSIONS:
             return f"error: max {MAX_SESSIONS} concurrent sessions"
+        prosody = _resolve_prosody(rate, pitch, volume, default_prosody)
         sid = uuid.uuid4().hex[:12]
-        sessions[sid] = _LiveSession(lang=lang, voice=voice)
+        sessions[sid] = _LiveSession(lang=lang, voice=voice, prosody=prosody)
         return sid
 
     @server.tool()

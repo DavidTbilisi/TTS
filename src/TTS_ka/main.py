@@ -408,18 +408,19 @@ For comprehensive help with examples: %(prog)s --help-full
     )
     parser.add_argument(
         "--rate",
-        default=None,
-        help="Speech rate as a signed percentage (e.g. +30%%, -20%%).",
+        default=defs.get("rate"),
+        help="Speech rate as a signed percentage (e.g. +30%%, -20%%). "
+             "Config key: rate.",
     )
     parser.add_argument(
         "--pitch",
-        default=None,
-        help="Pitch shift in Hz or %% (e.g. +5Hz, -2Hz, +10%%).",
+        default=defs.get("pitch"),
+        help="Pitch shift in Hz or %% (e.g. +5Hz, -2Hz, +10%%). Config key: pitch.",
     )
     parser.add_argument(
         "--volume",
-        default=None,
-        help="Volume as a signed percentage (e.g. +10%%, -25%%).",
+        default=defs.get("volume"),
+        help="Volume as a signed percentage (e.g. +10%%, -25%%). Config key: volume.",
     )
     parser.add_argument(
         "--list-voices",

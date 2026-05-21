@@ -113,6 +113,13 @@ def _as_int(val: Any, default: int = 0) -> int:
         return default
 
 
+def _as_prosody_str(val: Any) -> Any:
+    """Pass through a non-empty string, else None. Validation happens later."""
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return None
+
+
 def argparse_defaults_from_config(cfg: Mapping[str, Any]) -> Dict[str, Any]:
     """Defaults for the main CLI parser (positional options + config-driven flags)."""
     lang = cfg.get("lang", "en")
@@ -130,6 +137,11 @@ def argparse_defaults_from_config(cfg: Mapping[str, Any]) -> Dict[str, Any]:
         "stream": _as_bool(cfg.get("stream"), False),
         "no_turbo": _as_bool(cfg.get("no_turbo", cfg.get("legacy")), False),
         "no_gui": _as_bool(cfg.get("no_gui", cfg.get("streaming_headless")), False),
+        # Prosody: None means "no preference" so CLI/MCP fall back to engine defaults.
+        # Strings are validated downstream by prosody.parse_rate/pitch/volume.
+        "rate": _as_prosody_str(cfg.get("rate")),
+        "pitch": _as_prosody_str(cfg.get("pitch")),
+        "volume": _as_prosody_str(cfg.get("volume")),
     }
 
 

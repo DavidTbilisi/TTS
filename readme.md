@@ -427,6 +427,10 @@ All keys are optional. Real, supported schema:
   "no_turbo":      false,
   "no_gui":        false,
 
+  "rate":          "+30%",
+  "pitch":         "+0Hz",
+  "volume":        "+0%",
+
   "skip_http":     false,
   "verbose":       false,
   "vlc_rc":        true,
@@ -439,6 +443,8 @@ All keys are optional. Real, supported schema:
   }
 }
 ```
+
+`rate` / `pitch` / `volume` are signed strings in the same form `--rate` / `--pitch` / `--volume` accept on the CLI. They become the default for **every** invocation — CLI, GUI, REST server, and MCP server. Pass them per-call on `mcp__tts-ka__speak` / `stream_open` to override for one call; pass `--rate` etc. on the CLI to override one run.
 
 Boolean keys like `skip_http`, `verbose`, and `vlc_rc` set the matching environment variables (`TTS_KA_SKIP_HTTP=1`, `TTS_KA_VERBOSE=1`, `TTS_KA_VLC_RC=0`) for the process — useful so you don't have to export them in every shell.
 
