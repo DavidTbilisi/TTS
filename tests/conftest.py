@@ -37,7 +37,10 @@ def _silence_windows_real_media_players():
         argv = args[0] if args else kwargs.get("args", ())
         if isinstance(argv, (list, tuple)) and argv:
             head = _popen_argv_head(argv)
-            if head in ("where.exe", "where", "which", "which.exe"):
+            if head in (
+                "where.exe", "where", "which", "which.exe",
+                "bash", "bash.exe",  # needed by completion-script syntax-check tests
+            ):
                 return _real_popen(*args, **kwargs)
         mock_proc = MagicMock()
         mock_proc.wait = MagicMock(return_value=0)

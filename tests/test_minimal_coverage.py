@@ -97,7 +97,8 @@ class TestMinimalCoverage:
         out = os.path.join(temp_dir, "out.mp3")
         with patch('TTS_ka.fast_audio.HAS_SOUNDFILE', False), \
              patch('TTS_ka.fast_audio.HAS_PYDUB', False), \
-             patch('os.system', return_value=0):
+             patch('TTS_ka.fast_audio.subprocess.run',
+                   return_value=MagicMock(returncode=0)):
             fast_merge_audio_files(parts, out)
 
     # === play_audio ===

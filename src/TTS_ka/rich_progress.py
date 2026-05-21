@@ -9,6 +9,7 @@ try:
     from tqdm import tqdm
     HAS_TQDM = True
 except ImportError:
+    tqdm = None  # type: ignore[assignment,misc]
     HAS_TQDM = False
 
 

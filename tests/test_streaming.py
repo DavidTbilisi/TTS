@@ -448,7 +448,7 @@ class TestStreamingIntegration:
         chunks = ["Hello world", "This is a test", "Streaming audio"]
         
         # Mock fast_generate_audio to create fake files
-        async def mock_generate(text, lang, output, quiet=False):
+        async def mock_generate(text, lang, output, quiet=False, **kwargs):
             with open(output, 'wb') as f:
                 f.write(b'fake audio')
             return True
@@ -488,7 +488,7 @@ class TestStreamingIntegration:
         output_path = os.path.join(temp_dir, "streaming_test.mp3")
         
         # Mock the fast_generate_audio function
-        async def mock_generate(text, lang, output, quiet=False):
+        async def mock_generate(text, lang, output, quiet=False, **kwargs):
             with open(output, 'wb') as f:
                 f.write(b'fake audio data')
             return True
@@ -529,7 +529,7 @@ class TestStreamingIntegration:
         long_text = "This is a test. " * 100
         output_path = os.path.join(temp_dir, "no_streaming_test.mp3")
         
-        async def mock_generate(text, lang, output, quiet=False):
+        async def mock_generate(text, lang, output, quiet=False, **kwargs):
             with open(output, 'wb') as f:
                 f.write(b'fake audio')
             return True
@@ -646,7 +646,7 @@ class TestStreamingPerformance:
         
         chunks = ["Test text"] * 10
         
-        async def mock_generate(text, lang, output, quiet=False):
+        async def mock_generate(text, lang, output, quiet=False, **kwargs):
             await asyncio.sleep(0.01)  # Simulate generation
             with open(output, 'wb') as f:
                 f.write(b'audio')

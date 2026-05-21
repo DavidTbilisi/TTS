@@ -74,10 +74,12 @@ async def ultra_fast_parallel_generation(
     streaming_player: StreamingAudioPlayer = None,
     output_path: str = "data.mp3",
     *,
+    voice: Optional[str] = None,
+    prosody=None,
     cancel_event: Optional[threading.Event] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> List[str]:
-    """Ultra-fast parallel generation with optional cancel and progress (*done*, *total* chunks)."""
+    """Ultra-fast parallel generation with optional cancel, progress, voice, and prosody."""
     
     # Use uvloop for maximum performance on Unix systems
     if HAS_UVLOOP and sys.platform != 'win32':
@@ -117,7 +119,9 @@ async def ultra_fast_parallel_generation(
         """Generate audio for a single chunk, notifying the streaming player on success."""
         async with sem:
             try:
-                result = await fast_generate_audio(text, language, output, quiet=True)
+                result = await fast_generate_audio(text, language, output,
+                                                    quiet=True, voice=voice,
+                                                    prosody=prosody)
                 # If streaming is enabled, add chunk to player as soon as it's ready
                 if result and streaming_player:
                     streaming_player.add_chunk(output, i)
@@ -220,11 +224,14 @@ async def smart_generate_long_text(
     keep_parts: bool = False,
     enable_streaming: bool = False,
     show_gui: bool = True,
+    preferred_player: Optional[str] = None,
     *,
+    voice: Optional[str] = None,
+    prosody=None,
     cancel_event: Optional[threading.Event] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> None:
-    """Smart generation with optional *cancel_event* and *progress_callback(done, total)*."""
+    """Smart generation with dynamic optimization, optional voice/prosody, cancel, and progress."""
     text = replace_not_readable(text)
     if not text.strip():
         raise ValueError("No readable text after filtering — input empty or only symbols/URLs/code.")
@@ -248,7 +255,11 @@ async def smart_generate_long_text(
         # Very short text - direct generation is fastest (unless streaming is requested)
         if progress_callback:
             progress_callback(0, 1)
-        await _await_with_cancel(fast_generate_audio(text, language, output_path), cancel_event)
+        await _await_with_cancel(
+            fast_generate_audio(text, language, output_path,
+                                voice=voice, prosody=prosody),
+            cancel_event,
+        )
         if progress_callback:
             progress_callback(1, 1)
         elapsed = time.perf_counter() - start
@@ -272,7 +283,11 @@ async def smart_generate_long_text(
         # Still short enough for direct generation (unless streaming is requested)
         if progress_callback:
             progress_callback(0, 1)
-        await _await_with_cancel(fast_generate_audio(text, language, output_path), cancel_event)
+        await _await_with_cancel(
+            fast_generate_audio(text, language, output_path,
+                                voice=voice, prosody=prosody),
+            cancel_event,
+        )
         if progress_callback:
             progress_callback(1, 1)
         elapsed = time.perf_counter() - start
@@ -284,14 +299,25 @@ async def smart_generate_long_text(
     # Initialize streaming player if enabled
     streaming_player = None
     if enable_streaming:
+        from .streaming_player import PlayerDetector
+        detected = PlayerDetector.find(preferred=preferred_player)
+
+        if detected is None:
+            print(
+                f"Warning: no audio player found; audio will be saved to {output_path} but not streamed.",
+                file=sys.stderr,
+            )
+            show_gui = False
+        elif show_gui and 'vlc' not in os.path.basename(detected).lower():
+            player_name = os.path.basename(detected)
+            print(
+                f"Warning: VLC not found; falling back to {player_name} (no GUI). "
+                "Install VLC for an interactive player.",
+                file=sys.stderr,
+            )
+            show_gui = False
+
         streaming_player = StreamingAudioPlayer(show_gui=show_gui)
-        # Enforce GUI-only mode when requested: require VLC be available
-        if show_gui:
-            from .streaming_player import PlayerDetector
-            detected = PlayerDetector.find()
-            if not detected or 'vlc' not in os.path.basename(detected).lower():
-                print("Error: GUI mode requested but VLC was not found. Install VLC or run without GUI.")
-                raise SystemExit(1)
         streaming_player.start()
         if sys.platform.startswith('win'):
             if show_gui:
@@ -312,6 +338,8 @@ async def smart_generate_long_text(
             parallel,
             streaming_player,
             output_path,
+            voice=voice,
+            prosody=prosody,
             cancel_event=cancel_event,
             progress_callback=progress_callback,
         )

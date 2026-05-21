@@ -218,11 +218,10 @@ class TestBigTextParallelVsSequentialTiming:
         """Many chunks × fixed async sleep: parallel=1 ~ n×sleep; parallel=8 ~ ⌈n/8⌉×sleep."""
         n_chunks = 20
         per_chunk_sleep = 0.04
-        # Long-ish strings per chunk (similar to real chunk payloads)
         chunks = [f"paragraph {i} " + ("word " * 40) for i in range(n_chunks)]
         output_path = str(tmp_path / "out.mp3")
 
-        async def fake_io_bound_generate(text, language, out_path, quiet=False):
+        async def fake_io_bound_generate(text, language, out_path, quiet=False, **kwargs):
             await asyncio.sleep(per_chunk_sleep)
             with open(out_path, "wb") as f:
                 f.write(b"\x00")
@@ -251,8 +250,131 @@ class TestBigTextParallelVsSequentialTiming:
         finally:
             os.chdir(cwd)
 
-        # Sequential ≈ n·sleep; high parallelism ≈ ⌈n/p⌉·sleep (+ overhead).
         assert t_parallel < t_sequential * 0.55, (
             f"expected parallel (workers=8) wall time << sequential (workers=1); "
             f"got parallel={t_parallel:.3f}s vs sequential={t_sequential:.3f}s"
         )
+
+
+class TestStreamingFallback:
+    """BUG-3: --stream falls back gracefully when VLC (or any player) is missing."""
+
+    async def test_stream_falls_back_to_mpv_when_vlc_missing(self, tmp_path, capsys):
+        """When VLC isn't found but mpv is, streaming uses mpv with show_gui=False."""
+        output_path = str(tmp_path / "out.mp3")
+        text = "word " * 300
+        captured_show_gui = {}
+
+        def fake_player_ctor(show_gui=True):
+            captured_show_gui['value'] = show_gui
+            inst = MagicMock()
+            return inst
+
+        with patch('TTS_ka.streaming_player.PlayerDetector.find',
+                   return_value="/usr/bin/mpv"), \
+             patch('TTS_ka.ultra_fast.StreamingAudioPlayer',
+                   side_effect=fake_player_ctor), \
+             patch('TTS_ka.ultra_fast.ultra_fast_parallel_generation',
+                   new=AsyncMock(return_value=[output_path])), \
+             patch('TTS_ka.ultra_fast.fast_merge_audio_files'), \
+             patch('TTS_ka.ultra_fast.create_progress_display',
+                   return_value=MagicMock()):
+            await smart_generate_long_text(text, "en", chunk_seconds=20, parallel=2,
+                                           output_path=output_path,
+                                           enable_streaming=True, show_gui=True)
+
+        assert captured_show_gui['value'] is False
+        err = capsys.readouterr().err
+        assert "VLC not found" in err
+        assert "mpv" in err
+
+    async def test_stream_no_player_still_generates_file(self, tmp_path, capsys):
+        """No audio player at all -> warn, but generation proceeds."""
+        output_path = str(tmp_path / "out.mp3")
+        text = "word " * 300
+
+        with patch('TTS_ka.streaming_player.PlayerDetector.find',
+                   return_value=None), \
+             patch('TTS_ka.ultra_fast.StreamingAudioPlayer') as msp_cls, \
+             patch('TTS_ka.ultra_fast.ultra_fast_parallel_generation',
+                   new=AsyncMock(return_value=[output_path])) as mupg, \
+             patch('TTS_ka.ultra_fast.fast_merge_audio_files'), \
+             patch('TTS_ka.ultra_fast.create_progress_display',
+                   return_value=MagicMock()):
+            await smart_generate_long_text(text, "en", chunk_seconds=20, parallel=2,
+                                           output_path=output_path,
+                                           enable_streaming=True, show_gui=True)
+
+        # Generation must have run
+        mupg.assert_called_once()
+        # Player was constructed with show_gui forced to False
+        msp_cls.assert_called_once()
+        assert msp_cls.call_args.kwargs.get('show_gui') is False
+        err = capsys.readouterr().err
+        assert "no audio player found" in err.lower()
+
+    async def test_stream_does_not_raise_systemexit(self, tmp_path):
+        """The old SystemExit(1) path must NOT be reached when VLC is missing."""
+        output_path = str(tmp_path / "out.mp3")
+        text = "word " * 300
+
+        with patch('TTS_ka.streaming_player.PlayerDetector.find',
+                   return_value=None), \
+             patch('TTS_ka.ultra_fast.StreamingAudioPlayer') as msp_cls, \
+             patch('TTS_ka.ultra_fast.ultra_fast_parallel_generation',
+                   new=AsyncMock(return_value=[output_path])), \
+             patch('TTS_ka.ultra_fast.fast_merge_audio_files'), \
+             patch('TTS_ka.ultra_fast.create_progress_display',
+                   return_value=MagicMock()):
+            # Should complete without raising SystemExit
+            await smart_generate_long_text(text, "en", chunk_seconds=20, parallel=2,
+                                           output_path=output_path,
+                                           enable_streaming=True, show_gui=True)
+        msp_cls.assert_called_once()
+
+    async def test_preferred_player_passed_to_detector(self, tmp_path):
+        """preferred_player is forwarded to PlayerDetector.find()."""
+        output_path = str(tmp_path / "out.mp3")
+        text = "word " * 300
+
+        with patch('TTS_ka.streaming_player.PlayerDetector.find',
+                   return_value="/usr/bin/mpv") as mfind, \
+             patch('TTS_ka.ultra_fast.StreamingAudioPlayer'), \
+             patch('TTS_ka.ultra_fast.ultra_fast_parallel_generation',
+                   new=AsyncMock(return_value=[output_path])), \
+             patch('TTS_ka.ultra_fast.fast_merge_audio_files'), \
+             patch('TTS_ka.ultra_fast.create_progress_display',
+                   return_value=MagicMock()):
+            await smart_generate_long_text(text, "en", chunk_seconds=20, parallel=2,
+                                           output_path=output_path,
+                                           enable_streaming=True, show_gui=False,
+                                           preferred_player="mpv")
+        mfind.assert_called_with(preferred="mpv")
+
+
+class TestPlayerDetectorPreferred:
+    """BUG-3 supporting: PlayerDetector.find(preferred=...)."""
+
+    def test_preferred_player_tried_first(self):
+        """When preferred is set, it's at the head of the candidate list."""
+        from TTS_ka.streaming_player import PlayerDetector
+        with patch.object(PlayerDetector, '_locate', return_value=None) as mloc:
+            PlayerDetector.find(preferred="mpv")
+        first_call_arg = mloc.call_args_list[0].args[0]
+        assert first_call_arg == "mpv"
+
+    def test_no_preferred_uses_default_order(self):
+        """Without preferred, the first candidate tried is VLC."""
+        from TTS_ka.streaming_player import PlayerDetector
+        with patch.object(PlayerDetector, '_locate', return_value=None) as mloc:
+            PlayerDetector.find()
+        assert mloc.call_args_list[0].args[0] == "vlc"
+
+    def test_preferred_returned_when_found(self):
+        """When the preferred player is available, return its path."""
+        from TTS_ka.streaming_player import PlayerDetector
+        def locate(name):
+            return "/usr/bin/" + name if name == "mpv" else None
+        with patch.object(PlayerDetector, '_locate', side_effect=locate):
+            result = PlayerDetector.find(preferred="mpv")
+        assert result == "/usr/bin/mpv"

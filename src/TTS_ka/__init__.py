@@ -1,11 +1,16 @@
 """TTS_ka - Ultra-Fast Text-to-Speech with Streaming Playback."""
 
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
 from .fast_audio import fast_generate_audio, fast_merge_audio_files, play_audio
 from .ultra_fast import smart_generate_long_text, ultra_fast_parallel_generation
 from .streaming_player import StreamingAudioPlayer
 from .chunking import split_text_into_chunks, should_chunk_text
 
-__version__ = "1.7.1"
+try:
+    __version__ = _pkg_version("TTS_ka")
+except PackageNotFoundError:
+    __version__ = "1.7.1"
 __all__ = [
     'fast_generate_audio',
     'fast_merge_audio_files',

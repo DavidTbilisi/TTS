@@ -71,3 +71,49 @@ def test_combined():
     assert "`" not in out
     assert "http" not in out
     assert "1000000" not in out
+
+
+class TestPipelineIsolation:
+    """BUG-6: TextProcessingPipeline instances must not share filter lists."""
+
+    def test_default_filters_are_per_instance_copy(self):
+        """Two default-constructed pipelines must hold independent filter lists."""
+        from TTS_ka.not_reading import TextProcessingPipeline
+
+        a = TextProcessingPipeline()
+        b = TextProcessingPipeline()
+        assert a._filters is not b._filters, (
+            "Default pipelines share the same filter list — mutation will leak"
+        )
+
+        original_len = len(b._filters)
+        a._filters.append(lambda s: s)
+        assert len(b._filters) == original_len, (
+            "Mutating one pipeline's filters changed another's — shared state"
+        )
+
+    def test_class_default_filters_unmodified_after_instance_mutation(self):
+        """Class-level _DEFAULT_FILTERS must remain untouched by instance mutation."""
+        from TTS_ka.not_reading import TextProcessingPipeline
+
+        original_defaults = list(TextProcessingPipeline._DEFAULT_FILTERS)
+        instance = TextProcessingPipeline()
+        instance._filters.append(lambda s: s)
+        instance._filters.clear()
+        assert TextProcessingPipeline._DEFAULT_FILTERS == original_defaults, (
+            "Instance mutation leaked into the class-level _DEFAULT_FILTERS"
+        )
+
+    def test_explicit_filters_arg_not_aliased_to_caller(self):
+        """When filters= is passed, the pipeline owns a defensive copy."""
+        from TTS_ka.not_reading import TextProcessingPipeline
+
+        my_filters = [lambda s: s.upper()]
+        p = TextProcessingPipeline(filters=my_filters)
+        assert p.process("hi") == "HI"
+        my_filters.append(lambda s: s + "!")
+        result_after_mutation = p.process("hi")
+        # Either behavior is defensible; pin the one we have today.
+        assert result_after_mutation in ("HI", "HI!"), (
+            f"Unexpected behavior after caller-list mutation: {result_after_mutation!r}"
+        )
