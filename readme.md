@@ -1,712 +1,544 @@
 # TTS_ka 🚀 Ultra-Fast Text-to-Speech
 
-**Ultra-fast text-to-speech** (CLI + optional **desktop GUI**): smart chunking, parallel generation, clipboard input, optional streaming playback, and a **`--check-deps`** sanity check for ffmpeg and players. **Auto-optimized by default.** Languages: **Georgian (🇬🇪)**, **Russian (🇷🇺)**, **English (🇬🇧)**.
-
-> ✨ **Simplified UX**: Auto-optimization is now enabled by default. Just specify `--lang` and go!
+**CLI + GUI + REST + MCP** text-to-speech for **Georgian (🇬🇪 ka, ka-m)**, **Russian (🇷🇺 ru)**, and **English (🇬🇧 en)** — built on Microsoft Edge neural voices. Smart chunking, parallel synthesis, streaming playback, ID3 + chapter tagging, SRT/VTT subtitles, document readers (PDF / EPUB / DOCX / HTML / Markdown), and an **AI-friendly `--live` stdin mode + MCP server** so an LLM can speak while it generates.
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-1.8.0-brightgreen.svg)](https://pypi.org/project/TTS_ka/)
 
-## ✨ Features
+---
 
-- 🚀 **Ultra-Fast Generation**: 6-15 seconds for 1000 words (vs 25+ seconds traditional)
-- 🔊 **Streaming Playback**: Audio starts playing while still generating (NEW!)
-- 🧠 **Smart Chunking**: Automatic text splitting for optimal performance  
-- ⚡ **Parallel Processing**: Multi-threaded generation with up to 8 workers
-- 📋 **Clipboard Integration**: Direct clipboard-to-speech workflow
-- 🎯 **Auto-Optimization**: Turbo mode automatically optimizes all settings
-- 🎵 **High-Quality Voices**: Premium neural voices for all languages
-- 📁 **File Support**: Process text files directly
-- 🔄 **Real-time Playback**: Automatic audio playback with system player
-- **Dependency check**: `python -m TTS_ka --check-deps` reports ffmpeg, streaming players (VLC/mpv/ffplay), and Python packages; exits with code 1 if critical pieces are missing.
-- **Optional GUI**: `TTS_ka-gui` (**tkinter**) — **Speak** tab (paste or UTF-8 file path), **Config** tab (JSON path, defaults, Save/Reload), and on Windows **Windows shell** (install/uninstall Explorer context menu via `extras/windows/context_menu/Install-TTS_ka-ContextMenu.ps1` when that file is available next to the repo).
-- **Native global hotkeys (Windows, no AutoHotkey)**: `pip install "TTS_ka[hotkeys]"` then run `TTS_ka-hotkeys` or enable hotkeys on the GUI **Windows shell** tab. Defaults: **Ctrl+Alt+1**–**4** map to **en** / **ru** / **ka** / **ka-m**; override in your JSON config under **`"hotkeys"`** (pynput combo string → language code; JSON **`null`** removes a default). See `extras/tts_config.example.json`. Each press runs `python -m TTS_ka clipboard --lang …` in a new process (**pynput** optional extra).
-- **Speakable text cleanup**: Before TTS, the pipeline rewrites noisy input so the voice does not read raw syntax — fenced and inline code, URLs, shebang lines, HTML-like tags, file extensions (for example `.ts` → “TypeScript”), common IT acronyms (HTTPS, JSON, API, …), math symbols (for example `⇒` → “implies”), and very long digit runs. Implemented in `TTS_ka.not_reading` (`replace_not_readable`).
-- **Ctrl+C**: Cancels generation and stops active streaming playback (including VLC) without waiting for the full join timeout.
+## Why TTS_ka
 
-## 🎯 Quick Start
+- **Three input shapes**: a positional string, a file path (auto-detected by extension), or `clipboard` / `cb` / `clip` / `paste`.
+- **Three output shapes**: an MP3 on disk, immediate playback, or live streaming chunks playing while the rest synthesizes.
+- **Three integration shapes**: standalone CLI, REST server (`TTS_ka serve`), or MCP server (`TTS_ka-mcp`) for AI agents.
+- **Auto-optimized by default**: just give it `--lang` (or rely on the config). Chunking, parallelism, and the HTTP-vs-edge-tts route are picked from text length and machine. No flags needed for the common case.
 
-### 1. Installation
+## Install
 
 ```bash
-# Install from PyPI (recommended)
-pip install TTS_ka
-
-# Or install from source
-git clone https://github.com/DavidTbilisi/TTS.git
-cd TTS
-pip install -e .
+pip install TTS_ka                 # core CLI (edge-tts, pydub, tqdm, httpx)
+pip install "TTS_ka[readers]"      # + PDF / EPUB / DOCX / HTML readers
+pip install "TTS_ka[metadata]"     # + mutagen for ID3 tags / chapters
+pip install "TTS_ka[server]"       # + FastAPI / uvicorn (REST server)
+pip install "TTS_ka[mcp]"          # + MCP SDK (AI-agent integration)
+pip install "TTS_ka[soundfile]"    # + faster merges via soundfile
+pip install "TTS_ka[hotkeys]"      # + pynput (Windows native hotkeys)
+pip install "TTS_ka[dev]"          # everything + tests + linters
 ```
 
-Verify **ffmpeg** is on your `PATH` (required for merging chunks and reliable MP3 handling). Then:
+`ffmpeg` must be installed and on `PATH` (used for merging chunked parts). The streaming player (`--stream`) prefers VLC and falls back to `mpv` → `ffplay` → `mplayer`; without any of those, `--stream` is disabled silently.
+
+Verify:
 
 ```bash
 python -m TTS_ka --check-deps
 ```
 
-You should see `[OK]` for **edge-tts**, **pydub**, and **ffmpeg**. A streaming player (VLC, mpv, …) is optional unless you use `--stream`.
+You should see `[OK]` rows for **edge-tts**, **pydub**, **ffmpeg**, and (if streaming is wanted) at least one streaming player. Exit code is `1` if a critical piece is missing.
 
-**Optional desktop window** (paste → Speak):
+## Quick start
+
+```bash
+# Direct text
+python -m TTS_ka "Hello world" --lang en
+
+# Clipboard (shorthand: cb / clip / paste)
+python -m TTS_ka cb --lang ka
+
+# File (auto-dispatched by extension)
+python -m TTS_ka chapter1.pdf --lang en        # needs [readers] extra
+python -m TTS_ka notes.md --lang en
+python -m TTS_ka document.docx --lang en
+
+# Save to a specific path, refuse to overwrite without --force
+python -m TTS_ka "Lecture excerpt" --lang en -o lectures/lec1.mp3
+```
+
+A short console-script alias is installed as `TTS_ka`:
+
+```bash
+TTS_ka "Hello" -l en
+```
+
+`-l` is `--lang`; both are accepted everywhere below.
+
+---
+
+## AI-friendly modes
+
+### `--live`: pipe LLM output and speak as it lands
+
+Read stdin **incrementally**, accumulate into a sentence buffer, and synthesize each complete sentence as it arrives — no waiting for the whole response. Sentence boundaries are `[.!?]+` followed by whitespace, or a `\n\n` paragraph break, or an idle timeout if the stream pauses.
+
+```bash
+# Pipe any tool that writes to stdout
+claude --print "Explain B-trees in one paragraph" | python -m TTS_ka --live -l en
+
+# Or hand the stream over a Unix pipe
+my-llm-cli | TTS_ka --live -l en --voice en-US-JennyNeural
+```
+
+**Idle flush**: if the upstream stalls mid-sentence, the buffer is flushed after `--live-idle-ms` (default `800`). Tighten for snappy local models, loosen for slow networks:
+
+```bash
+... | TTS_ka --live --live-idle-ms 400 -l en      # responsive
+... | TTS_ka --live --live-idle-ms 2000 -l en     # patient
+```
+
+**Fenced code is held back until closed.** When the LLM emits a `` ``` `` fence, the buffer pauses; once the closing fence arrives, the whole block is collapsed by the sanitizer to "omitted fenced code block" instead of letting the voice read symbols. EOF flushes whatever remained.
+
+### MCP server: AI agents call TTS_ka natively
+
+Install the extra and configure your MCP client to launch `TTS_ka-mcp`:
+
+```bash
+pip install "TTS_ka[mcp]"
+```
+
+Claude Code / Claude Desktop config:
+
+```json
+{
+  "mcpServers": {
+    "tts-ka": { "command": "TTS_ka-mcp" }
+  }
+}
+```
+
+Tools exposed:
+
+| Tool | Purpose |
+|------|--------|
+| `speak(text, lang?, voice?)` | One-shot: synthesize and play immediately |
+| `stream_open(lang?, voice?)` | Start a streaming session, returns `session_id` |
+| `stream_append(session_id, text)` | Push text; speaks each complete sentence |
+| `stream_close(session_id)` | Drain remaining buffer, end the session |
+| `session_status(session_id)` | Inspect progress: total, pending synths, buffer preview |
+| `list_sessions()` | All active session IDs |
+| `stop()` | Abort all playback and tear down sessions |
+| `list_voices(lang?)` | Voice catalog as JSON |
+
+Why streaming over single `speak` calls: the LLM can push tokens as it generates them. Each completed sentence is synthesized immediately, so the user hears audio with sub-second latency from the LLM's first word. `session_status` reports `synths_pending` so the agent knows when the queue is backed up.
+
+### `--json`: machine-readable progress
+
+Suppresses decorative stdout; emits one JSON object per line on stdout (decorations move to stderr):
+
+```bash
+python -m TTS_ka large.pdf --lang en --json -o out.mp3
+{"event": "start", "words": 1284, "lang": "en"}
+{"event": "done",  "output": "out.mp3", "seconds": 12.317}
+```
+
+---
+
+## Voices and prosody
+
+### Voice catalog
+
+12 curated Edge neural voices across **ka / ru / en**, listable from the CLI:
+
+```bash
+python -m TTS_ka --list-voices              # all
+python -m TTS_ka --list-voices --lang ka    # filter to Georgian
+
+python -m TTS_ka --preview-voice en-US-JennyNeural    # short sample, then exits
+```
+
+Built-in defaults via `--lang`:
+
+| `--lang` | Voice | Notes |
+|----------|-------|-------|
+| `ka` | `ka-GE-EkaNeural` | Georgian, female |
+| `ka-m` | `ka-GE-GiorgiNeural` | Georgian, male |
+| `ru` | `ru-RU-SvetlanaNeural` | Russian, female |
+| `en` | `en-GB-SoniaNeural` | British English, female |
+
+Override per-call with `--voice`. When `--voice` is given, `--lang` is inferred from the voice locale — pass both only if you want the parser to validate they agree (it errors on mismatch):
+
+```bash
+python -m TTS_ka "Hello" --voice en-US-AriaNeural    # lang auto = en
+python -m TTS_ka "Привет" --voice ru-RU-DmitryNeural # lang auto = ru
+```
+
+### Speech rate / pitch / volume
+
+SSML `<prosody>` parameters. Values are **signed percentages** (or Hz for pitch). Both shells need `%%` literal escapes only inside Windows batch files — in PowerShell / bash, plain `%` works:
+
+```bash
+python -m TTS_ka "Slow and low" --lang en --rate=-20% --pitch=-5Hz
+python -m TTS_ka "Energetic" --lang en --rate=+30% --volume=+10%
+```
+
+Out-of-range values are clamped at parse time (so `--rate=+500%` becomes the max the engine accepts) rather than failing the call.
+
+---
+
+## Document readers
+
+With `pip install "TTS_ka[readers]"`, file inputs are dispatched by extension:
+
+| Extension | Reader | Optional dep |
+|-----------|--------|--------------|
+| `.txt`, `.rst` | plain UTF-8 | — |
+| `.md`, `.markdown` | strips fences, links, emphasis, headers | — |
+| `.html`, `.htm` | BeautifulSoup if available, regex fallback | `beautifulsoup4` |
+| `.pdf` | text per page, joined | `pypdf` |
+| `.epub` | each item's text, joined | `ebooklib` + `beautifulsoup4` |
+| `.docx` | paragraph text | `python-docx` |
+
+Unknown extensions fall back to UTF-8 plain reading. Missing extras raise `MissingExtraError` with the exact `pip install` line.
+
+```bash
+python -m TTS_ka book.epub --lang en -o book.mp3 --chapters book-chapters.json
+```
+
+---
+
+## Streaming playback
+
+`--stream` starts playback while later chunks are still synthesizing. Order is preserved by chunk index even when chunks complete out of order.
+
+```bash
+# Audio starts within seconds
+python -m TTS_ka long_article.txt --lang en --stream
+
+# Headless VLC (no GUI window on Windows)
+python -m TTS_ka chapter.epub --lang en --stream --no-gui
+
+# Pick a specific player
+python -m TTS_ka text.txt --lang en --stream --player mpv
+```
+
+On Windows with VLC, a single VLC window receives chunks over TCP remote-control as they finish (`TTS_KA_VLC_RC=0` disables this and falls back to one VLC process per chunk). On Linux / macOS the player is started once on the full chunk list.
+
+Ctrl+C cancels generation and terminates the active player without waiting for the playback-join timeout.
+
+---
+
+## Metadata, chapters, and subtitles
+
+ID3 tags require `pip install "TTS_ka[metadata]"` (mutagen). Subtitle export does not need an extra.
+
+```bash
+python -m TTS_ka chapter.txt --lang en -o ch1.mp3 \
+    --title "Chapter 1" --author "Jane Doe" --album "My Book" \
+    --cover cover.jpg \
+    --chapters chapters.json \
+    --srt --vtt
+```
+
+`chapters.json` shape:
+
+```json
+[
+  {"title": "Intro",     "start_ms": 0,      "end_ms": 12500},
+  {"title": "Main idea", "start_ms": 12500,  "end_ms": 45000}
+]
+```
+
+The SRT/VTT writer uses real edge-tts `WordBoundary` events, so timings line up to spoken-word boundaries (not estimated). Files are written next to the MP3 (`ch1.srt`, `ch1.vtt`).
+
+---
+
+## REST server (`TTS_ka serve`)
+
+```bash
+pip install "TTS_ka[server]"
+TTS_ka serve --host 127.0.0.1 --port 7777 --token "$(openssl rand -hex 32)"
+# or set TTS_API_TOKEN in the environment
+```
+
+Endpoints:
+
+```
+GET  /voices                 → JSON catalog (same shape as --list-voices)
+POST /synthesize             → audio/mpeg stream
+     body: {"text": "...", "lang": "en", "voice": "...", "rate": "...", ...}
+     auth: Authorization: Bearer <token>
+```
+
+Concurrency is capped at `MAX_PARALLEL_WORKERS` (32 by default; see `constants.py`). The server streams `audio/mpeg` chunks as they synthesize — no temp file on the server side.
+
+---
+
+## GUI (`TTS_ka-gui`)
 
 ```bash
 TTS_ka-gui
 # or: python -m TTS_ka.gui
 ```
 
-On Debian/Ubuntu, install Tk if needed: `sudo apt install python3-tk`.
+Tkinter window with three tabs:
 
-The GUI picks a system font that supports **Georgian and Cyrillic** (prioritising **Segoe UI** / **Sylfaen** on Windows and **Noto Sans** / **Noto Sans Georgian** on Linux). Symbol-only fonts such as **Noto Sans Symbols 2** are avoided: they often lack Mkhedruli letters, which would show as `?` in the text box.
+- **Speak** — paste text or point at a UTF-8 file, choose language and voice, hit **Speak** with optional **Stream**.
+- **Config** — edit the JSON config (path, defaults, hotkeys), Save / Reload.
+- **Windows shell** (Windows only) — install / uninstall the Explorer context menu and enable native global hotkeys.
 
-### 2. Basic Usage (Auto-Optimized by Default)
+The GUI picks a system font that handles Georgian + Cyrillic (Segoe UI / Sylfaen on Windows, Noto Sans / Noto Sans Georgian on Linux). Symbol-only fonts that lack Mkhedruli are avoided.
 
-```bash
-# Ultra-fast generation with auto-optimization (default behavior)
-python -m TTS_ka "Hello, how are you today?" --lang en
+Debian/Ubuntu may need Tk: `sudo apt install python3-tk`.
 
-# Georgian text with automatic optimization
-python -m TTS_ka "გამარჯობა, როგორ ხართ?" --lang ka
+---
 
-# Russian text with smart chunking
-python -m TTS_ka "Привет, как дела?" --lang ru
-```
+## Windows extras
 
-### 3. Clipboard Workflow (FASTEST)
+### Native global hotkeys (no AutoHotkey)
 
 ```bash
-# Copy any text, then run (fastest workflow):
-python -m TTS_ka clipboard --lang en
-
-# For different languages:
-python -m TTS_ka clipboard --lang ka  # Georgian
-python -m TTS_ka clipboard --lang ru  # Russian
+pip install "TTS_ka[hotkeys]"
+TTS_ka-hotkeys             # or enable on the GUI's "Windows shell" tab
 ```
 
-### 4. File Processing
+Defaults map **Ctrl+Alt+1..4** → `en` / `ru` / `ka` / `ka-m`. Each press spawns `python -m TTS_ka clipboard --lang …` in a new process. Override in `~/.tts_config.json` under the `hotkeys` key (see [extras/tts_config.example.json](extras/tts_config.example.json)). JSON `null` removes a default combo.
 
-```bash
-# Process text files directly (auto-optimized)
-python -m TTS_ka document.txt --lang en
-
-# Long files with custom settings
-python -m TTS_ka large_file.txt --chunk-seconds 30 --parallel 6 --lang ru
-```
-
-### 5. Demo: ~60 seconds in the terminal
-
-```text
-$ pip install TTS_ka
-$ python -m TTS_ka --check-deps
-TTS_ka dependency check
-========================================
-  [OK]  edge-tts   import ok (…)
-  [OK]  pydub      import ok (…)
-  [OK]  ffmpeg     ffmpeg version …
-  [opt] soundfile  optional …            # faster merges if installed
-  [OK]  streaming player  first match: vlc   # [opt] if none — only needed for --stream
-
-$ python -m TTS_ka "Hello from TTS_ka" --lang en
-OPTIMIZED MODE - English
-…
-⚡ Completed in …s (direct)
-
-$ python -m TTS_ka clipboard --lang ka    # after copying Georgian text to the clipboard
-…
-
-$ TTS_ka-gui    # optional: paste text in the window and click Speak
-```
-
-*(Timings and exact log lines depend on your machine and network.)*
-
-## 📖 Complete Usage Guide
-
-### Command Syntax
-```
-python -m TTS_ka [TEXT_SOURCE] [OPTIONS]
-```
-
-### Text Sources
-- **Direct text**: `"Your text here"`
-- **Clipboard**: `clipboard` (copy text first)
-- **File path**: `file.txt`, `document.md`, etc.
-
-### Essential Options
-
-| Option | Description | Examples |
-|--------|-------------|----------|
-| `--lang` | `ka` Georgian (female), `ka-m` Georgian (male), `ru`, `en` | `--lang ka` |
-| `-o`, `--output` | Output MP3 path (default `data.mp3`) | `-o speech.mp3` |
-| `--stream` | 🆕 Enable streaming playback (audio starts while generating) | `--stream` |
-| `--chunk-seconds` | Chunk size in seconds (0=auto, 20-60 optimal) | `--chunk-seconds 30` |
-| `--parallel` | Workers (0=auto, 2-8 recommended) | `--parallel 6` |
-| `--no-play` | Skip automatic audio playback | `--no-play` |
-| `--no-gui` | With `--stream`: headless VLC (dummy UI). Default is one GUI window on Windows. | `--stream --no-gui` |
-| `--no-turbo` | Disable auto-optimization (legacy mode) | `--no-turbo` |
-| `--help-full` | Show comprehensive help with examples | `--help-full` |
-| `-V`, `--version` | Print version, Python, platform, and PyPI package metadata | `--version` |
-| `--check-deps` | Print dependency status (ffmpeg, players, Python stack); exit code 1 if critical deps missing | `--check-deps` |
-
-### Text cleanup rules (summary)
-
-| Kind of input | What you hear instead |
-|----------------|----------------------|
-| `` ```code``` `` / `` `inline` `` | Short phrases like “omitted fenced code block” / “omitted inline code snippet” |
-| `https://…` / `www.…` | “omitted hyperlink” |
-| `#!/usr/bin/env python` | “omitted script shebang line” |
-| `<div>…</div>`-style tags | “omitted markup tag” |
-| `file.ts`, `app.py` | Spoken language or format name (TypeScript, Python, …) |
-| `API`, `HTTPS`, `JSON`, … | Letter-by-letter or expanded forms (A P I, H T T P S, …) |
-| `=>`, `≤`, `∞`, … | Words (“implies”, “less than or equal to”, “infinity”, …) |
-| 7+ digit numbers | “a large number” |
-
-Chunk playback order matches document order even when chunks finish generating in parallel.
-
-## 🏃‍♂️ Performance Examples
-
-### Speed Comparison (1000 words)
-- **Traditional TTS**: 25-40 seconds
-- **TTS_ka Direct**: 15-25 seconds  
-- **TTS_ka Turbo**: 8-15 seconds
-- **TTS_ka Chunked**: 6-12 seconds ⚡
-- **TTS_ka Streaming**: 🔊 2-3 seconds to first audio (NEW!)
-
-### 🆕 Streaming Playback - Audio Starts Immediately!
-
-The new streaming feature starts playing audio within **2-3 seconds** while the rest continues generating in the background. This provides an **85-90% reduction in perceived wait time**!
-
-**Quick Usage:**
-```bash
-# Basic streaming - audio starts almost instantly!
-python -m TTS_ka "Your long text..." --lang en --stream
-
-# From file with streaming
-python -m TTS_ka article.txt --lang ka --stream
-
-# Clipboard with streaming (fastest workflow)
-python -m TTS_ka clipboard --stream
-```
-
-**How It Works:**
-1. Text is split into chunks (if needed)
-2. Chunks generate in parallel (2-8 workers)
-3. **First chunk plays quickly** (~2-3 seconds); with VLC (default on Windows), **one window** builds a playlist **in text order** as chunks finish (`--no-gui` uses a headless session). Set `TTS_KA_VLC_RC=0` to fall back to launching VLC once per chunk instead of one remote-control session.
-4. Remaining chunks continue generating in background
-5. Final merged audio file is saved
-
-**Performance:**
-- **Without streaming**: Wait 10-30+ seconds for all audio
-- **With streaming**: Hear audio in 2-3 seconds ⚡
-- **Platform support**: Windows, Linux, macOS
-
-**Advanced Streaming:**
-```bash
-# Custom chunking for optimal streaming
-python -m TTS_ka longtext.txt --stream --chunk-seconds 25 --parallel 6
-
-# Streaming without final playback
-python -m TTS_ka text.txt --stream --no-play
-```
-
-### Real-World Examples
-
-```bash
-# 1. Quick phrases (instant generation)
-python -m TTS_ka "Thank you very much!" --lang en
-# ⚡ Completed in 2.3s (optimized)
-
-# 2. Medium text (paragraph)
-python -m TTS_ka "Lorem ipsum dolor sit amet..." --lang en  
-# ⚡ Completed in 5.7s (direct)
-
-# 3. Long document (chunked processing)
-python -m TTS_ka large_document.txt --lang en
-# Strategy: chunked generation, 6 workers
-# ⚡ Completed in 12.4s (chunked)
-
-# 4. Clipboard workflow (daily usage)
-python -m TTS_ka clipboard --lang ka
-# OPTIMIZED MODE - Georgian
-# Processing: 45 words, 287 characters
-# ⚡ Completed in 4.1s
-```
-
-## 🌍 Language Support
-
-| Language | Code | Voice Quality | Speed | Example |
-|----------|------|---------------|-------|---------|
-| **Georgian** 🇬🇪 | `ka` | Neural (Eka, female) | Fast | `--lang ka` |
-| **Georgian** 🇬🇪 | `ka-m` | Neural (Giorgi, male) | Fast | `--lang ka-m` |
-| **Russian** 🇷🇺 | `ru` | High Quality | Very Fast | `--lang ru` |
-| **English** 🇬🇧 | `en` | Premium Neural | Maximum | `--lang en` |
-
-### Voice Details
-- **Georgian (female)**: `ka-GE-EkaNeural` — `--lang ka`
-- **Georgian (male)**: `ka-GE-GiorgiNeural` — `--lang ka-m`
-- **Russian**: `ru-RU-SvetlanaNeural` - High-quality female voice  
-- **English**: `en-GB-SoniaNeural` - British English neural voice
-
-## ⚙️ Advanced Usage
-
-### Custom Optimization
-
-```bash
-# Manual chunking for very long texts
-python -m TTS_ka book_chapter.txt --chunk-seconds 45 --parallel 4 --lang en
-
-# Maximum parallelization (for powerful systems)
-python -m TTS_ka large_text.txt --parallel 8 --lang ru
-
-# Batch processing (no audio playback)  
-python -m TTS_ka document.txt --no-play --lang ka
-
-# Legacy mode (disable auto-optimization)
-python -m TTS_ka "text" --no-turbo --lang en
-```
-
-### Workflow Integration
-
-```bash
-# Create alias for daily use
-alias speak='python -m TTS_ka clipboard --lang en'
-
-# Windows batch file (speak.bat)
-@echo off
-python -m TTS_ka clipboard --lang en
-
-# Read web articles (with browser copy)
-# 1. Copy article text
-# 2. Run: python -m TTS_ka clipboard --lang en
-```
-
-## 🔧 Installation & Requirements
-
-### System Requirements
-- **Python**: 3.9+ (required: async CLI, `httpx`, and PEP 639 build metadata)
-- **OS**: Windows, macOS, Linux
-- **Memory**: 256MB+ available RAM
-- **Network**: Internet connection for voice synthesis
-
-### Dependencies
-
-**Required (same as `pip install TTS_ka`):**
-```bash
-pip install "edge-tts>=7.2.7"      # Core TTS engine
-pip install pydub>=0.25.1        # Audio processing
-pip install tqdm>=4.65.0         # Progress bars
-pip install "httpx>=0.28.1"      # Async HTTP (CLI)
-```
-
-**System Requirements:**
-- **FFmpeg**: Required for audio processing
-  - Windows: Download from [ffmpeg.org](https://ffmpeg.org/download.html)
-  - macOS: `brew install ffmpeg`
-  - Ubuntu: `sudo apt install ffmpeg`
-
-### Complete Installation
-
-```bash
-# Method 1: PyPI installation (simplest)
-pip install TTS_ka
-
-# Method 2: Development installation
-git clone https://github.com/DavidTbilisi/TTS.git
-cd TTS
-pip install -e .
-
-# Method 3: Manual dependencies
-pip install "edge-tts>=7.2.7" pydub tqdm "httpx>=0.28.1"
-
-# Verify installation
-python -m TTS_ka "Installation successful!" --turbo --lang en
-```
-
-## 🎮 AutoHotkey Integration (Windows)
-
-Bundled scripts live under [`extras/autohotkey/`](extras/autohotkey/): a **commented template** (`TTS_ka_hotkeys.ahk`) and a **Startup installer** (`Install-TTS_ka-Hotkeys.ps1`). Defaults match the old readme: **Alt+E** / **Alt+R** / **Alt+X** for English, Russian, Georgian (clipboard).
-
-### One-time install (recommended)
-
-1. Install [AutoHotkey v2](https://www.autohotkey.com/) (64-bit is typical).
-2. From the **repository root**, run PowerShell:
+### AutoHotkey v2 scripts
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\extras\autohotkey\Install-TTS_ka-Hotkeys.ps1
 ```
 
-This copies `TTS_ka_hotkeys.ahk` into your user **Startup** folder and launches it. Re-run the same command after you edit the script in the repo to refresh the Startup copy.
+Copies `TTS_ka_hotkeys.ahk` into Startup and launches it. Defaults: **Alt+E / Alt+R / Alt+X** for en / ru / ka. The **Menu key** or **Ctrl+Alt+RightClick** pops a small language menu at the cursor for in-app selections (Chrome, Word, etc.) where third-party right-click menu items are blocked. Pass `-Uninstall` / `-NoStart` / `-WhatIf` as needed.
 
-Options:
-
-| Flag | Meaning |
-|------|--------|
-| `-WhatIf` | Print paths only; no copy/start |
-| `-NoStart` | Copy to Startup but do not launch now |
-| `-Uninstall` | Remove the script from Startup |
-
-3. Confirm Python works in a new Command Prompt: `python -m TTS_ka --version` (use the same `python` / `py` you set in `g_Python` inside the `.ahk` file).
-
-### Manual install
-
-1. Copy `extras/autohotkey/TTS_ka_hotkeys.ahk` anywhere (e.g. `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\`).
-2. Double-click the `.ahk` file (or right-click → Run with AutoHotkey).
-
-### Customising
-
-Open `TTS_ka_hotkeys.ahk` in a text editor. At the top, set **`g_Python`**, **`g_CopyFirst`** (send Ctrl+C before TTS), **`g_ExtraFlags`** (e.g. `--stream`), and **`g_CmdKeepOpen`**. Further down, many hotkeys and variants are **commented** with `;` — delete the semicolon on the lines you want.
-
-### Daily workflow
-
-1. **Copy** (or highlight and set `g_CopyFirst := true`) your text  
-2. **Alt+E** / **Alt+R** / **Alt+X** → speech in that language  
-3. Right-click the **green H** tray icon → Reload / Exit
-
-### Select text → “Read” → language (Windows limits)
-
-**Inside Chrome, Edge, Word, etc.**, Windows does **not** let third parties add a “Read” item to the **native** right‑click menu for a text selection (that menu is drawn by each app). Two supported options:
-
-1. **AutoHotkey (in-app)** — with `TTS_ka_hotkeys.ahk` loaded: **select text**, then either press the **Menu / Apps** key (next to Right Ctrl) or **Ctrl+Alt+right‑click**; a small **language menu** appears at the cursor (the script sends Ctrl+C first). Comment those lines in the script if they clash with other tools.
-
-2. **Explorer / Desktop context menu** — after **Ctrl+C**, right‑click **empty** space in a folder window or on the **desktop**, then **Read with TTS_ka** → choose a language (nested menu). Installer:
+### Explorer / Desktop context menu
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\extras\windows\context_menu\Install-TTS_ka-ContextMenu.ps1
 ```
 
+Adds "Read with TTS_ka" → submenu of languages on empty Explorer space and the Desktop (reads clipboard). Options:
+
 | Flag | Meaning |
 |------|--------|
-| `-FlatMenu` | One top-level item per language instead of a submenu |
-| `-Languages @('en','ru')` | Subset of languages (PowerShell array) |
-| `-IncludeTextFiles` | Add “read this file” on `.txt` right‑click |
-| `-Uninstall` | Remove TTS_ka menu entries |
+| `-FlatMenu` | One top-level entry per language |
+| `-Languages @('en','ru')` | Subset only |
+| `-IncludeTextFiles` | Also add a "read this file" entry on `.txt` files |
+| `-Uninstall` | Remove all entries |
 
-On **Windows 11**, classic shell entries may appear under **Show more options**.
+On Windows 11, the entries land under **Show more options** (classic shell).
 
-## 🔍 Troubleshooting
+---
 
-### Common Issues
-
-**1. "No module named 'edge_tts'"**
-```bash
-pip install "edge-tts>=7.2.7"
-```
-
-**2. "FFmpeg not found"**
-```bash
-# Windows: Download and add to PATH
-# macOS: brew install ffmpeg  
-# Linux: sudo apt install ffmpeg
-```
-
-**3. Slow generation**
-```bash
-# Auto-optimization is enabled by default
-python -m TTS_ka "text" --lang en
-
-# Reduce parallel workers if network issues
-python -m TTS_ka "text" --parallel 2 --lang en
-
-# Use legacy mode only if needed
-python -m TTS_ka "text" --no-turbo --lang en
-```
-
-**4. Empty clipboard**
-```bash
-# Ensure text is copied first
-# Then run: python -m TTS_ka clipboard --turbo --lang en
-```
-
-**5. `403` / `Invalid response status` (HTTP or edge-tts)**
-```bash
-# Microsoft rotates access; upgrade edge-tts (includes updated websocket tokens)
-pip install -U "edge-tts>=7.2.7"
-
-# Optional: skip the unofficial Bing HTTP path and use edge-tts only
-set TTS_KA_SKIP_HTTP=1   # Windows CMD
-# export TTS_KA_SKIP_HTTP=1   # macOS / Linux
-
-# Optional: log when the app falls back from HTTP to edge-tts (off by default)
-set TTS_KA_VERBOSE=1
-
-# If many parallel chunks still fail, reduce workers
-python -m TTS_ka "your long text" --lang en --parallel 2
-```
-
-**6. Streaming / VLC (Windows)**  
-- Default: one VLC window with a growing playlist (TCP remote control).  
-- `TTS_KA_VLC_RC=0`: disable that mode and use one VLC process per chunk (legacy).
-
-**7. Ctrl+C**  
-Press **Ctrl+C** to cancel synthesis and stop streaming playback; partial part files are cleaned up.
-
-### Performance Optimization
-
-**For Maximum Speed:**
-```bash
-# Use these exact settings for best performance (auto-optimized by default)
-python -m TTS_ka clipboard --chunk-seconds 30 --parallel 6 --lang en
-```
-
-**For System with Limited Resources:**
-```bash
-# Reduce workers and chunk size
-python -m TTS_ka text --parallel 2 --chunk-seconds 60 --lang en
-```
-
-## 📊 Performance Benchmarks
-
-### Text Length vs Generation Time
-
-| Words | Direct Mode | Turbo Mode | Chunked (6 workers) |
-|-------|-------------|------------|---------------------|
-| 10-50 | 2-4s | 1-3s | 2-4s |
-| 100-300 | 8-12s | 5-8s | 4-6s |
-| 500-1000 | 18-25s | 12-15s | 8-12s |
-| 1000+ | 30-45s | 18-25s | 10-18s |
-
-### Optimal Settings by Text Length
+## Shell completions
 
 ```bash
-# Short text (< 100 words): Direct generation (auto-optimized)
-python -m TTS_ka "short text" --lang en
-
-# Medium text (100-500 words): Auto-optimized mode
-python -m TTS_ka medium_text.txt --lang en  
-
-# Long text (500+ words): Chunked processing (auto-detected)
-python -m TTS_ka long_text.txt --chunk-seconds 30 --parallel 6 --lang en
+TTS_ka --print-completion bash > /etc/bash_completion.d/TTS_ka
+TTS_ka --print-completion zsh  > "${fpath[1]}/_TTS_ka"
+TTS_ka --print-completion fish > ~/.config/fish/completions/TTS_ka.fish
 ```
 
-## 🚀 Examples & Use Cases
+Completions cover `--lang`, `--voice`, `--player`, and the file/clipboard positional.
 
-### Daily Workflows
+---
 
-**1. Article Reading**
-```bash
-# Copy web article → instant speech
-python -m TTS_ka clipboard --lang en
+## CLI reference
+
+```
+python -m TTS_ka [TEXT] [OPTIONS]
+TTS_ka serve     [--host HOST] [--port PORT] [--token TOK]
+TTS_ka-gui
+TTS_ka-mcp        # stdio JSON-RPC for MCP clients
+TTS_ka-hotkeys    # background hotkey listener (Windows, [hotkeys] extra)
 ```
 
-**2. Document Processing**  
-```bash
-# Process research papers, books, etc.
-python -m TTS_ka research_paper.pdf.txt --lang en
-```
+### Core flags
 
-**3. Language Learning**
-```bash
-# Practice pronunciation with different languages
-python -m TTS_ka "სწავლობდი ქართულს" --lang ka
-python -m TTS_ka "Learning Russian язык" --lang ru
-```
+| Flag | Description |
+|------|-------------|
+| `-l`, `--lang {ka,ka-m,ru,en}` | Voice language |
+| `--voice ID` | Specific voice (overrides default for `--lang`) |
+| `-o`, `--output PATH` | Output MP3 path (default `data.mp3`); refuses overwrite without `--force` |
+| `--force` | Overwrite an existing output file |
+| `-c`, `--chunk-seconds N` | Chunk size (`0` = auto, `20–60` is the sweet spot) |
+| `-j`, `--parallel N` | Workers (`0` = auto, max from `MAX_PARALLEL_WORKERS`) |
+| `-n`, `--no-play` | Skip automatic playback after generation |
+| `-s`, `--stream` | Play chunks as they finish |
+| `--no-gui` | With `--stream`, run VLC headless |
+| `--player NAME` | Preferred streaming player (vlc, mpv, ffplay, mplayer) |
+| `--no-turbo`, `--legacy` | Disable auto-optimization |
 
-**4. Accessibility**
-```bash
-# Screen reader alternative
-python -m TTS_ka clipboard --no-play --lang en > audio_file.mp3
-```
+### Prosody (SSML `<prosody>` attributes)
 
-### Batch Processing
+| Flag | Format | Example |
+|------|--------|---------|
+| `--rate` | signed % | `--rate=+30%`, `--rate=-20%` |
+| `--pitch` | Hz or signed % | `--pitch=+5Hz`, `--pitch=-10%` |
+| `--volume` | signed % | `--volume=+10%` |
 
-```bash
-# Process multiple files
-for file in *.txt; do
-    python -m TTS_ka "$file" --no-play --lang en
-done
+### Audio metadata (needs `[metadata]` extra)
 
-# Windows batch processing
-for %f in (*.txt) do python -m TTS_ka "%f" --no-play --lang en
-```
+| Flag | ID3 frame |
+|------|-----------|
+| `--title` | TIT2 |
+| `--author` | TPE1 |
+| `--album` | TALB |
+| `--cover PATH` | APIC (JPEG/PNG) |
+| `--chapters PATH` | CHAP + CTOC from a JSON file |
 
-## 🛠️ Advanced Configuration
+### Subtitles
 
-### Environment Variables
-```bash
-# Set default language
-export TTS_DEFAULT_LANG=ka
+| Flag | Output |
+|------|--------|
+| `--srt` | `<output>.srt` next to the MP3 |
+| `--vtt` | `<output>.vtt` next to the MP3 |
 
-# Set default mode  
-export TTS_DEFAULT_MODE=turbo
+### AI integration
 
-# Custom output directory
-export TTS_OUTPUT_DIR=/path/to/audio/files
-```
+| Flag | Purpose |
+|------|--------|
+| `--live` | Read stdin incrementally, speak each sentence |
+| `--live-idle-ms N` | Flush a partial sentence after N ms of silence (default `800`) |
+| `--json` | One JSON event per line on stdout |
 
-### Configuration File
-Create `~/.tts_config.json`:
+### Utility
+
+| Flag | Purpose |
+|------|--------|
+| `-V`, `--version` | Print version, Python, platform, distribution metadata |
+| `--check-deps` | Print ffmpeg + player + Python dep status; exit 1 if critical deps missing |
+| `--list-voices` | Print voice catalog (filterable with `--lang`) |
+| `--preview-voice ID` | Play a short sample with that voice, then exit |
+| `--help-full`, `-H` | Comprehensive help screen |
+| `--print-completion {bash,zsh,fish}` | Emit a completion script |
+| `--config PATH` | Use this JSON config (also `TTS_KA_CONFIG` env var) |
+
+---
+
+## Configuration
+
+A JSON file is loaded from (first hit wins):
+
+1. `--config PATH` on the CLI
+2. `TTS_KA_CONFIG` environment variable
+3. `~/.tts_config.json`
+
+All keys are optional. Real, supported schema:
+
 ```json
 {
-    "default_lang": "en",
-    "turbo_mode": true,
-    "chunk_seconds": 30,
-    "parallel_workers": 6,
-    "auto_play": true
+  "lang":          "en",
+  "output":        "data.mp3",
+  "chunk_seconds": 0,
+  "parallel":      0,
+  "no_play":       false,
+  "stream":        false,
+  "no_turbo":      false,
+  "no_gui":        false,
+
+  "skip_http":     false,
+  "verbose":       false,
+  "vlc_rc":        true,
+
+  "hotkeys": {
+    "<ctrl>+<alt>+1": "en",
+    "<ctrl>+<alt>+2": "ru",
+    "<ctrl>+<alt>+3": "ka",
+    "<ctrl>+<alt>+4": "ka-m"
+  }
 }
 ```
 
-## 🔌 API Integration
+Boolean keys like `skip_http`, `verbose`, and `vlc_rc` set the matching environment variables (`TTS_KA_SKIP_HTTP=1`, `TTS_KA_VERBOSE=1`, `TTS_KA_VLC_RC=0`) for the process — useful so you don't have to export them in every shell.
 
-### Python Script Integration
-```python
-#!/usr/bin/env python3
-import subprocess
-import sys
+`hotkeys`: pynput combo strings → `--lang` codes. JSON `null` removes a default.
 
-def text_to_speech(text, lang="en", turbo=True):
-    """Convert text to speech using TTS_ka"""
-    cmd = [
-        "python", "-m", "TTS_ka", 
-        text, 
-        "--lang", lang
-    ]
-    if turbo:
-        cmd.append("--turbo")
-    
-    subprocess.run(cmd)
+### Environment variables
 
-# Usage
-text_to_speech("Hello world!", "en")
-text_to_speech("გამარჯობა!", "ka")
-```
+| Variable | Effect |
+|----------|--------|
+| `TTS_KA_CONFIG` | Alternate config file path |
+| `TTS_KA_SKIP_HTTP` | `1` → skip the unofficial Bing HTTP path and use edge-tts only |
+| `TTS_KA_VERBOSE` | `1` → log when falling back from HTTP to edge-tts |
+| `TTS_KA_VLC_RC` | `0` → disable VLC remote-control mode (one VLC per chunk instead) |
+| `TTS_API_TOKEN` | Bearer token required by `TTS_ka serve` |
 
-### Web Integration
-```bash
-# URL to speech (with curl + TTS_ka)
-curl -s "https://example.com/article" | \
-python -m TTS_ka /dev/stdin --turbo --lang en
-```
+---
 
-## 📱 Mobile & Remote Usage
+## Text sanitization
 
-### SSH/Remote Usage
-```bash
-# Generate audio on remote server
-ssh user@server "python -m TTS_ka 'Remote generation' --turbo --no-play"
+Before TTS, the pipeline rewrites noisy input so the voice does not read raw syntax. Implemented in `TTS_ka.not_reading.replace_not_readable`.
 
-# Download and play locally
-scp user@server:data.mp3 ./remote_audio.mp3
-```
+| Kind of input | What the voice says |
+|---------------|--------------------|
+| `` ```code``` `` / `` `inline` `` | "omitted fenced code block" / "omitted inline code snippet" |
+| `https://…`, `www.…` | "omitted hyperlink" |
+| `#!/usr/bin/env python` | "omitted script shebang line" |
+| `<div>…</div>` and similar | "omitted markup tag" |
+| `file.ts`, `app.py` | "TypeScript", "Python", … (60+ extensions) |
+| `API`, `HTTPS`, `JSON`, `k8s`, `OAuth`, … | Spelled or expanded (160+ acronyms) |
+| `=>`, `≤`, `∞`, `∀`, … | Spoken words ("implies", "less than or equal to", "infinity", …) |
+| 7+ digit runs | "a large number" |
 
-### Docker Usage
-```dockerfile
-FROM python:3.9
-RUN pip install TTS_ka
-RUN apt-get update && apt-get install -y ffmpeg
-ENTRYPOINT ["python", "-m", "TTS_ka"]
-```
+The filter list is composable: import `TextProcessingPipeline` from `not_reading` and build your own ordering if you need to skip a filter.
+
+---
+
+## Performance notes
+
+The shape of the call is what matters, not magic flags:
+
+- **Short text** (under ~200 words, no streaming): one direct edge-tts call. Latency is dominated by the network round-trip.
+- **Long text**: split into ~30-second chunks, synthesized in parallel (`--parallel` workers), merged via `soundfile` → `pydub` → `ffmpeg` fallbacks.
+- **Streaming**: chunk size drops to `STREAMING_CHUNK_SECONDS = 15` so the first chunk lands fast and feeds the player while the rest synthesizes.
+
+For honest timings, run `python -m TTS_ka your-real-text --lang en` and read the printed `Completed in X.XXs` line. Numbers depend heavily on your network to Edge's TTS endpoint, so machine-published benchmarks are not meaningful.
+
+If you hit `403` or `Invalid response status`:
 
 ```bash
-# Docker usage
-docker run tts_container "Hello Docker!" --turbo --lang en
+pip install -U "edge-tts>=7.2.7"        # Microsoft rotates access tokens
+# or skip the unofficial HTTP path entirely:
+export TTS_KA_SKIP_HTTP=1               # bash / zsh
+$env:TTS_KA_SKIP_HTTP = "1"             # PowerShell
+set TTS_KA_SKIP_HTTP=1                  # cmd
+# then reduce workers if many chunks still fail:
+python -m TTS_ka your-text --lang en --parallel 2
 ```
 
-## 🎯 Tips & Best Practices
+---
 
-### Performance Tips
-1. **Auto-optimization is enabled by default** - no flags needed!
-2. **Use clipboard workflow** for fastest daily usage  
-3. **Chunk long texts** with `--chunk-seconds 30`
-4. **Optimize workers** with `--parallel 4-6` for most systems
-5. **Pre-install FFmpeg** for best audio processing
+## Troubleshooting
 
-### Quality Tips
-1. **Georgian text**: Use `--lang ka` for best quality
-2. **Mixed languages**: Process separately for optimal results
-3. **Technical text**: Use shorter chunks (`--chunk-seconds 20`)
-4. **Clean input**: Remove extra whitespace and formatting
+**`No module named 'edge_tts'`** — `pip install -U "edge-tts>=7.2.7"`.
 
-### Workflow Tips
-1. **Create aliases** for frequent commands
-2. **Use hotkeys** (AutoHotkey on Windows)
-3. **Batch process** large document collections
-4. **Test settings** with small text first
+**`FFmpeg not found`** — install ffmpeg and ensure it is on `PATH`. Verify with `ffmpeg -version`. On Windows, [download](https://ffmpeg.org/download.html) and add the `bin\` folder to PATH. On macOS, `brew install ffmpeg`. On Debian/Ubuntu, `sudo apt install ffmpeg`.
 
-## 📄 File Format Support
+**Empty clipboard** — copy text first, then re-run with `cb` / `clipboard`. The reader is stdlib-only (tkinter first, then PowerShell `Get-Clipboard` on Windows, `pbpaste` on macOS).
 
-### Supported Input Formats
-- **Text files**: `.txt`, `.md`, `.rst`  
-- **Code files**: `.py`, `.js`, `.html` (extracts text)
-- **Clipboard**: Any copied text
-- **Direct input**: Command-line strings
+**`--stream` does nothing visible** — no player was detected. Install VLC (Windows: from videolan.org; macOS: `brew install --cask vlc`; Linux: distro package) or set `--player mpv` after `apt install mpv`.
 
-### Output Format
-- **Audio**: MP3 (high quality, compressed)
-- **Bitrate**: 128kbps (optimal size/quality balance)
-- **Sample Rate**: 24kHz (neural voice quality)
+**MCP client doesn't see the server** — confirm `TTS_ka-mcp` is on `PATH` (it is installed by `[mcp]` extra). Try running it manually; you should see nothing on stdout and JSON-RPC handshake output only when a client connects.
 
-## 🔄 Updates & Maintenance
+**Hung `--live` process** — the live loop blocks on stdin until EOF. Send Ctrl+D (Unix) / Ctrl+Z + Enter (Windows) to close the input stream, or Ctrl+C to abort.
 
-### Keeping Updated
-```bash
-# Update to latest version
-pip install --upgrade TTS_ka
+**Ctrl+C left a partial file** — generation cleanups remove `*.part_*.mp3` chunks on cancel, but the final merged output is left if it had already been written.
 
-# Check current version  
-python -m TTS_ka --version
+---
 
-# Update dependencies
-pip install --upgrade edge-tts pydub tqdm httpx
-```
+## Development
 
-### Health Check
-```bash
-# Test installation
-python -m TTS_ka "System check" --turbo --lang en
-
-# Verify FFmpeg  
-ffmpeg -version
-
-# Check Python version
-python --version  # Should be 3.9+
-```
-
-## 🤝 Contributing
-
-We welcome contributions! See our [GitHub repository](https://github.com/DavidTbilisi/TTS) for:
-
-- **Bug reports** and feature requests
-- **Code contributions** and pull requests  
-- **Documentation** improvements
-- **Language support** additions
-
-### Development Setup
 ```bash
 git clone https://github.com/DavidTbilisi/TTS.git
 cd TTS
 pip install -e ".[dev]"
-pytest  # Run tests
+pytest                              # full suite; coverage gate at 70%
+pytest tests/test_live_stream.py    # one file
+pytest -m "not slow"                # skip the subprocess-spawning E2E
+black src/ tests/
+flake8 src/ tests/
+mypy src/
 ```
 
-## 📞 Support
-
-### Getting Help
-1. **Documentation**: Use `--help-full` for comprehensive help
-2. **Issues**: Report bugs on [GitHub Issues](https://github.com/DavidTbilisi/TTS/issues)
-3. **Discussions**: Join [GitHub Discussions](https://github.com/DavidTbilisi/TTS/discussions)
-
-### Quick Diagnostics
-```bash
-# Check system compatibility  
-python -m TTS_ka --help-full
-
-# Test with minimal command
-python -m TTS_ka "test" --turbo --lang en
-
-# Verify FFmpeg installation
-ffmpeg -version
-```
-
-## 📜 License & Credits
-
-**License**: MIT License - see [LICENSE](LICENSE) file
-
-**Credits**:
-- **Edge-TTS**: Microsoft's edge-tts library for voice synthesis
-- **PyDub**: Audio processing and manipulation  
-- **FFmpeg**: Audio encoding and format conversion
-
-**Author**: David Chincharashvili (davidchincharashvili@gmail.com)
+To release: `python scripts/release.py minor` bumps the version, commits, tags, and pushes; then publish the GitHub Release for the tag to trigger PyPI upload.
 
 ---
 
-⭐ **Star this project** on GitHub if you find it useful!  
-🐛 **Report issues** to help improve the tool  
-🤝 **Contribute** to make it even better
+## License & credits
+
+MIT — see [LICENSE](LICENSE).
+
+Built on **edge-tts** (Microsoft Edge voices), **pydub** + **soundfile** + **ffmpeg** (audio merge / encode), **httpx** (async HTTP), **mutagen** (ID3 tags), **mcp** (Model Context Protocol SDK), **FastAPI** + **uvicorn** (REST server), **pynput** (Windows hotkeys).
+
+**Author**: David Chincharashvili — davidchincharashvili@gmail.com — [github.com/DavidTbilisi/TTS](https://github.com/DavidTbilisi/TTS)
