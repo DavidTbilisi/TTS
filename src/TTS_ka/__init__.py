@@ -10,7 +10,7 @@ from .chunking import split_text_into_chunks, should_chunk_text
 try:
     __version__ = _pkg_version("TTS_ka")
 except PackageNotFoundError:
-    __version__ = "1.7.1"
+    __version__ = "1.8.0"
 __all__ = [
     'fast_generate_audio',
     'fast_merge_audio_files',
