@@ -26,3 +26,4 @@ tests/__pycache__/
 .streaming_playlist.m3u
 .ff_concat.txt
 test_results.txt
+excalidraw.log
