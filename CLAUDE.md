@@ -60,6 +60,8 @@ Environment variables (see `fast_audio.py`, `readme.md`):
 | `ultra_fast.py` | Parallel async generation, auto-optimization |
 | `fast_audio.py` | Per-chunk TTS (HTTP + edge-tts), merge, playback helpers |
 | `streaming_player.py` | Queue-based background playback thread |
+| `live_stream.py` | `--live` mode: read stdin incrementally, speak each sentence as it lands (for piping LLM output) |
+| `mcp_server.py` | MCP server (`TTS_ka-mcp`): exposes `speak` / `stream_open` / `stream_append` / `stream_close` / `stop` / `list_voices` over stdio for AI clients |
 | `chunking.py` | WPM-based text splitting |
 | `not_reading.py` | Text sanitization before generation |
 | `constants.py` | `VOICE_MAP` (`ka`, `ka-m`, `ru`, `en`, `en-US`), `SSML_LANG_MAP`, HTTP/stream limits |
@@ -73,3 +75,6 @@ Environment variables (see `fast_audio.py`, `readme.md`):
 - **Layered fallbacks**: optional Bing HTTP POST → `edge-tts`; merge: `soundfile` → PyDub → FFmpeg.
 - **uvloop on Unix**: used in `ultra_fast.py` when available for faster event-loop I/O.
 - **Georgian voices**: `--lang ka` (Eka), `--lang ka-m` (Giorgi); SSML `xml:lang` uses `ka-GE` for those codes on the HTTP path.
+- **`--live` AI-streaming mode**: `tts-ka --live -l en` reads stdin line-by-line, accumulates in `SentenceBuffer`, flushes on `[.!?]+\s`, paragraph break, or idle (default 800 ms via `--live-idle-ms`). Code fences (` ``` `) are held open until closed so `not_reading.replace_not_readable` can collapse them; per-sentence MP3s feed into `StreamingAudioPlayer` with `chunk_index` ordering. Use case: `claude --print | tts-ka --live`.
+- **MCP server (`TTS_ka-mcp`)**: stdio JSON-RPC server (`pip install -e ".[mcp]"`). Tools: `speak`, `stream_open`, `stream_append`, `stream_close`, `session_status`, `list_sessions`, `stop`, `list_voices`. `_LiveSession` tracks two counters: `_idx` (output-file numbering, ticks inside `_speak`) and `_queued` (status-visible, ticks when `feed` extracts a sentence — so an agent can see backed-up synths via `synths_pending = _queued - done_tasks`). `build_server(sessions=dict)` factory lets tests inject a session dict for inspection. Configure in Claude Code: `{"mcpServers": {"tts-ka": {"command": "TTS_ka-mcp"}}}`.
+- **MCP stdout duality** (`_run_with_preserved_stdout`): naively swapping `sys.stdout = sys.stderr` to silence library prints ALSO kills MCP framing because `mcp.server.stdio` reads `sys.stdout.buffer` at handshake time. The fix is fd-level: `os.dup(1)` saves the original stdout fd, `os.dup2(2, 1)` redirects Python-level stdout (and any subprocess inheriting fd 1) to stderr, and the saved fd is wrapped and handed to `stdio_server(stdout=...)`. Without this, the E2E test hangs on `session.initialize()` because the server's reply lands on stderr.

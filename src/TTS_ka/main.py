@@ -449,6 +449,18 @@ For comprehensive help with examples: %(prog)s --help-full
         default=None,
         help="Print a shell completion script and exit.",
     )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Read stdin incrementally and speak each sentence as it lands. "
+             "For piping AI/LLM output (e.g. `claude … | tts-ka --live -l en`).",
+    )
+    parser.add_argument(
+        "--live-idle-ms",
+        type=int,
+        default=800,
+        help="In --live mode, flush a partial sentence after this many ms of stdin silence (default 800).",
+    )
 
     args = parser.parse_args(argv_rest)
 
@@ -536,6 +548,24 @@ For comprehensive help with examples: %(prog)s --help-full
     if args.json:
         sys.stdout = sys.stderr
     emit = _make_emitter(args.json, json_stream)
+
+    # --live: incremental stdin → per-sentence speak. Branches before the
+    # blocking sys.stdin.read() below so we read line-by-line instead.
+    if args.live:
+        prosody_opts = _prosody.build_opts(args.rate, args.pitch, args.volume)
+        from .live_stream import live_loop as _live_loop
+        try:
+            asyncio.run(_live_loop(
+                lang=args.lang,
+                voice=args.voice,
+                prosody=prosody_opts,
+                idle_flush_ms=args.live_idle_ms,
+                show_player_gui=show_player,
+            ))
+        except KeyboardInterrupt:
+            stop_active_streaming_player()
+            emit({"event": "error", "message": "cancelled"})
+        return
 
     # Stdin handling: if no text arg and stdin is piped, or text == "-", read stdin.
     if args.text == "-" or (not args.text and not sys.stdin.isatty()):

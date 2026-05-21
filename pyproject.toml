@@ -52,6 +52,7 @@ Changelog = "https://github.com/DavidTbilisi/TTS/releases"
 TTS_ka = "TTS_ka.main:main"
 TTS_ka-gui = "TTS_ka.gui:main"
 TTS_ka-hotkeys = "TTS_ka.native_hotkeys:main"
+TTS_ka-mcp = "TTS_ka.mcp_server:main"
 
 [project.optional-dependencies]
 hotkeys = [
@@ -72,6 +73,9 @@ metadata = [
 server = [
     "fastapi>=0.110.0",
     "uvicorn>=0.27.0",
+]
+mcp = [
+    "mcp>=1.0.0",
 ]
 test = [
     "pytest>=7.0.0",
