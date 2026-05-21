@@ -296,7 +296,7 @@ class TestStreamingIntegration:
         chunks = ["Hello world", "This is a test", "Streaming audio"]
         
         # Mock fast_generate_audio to create fake files
-        async def mock_generate(text, lang, output, quiet=False):
+        async def mock_generate(text, lang, output, quiet=False, **kwargs):
             with open(output, 'wb') as f:
                 f.write(b'fake audio')
             return True
@@ -336,7 +336,7 @@ class TestStreamingIntegration:
         output_path = os.path.join(temp_dir, "streaming_test.mp3")
         
         # Mock the fast_generate_audio function
-        async def mock_generate(text, lang, output, quiet=False):
+        async def mock_generate(text, lang, output, quiet=False, **kwargs):
             with open(output, 'wb') as f:
                 f.write(b'fake audio data')
             return True
@@ -376,7 +376,7 @@ class TestStreamingIntegration:
         long_text = "This is a test. " * 100
         output_path = os.path.join(temp_dir, "no_streaming_test.mp3")
         
-        async def mock_generate(text, lang, output, quiet=False):
+        async def mock_generate(text, lang, output, quiet=False, **kwargs):
             with open(output, 'wb') as f:
                 f.write(b'fake audio')
             return True
@@ -493,7 +493,7 @@ class TestStreamingPerformance:
         
         chunks = ["Test text"] * 10
         
-        async def mock_generate(text, lang, output, quiet=False):
+        async def mock_generate(text, lang, output, quiet=False, **kwargs):
             await asyncio.sleep(0.01)  # Simulate generation
             with open(output, 'wb') as f:
                 f.write(b'audio')
@@ -670,7 +670,8 @@ class TestStreamingIntegrationWithMainSystem:
 
             # Mock multi-chunk generation — use absolute paths so exists() checks pass
             async def multi_chunk_gen(chunks_arg, lang_arg, parallel_arg,
-                                      streaming_player_arg=None, actual_output=None):
+                                      streaming_player_arg=None, actual_output=None,
+                                      **kwargs):
                 actual_output = actual_output or output_path
                 with open(actual_output, 'wb') as f:
                     f.write(b'first chunk')

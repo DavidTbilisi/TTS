@@ -19,7 +19,7 @@ class TestStreamingCLI:
     @patch('TTS_ka.main.play_audio')
     def test_cli_with_stream_flag(self, mock_play, mock_generate):
         """Test CLI with --stream flag."""
-        async def mock_gen(text, lang, output, quiet=False):
+        async def mock_gen(text, lang, output, quiet=False, **kwargs):
             with open(output, 'wb') as f:
                 f.write(b'audio')
             return True
@@ -63,7 +63,7 @@ class TestStreamingCLI:
     @patch('TTS_ka.main.play_audio')
     def test_cli_without_stream_flag(self, mock_play, mock_generate):
         """Test that streaming is not enabled without --stream flag."""
-        async def mock_gen(text, lang, output, quiet=False):
+        async def mock_gen(text, lang, output, quiet=False, **kwargs):
             with open(output, 'wb') as f:
                 f.write(b'audio')
             return True

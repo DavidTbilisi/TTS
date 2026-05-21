@@ -21,10 +21,12 @@ from .constants import MAX_PARALLEL_WORKERS, STREAMING_CHUNK_SECONDS
 OPTIMAL_WORKERS = min(MAX_PARALLEL_WORKERS, (os.cpu_count() or 1) * 4)
 
 
-async def ultra_fast_parallel_generation(chunks: List[str], language: str, 
+async def ultra_fast_parallel_generation(chunks: List[str], language: str,
                                        parallel: int = OPTIMAL_WORKERS,
                                        streaming_player: StreamingAudioPlayer = None,
-                                       output_path: str = 'data.mp3') -> List[str]:
+                                       output_path: str = 'data.mp3',
+                                       voice: str = None,
+                                       prosody=None) -> List[str]:
     """Ultra-fast parallel generation with optimized concurrency and optional streaming playback."""
     
     # Use uvloop for maximum performance on Unix systems
@@ -65,7 +67,9 @@ async def ultra_fast_parallel_generation(chunks: List[str], language: str,
         """Generate audio for a single chunk, notifying the streaming player on success."""
         async with sem:
             try:
-                result = await fast_generate_audio(text, language, output, quiet=True)
+                result = await fast_generate_audio(text, language, output,
+                                                    quiet=True, voice=voice,
+                                                    prosody=prosody)
                 # If streaming is enabled, add chunk to player as soon as it's ready
                 if result and streaming_player:
                     streaming_player.add_chunk(output)
@@ -132,9 +136,11 @@ def ultra_fast_cleanup_parts(parts: List[str], keep_parts: bool = False) -> None
             remove_file(part)
 
 
-async def smart_generate_long_text(text: str, language: str, chunk_seconds: int = 30, 
+async def smart_generate_long_text(text: str, language: str, chunk_seconds: int = 30,
                                   parallel: int = OPTIMAL_WORKERS, output_path: str = 'data.mp3',
-                                  keep_parts: bool = False, enable_streaming: bool = False, show_gui: bool = True) -> None:
+                                  keep_parts: bool = False, enable_streaming: bool = False,
+                                  show_gui: bool = True, preferred_player: str = None,
+                                  voice: str = None, prosody=None) -> None:
     """Smart generation with dynamic optimization based on text length and optional streaming playback."""
     
     from .chunking import split_text_into_chunks
@@ -154,7 +160,8 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
     word_count = len(text.split())
     if word_count < 200 and not enable_streaming:
         # Very short text - direct generation is fastest (unless streaming is requested)
-        await fast_generate_audio(text, language, output_path)
+        await fast_generate_audio(text, language, output_path,
+                                   voice=voice, prosody=prosody)
         elapsed = time.perf_counter() - start
         print(f"⚡ Completed in {elapsed:.2f}s (direct)")
         return
@@ -174,7 +181,8 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
 
     if len(chunks) == 1 and not enable_streaming:
         # Still short enough for direct generation (unless streaming is requested)
-        await fast_generate_audio(text, language, output_path)
+        await fast_generate_audio(text, language, output_path,
+                                   voice=voice, prosody=prosody)
         elapsed = time.perf_counter() - start
         print(f"⚡ Completed in {elapsed:.2f}s (direct)")
         return
@@ -184,14 +192,25 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
     # Initialize streaming player if enabled
     streaming_player = None
     if enable_streaming:
+        from .streaming_player import PlayerDetector
+        detected = PlayerDetector.find(preferred=preferred_player)
+
+        if detected is None:
+            print(
+                f"Warning: no audio player found; audio will be saved to {output_path} but not streamed.",
+                file=sys.stderr,
+            )
+            show_gui = False
+        elif show_gui and 'vlc' not in os.path.basename(detected).lower():
+            player_name = os.path.basename(detected)
+            print(
+                f"Warning: VLC not found; falling back to {player_name} (no GUI). "
+                "Install VLC for an interactive player.",
+                file=sys.stderr,
+            )
+            show_gui = False
+
         streaming_player = StreamingAudioPlayer(show_gui=show_gui)
-        # Enforce GUI-only mode when requested: require VLC be available
-        if show_gui:
-            from .streaming_player import PlayerDetector
-            detected = PlayerDetector.find()
-            if not detected or 'vlc' not in os.path.basename(detected).lower():
-                print("Error: GUI mode requested but VLC was not found. Install VLC or run without GUI.")
-                raise SystemExit(1)
         streaming_player.start()
         if sys.platform.startswith('win'):
             if show_gui:
@@ -202,7 +221,10 @@ async def smart_generate_long_text(text: str, language: str, chunk_seconds: int 
             print("🔊 Streaming playback enabled - audio will start playing immediately")
     
     # Generate chunks in parallel
-    parts = await ultra_fast_parallel_generation(chunks, language, parallel, streaming_player, output_path)
+    parts = await ultra_fast_parallel_generation(
+        chunks, language, parallel, streaming_player, output_path,
+        voice=voice, prosody=prosody,
+    )
     
     try:
         # Signal streaming completion

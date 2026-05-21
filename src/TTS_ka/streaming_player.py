@@ -45,9 +45,17 @@ class PlayerDetector:
     ]
 
     @classmethod
-    def find(cls) -> Optional[str]:
-        """Return the executable path/name of the first available player."""
-        for player in cls._CANDIDATES:
+    def find(cls, preferred: Optional[str] = None) -> Optional[str]:
+        """Return the executable path/name of the first available player.
+
+        When *preferred* is set, that player is tried first; if available it
+        wins. If not, fall through to the default candidate list so streaming
+        still works.
+        """
+        candidates: List[str] = list(cls._CANDIDATES)
+        if preferred:
+            candidates = [preferred] + [c for c in candidates if c != preferred]
+        for player in candidates:
             path = cls._locate(player)
             if path:
                 return path
@@ -204,8 +212,15 @@ class StreamingAudioPlayer:
         if chunks:
             default = "afplay" if sys.platform == "darwin" else "mpg123"
             try:
-                os.system(f"{default} '{chunks[0]}' &")
-            except OSError:
+                subprocess.Popen(
+                    [default, chunks[0]],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    shell=False,
+                    start_new_session=True,
+                )
+            except (OSError, ValueError):
                 pass
 
     def _play_vlc_unix(self, player: str) -> None:

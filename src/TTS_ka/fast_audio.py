@@ -26,6 +26,7 @@ import os
 import sys
 import asyncio
 import shutil
+import subprocess
 from typing import List, Optional, Protocol, runtime_checkable
 
 import httpx
@@ -57,6 +58,8 @@ from .constants import (
     HTTP_MAX_CONNECTIONS,
 )
 from .not_reading import replace_not_readable
+from .prosody import ProsodyOpts, to_ssml_attrs
+from .subtitles import WordEvent
 
 
 # ── Protocols ─────────────────────────────────────────────────────────────────
@@ -117,17 +120,24 @@ class HttpAudioGenerator:
     }
 
     async def generate(self, text: str, language: str, output_path: str,
-                       quiet: bool = False) -> bool:
-        voice = VOICE_MAP.get(language)
-        if not voice:
+                       quiet: bool = False, voice: Optional[str] = None,
+                       prosody: Optional[ProsodyOpts] = None) -> bool:
+        resolved_voice = voice or VOICE_MAP.get(language)
+        if not resolved_voice:
             if not quiet:
                 print(f"❌ Language '{language}' not supported. Use: {', '.join(VOICE_MAP)}")
             return False
 
         safe_text = replace_not_readable(text)
+        if prosody and not prosody.is_default():
+            inner = (
+                f"<prosody {to_ssml_attrs(prosody)}>{safe_text}</prosody>"
+            )
+        else:
+            inner = safe_text
         ssml = (
             f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>"
-            f"<voice name='{voice}'>{safe_text}</voice></speak>"
+            f"<voice name='{resolved_voice}'>{inner}</voice></speak>"
         )
         try:
             client = await get_http_client()
@@ -150,16 +160,22 @@ class EdgeTTSGenerator:
     """Fallback generator using the ``edge-tts`` library."""
 
     async def generate(self, text: str, language: str, output_path: str,
-                       quiet: bool = False) -> bool:
-        voice = VOICE_MAP.get(language)
-        if not voice:
+                       quiet: bool = False, voice: Optional[str] = None,
+                       prosody: Optional[ProsodyOpts] = None) -> bool:
+        resolved_voice = voice or VOICE_MAP.get(language)
+        if not resolved_voice:
             if not quiet:
                 print(f"❌ Language '{language}' not supported. Use: {', '.join(VOICE_MAP)}")
             return False
         try:
             from edge_tts import Communicate
             clean_text = replace_not_readable(text)
-            communicate = Communicate(clean_text, voice)
+            kwargs: dict = {}
+            if prosody and not prosody.is_default():
+                kwargs["rate"] = prosody.rate
+                kwargs["pitch"] = prosody.pitch
+                kwargs["volume"] = prosody.volume
+            communicate = Communicate(clean_text, resolved_voice, **kwargs)
             await communicate.save(output_path)
             if not quiet:
                 print(f"Generated (fallback): {os.path.abspath(output_path)}")
@@ -214,12 +230,25 @@ class FFmpegMerger:
                 for part in parts:
                     if os.path.exists(part):
                         abs_path = os.path.abspath(part).replace("\\", "/")
-                        f.write(f"file '{abs_path}'\n")
-            cmd = (
-                f'ffmpeg -y -hide_banner -loglevel error -f concat -safe 0 '
-                f'-i "{self._LISTFILE}" -c copy "{output_path}"'
-            )
-            rc = os.system(cmd)
+                        # Per ffmpeg concat-demuxer spec, escape `'` as `'\''`.
+                        escaped = abs_path.replace("'", "'\\''")
+                        f.write(f"file '{escaped}'\n")
+            argv = [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel", "error",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", self._LISTFILE,
+                "-c", "copy",
+                output_path,
+            ]
+            try:
+                result = subprocess.run(argv, shell=False, check=False)
+                rc = result.returncode
+            except FileNotFoundError:
+                rc = 127
             if rc != 0:
                 # Last resort: copy first part so caller always has *something*
                 if os.path.exists(parts[0]):
@@ -248,25 +277,90 @@ class MergerFactory:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 async def fast_generate_audio(text: str, language: str, output_path: str,
-                               quiet: bool = False) -> bool:
-    """Generate audio: try HTTP first, fall back to edge-tts on any failure."""
+                               quiet: bool = False,
+                               voice: Optional[str] = None,
+                               prosody: Optional[ProsodyOpts] = None) -> bool:
+    """Generate audio: try HTTP first, fall back to edge-tts on any failure.
+
+    When *voice* is set, it overrides the per-language default from VOICE_MAP.
+    When *prosody* is set with non-default rate/pitch/volume, wraps the SSML
+    in a ``<prosody>`` tag (HTTP path) or passes the kwargs to ``Communicate``
+    (edge-tts path).
+    """
     if HAS_UVLOOP and sys.platform != "win32":
         asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
-    if await HttpAudioGenerator().generate(text, language, output_path, quiet=True):
+    if await HttpAudioGenerator().generate(text, language, output_path,
+                                            quiet=True, voice=voice,
+                                            prosody=prosody):
         if not quiet:
             print(f"⚡ Generated: {os.path.abspath(output_path)}")
         return True
 
     if not quiet:
         print(f"Warning: fast HTTP failed, falling back to edge-tts")
-    return await EdgeTTSGenerator().generate(text, language, output_path, quiet)
+    return await EdgeTTSGenerator().generate(text, language, output_path,
+                                              quiet, voice=voice,
+                                              prosody=prosody)
 
 
 async def fallback_generate_audio(text: str, language: str, output_path: str,
-                                   quiet: bool = False) -> bool:
+                                   quiet: bool = False,
+                                   voice: Optional[str] = None,
+                                   prosody: Optional[ProsodyOpts] = None) -> bool:
     """Generate audio using edge-tts directly (skips the HTTP attempt)."""
-    return await EdgeTTSGenerator().generate(text, language, output_path, quiet)
+    return await EdgeTTSGenerator().generate(text, language, output_path,
+                                              quiet, voice=voice,
+                                              prosody=prosody)
+
+
+async def generate_audio_with_subs(text: str, language: str, output_path: str,
+                                    voice: Optional[str] = None,
+                                    prosody: Optional[ProsodyOpts] = None
+                                    ) -> List[WordEvent]:
+    """Generate audio via edge-tts and collect WordBoundary events for subtitles.
+
+    Returns a list of ``WordEvent`` collected during synthesis. Edge-tts uses
+    100-nanosecond ticks for offsets, which are normalised to milliseconds.
+    """
+    try:
+        from edge_tts import Communicate
+    except ImportError:
+        raise RuntimeError(
+            "Subtitle export requires the 'edge-tts' library (already a "
+            "core dependency). Install it with: pip install edge-tts"
+        )
+
+    resolved_voice = voice or VOICE_MAP.get(language)
+    if not resolved_voice:
+        raise ValueError(f"Language {language!r} is not supported")
+
+    clean_text = replace_not_readable(text)
+    kwargs: dict = {}
+    if prosody and not prosody.is_default():
+        kwargs["rate"] = prosody.rate
+        kwargs["pitch"] = prosody.pitch
+        kwargs["volume"] = prosody.volume
+
+    communicate = Communicate(clean_text, resolved_voice, **kwargs)
+    events: List[WordEvent] = []
+    with open(output_path, "wb") as audio_file:
+        async for chunk in communicate.stream():
+            ctype = chunk.get("type")
+            if ctype == "audio":
+                audio_file.write(chunk["data"])
+            elif ctype == "WordBoundary":
+                # edge-tts uses 100-ns ticks; convert to ms.
+                offset_ms = int(chunk["offset"]) // 10_000
+                duration_ms = int(chunk["duration"]) // 10_000
+                events.append(
+                    WordEvent(
+                        text=chunk.get("text", ""),
+                        start_ms=offset_ms,
+                        duration_ms=duration_ms,
+                    )
+                )
+    return events
 
 
 def fast_merge_audio_files(parts: List[str], output_path: str) -> None:
@@ -298,18 +392,40 @@ def fast_merge_audio_files(parts: List[str], output_path: str) -> None:
     raise RuntimeError(f"All merge strategies failed: {last_error}")
 
 
+def _spawn_detached(argv: List[str]) -> bool:
+    """Spawn *argv* in the background with no controlling terminal. Returns True on success."""
+    try:
+        kwargs = dict(
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            shell=False,
+        )
+        if sys.platform.startswith("win"):
+            kwargs["creationflags"] = (
+                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+        else:
+            kwargs["start_new_session"] = True
+        subprocess.Popen(argv, **kwargs)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def play_audio(file_path: str) -> None:
-    """Play an audio file using a platform-appropriate command."""
+    """Play an audio file using a platform-appropriate command (no shell)."""
     try:
         abs_path = os.path.abspath(file_path)
         if sys.platform.startswith("win"):
             os.startfile(abs_path)
-        elif sys.platform == "darwin":
-            os.system(f"open '{abs_path}' &")
-        else:
-            for cmd in [f"mpv '{abs_path}' &", f"vlc '{abs_path}' &", f"xdg-open '{abs_path}' &"]:
-                if os.system(cmd) == 0:
-                    break
+            return
+        if sys.platform == "darwin":
+            _spawn_detached(["open", abs_path])
+            return
+        for player in ("mpv", "vlc", "xdg-open"):
+            if shutil.which(player) and _spawn_detached([player, abs_path]):
+                return
     except OSError:
         pass
 

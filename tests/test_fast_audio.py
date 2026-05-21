@@ -200,9 +200,13 @@ class TestFastMergeAudioFiles:
                 f.write(b"fake")
         with patch('TTS_ka.fast_audio.HAS_SOUNDFILE', False), \
              patch('TTS_ka.fast_audio.HAS_PYDUB', False), \
-             patch('os.system', return_value=0) as mock_sys:
+             patch('TTS_ka.fast_audio.subprocess.run',
+                   return_value=MagicMock(returncode=0)) as mock_run:
             fast_merge_audio_files(parts, out)
-        mock_sys.assert_called_once()
+        mock_run.assert_called_once()
+        # argv list-form, no shell
+        argv = mock_run.call_args.args[0]
+        assert isinstance(argv, list) and argv[0] == "ffmpeg"
 
     def test_removes_existing_output(self, temp_dir):
         part = os.path.join(temp_dir, "p.mp3")
@@ -261,15 +265,20 @@ class TestFastPlayAudio:
         f = os.path.join(temp_dir, "t.mp3")
         with open(f, "wb") as fp:
             fp.write(b"x")
-        with patch('sys.platform', 'darwin'), patch('os.system') as m:
+        with patch('sys.platform', 'darwin'), \
+             patch('TTS_ka.fast_audio.subprocess.Popen') as m:
             play_audio(f)
-        assert "open" in m.call_args[0][0]
+        m.assert_called_once()
+        argv = m.call_args.args[0]
+        assert argv[0] == "open"
 
     def test_linux(self, temp_dir):
         f = os.path.join(temp_dir, "t.mp3")
         with open(f, "wb") as fp:
             fp.write(b"x")
-        with patch('sys.platform', 'linux'), patch('os.system', return_value=0):
+        with patch('sys.platform', 'linux'), \
+             patch('TTS_ka.fast_audio.shutil.which', return_value='/usr/bin/mpv'), \
+             patch('TTS_ka.fast_audio.subprocess.Popen'):
             play_audio(f)  # must not raise
 
     def test_oserror_silenced(self, temp_dir):

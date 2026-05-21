@@ -228,3 +228,165 @@ class TestReadClipboard:
              patch('sys.platform', 'linux'):
             result = _read_clipboard()
         assert result == ""
+
+
+class TestVersionFlag:
+    """BUG-1: --version flag."""
+
+    def _read_pyproject_version(self) -> str:
+        import re
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "pyproject.toml"
+        )
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                m = re.match(r'^\s*version\s*=\s*"([^"]+)"', line)
+                if m:
+                    return m.group(1)
+        raise AssertionError("version not found in pyproject.toml")
+
+    def test_version_flag_prints_and_exits_zero(self, capsys):
+        """`--version` prints `TTS_ka <ver>` and exits 0."""
+        with patch('sys.argv', ['TTS_ka', '--version']):
+            with pytest.raises(SystemExit) as exc:
+                from TTS_ka.main import main
+                main()
+        assert exc.value.code == 0
+        out = capsys.readouterr().out
+        assert out.startswith("TTS_ka ")
+        # version line should contain at least major.minor.patch
+        import re
+        assert re.search(r"TTS_ka \d+\.\d+\.\d+", out)
+
+    def test_short_version_flag(self, capsys):
+        """`-V` is equivalent to `--version`."""
+        with patch('sys.argv', ['TTS_ka', '-V']):
+            with pytest.raises(SystemExit) as exc:
+                from TTS_ka.main import main
+                main()
+        assert exc.value.code == 0
+        assert capsys.readouterr().out.startswith("TTS_ka ")
+
+    def test_dunder_version_matches_pyproject(self):
+        """`TTS_ka.__version__` must equal the pyproject.toml [project].version."""
+        import TTS_ka
+        expected = self._read_pyproject_version()
+        assert TTS_ka.__version__ == expected, (
+            f"__version__={TTS_ka.__version__!r} != pyproject={expected!r}"
+        )
+
+
+class TestOutputFlag:
+    """BUG-2: --output/-o flag and overwrite protection."""
+
+    def test_output_flag_writes_to_custom_path(self, tmp_path):
+        """--output PATH causes generation to target PATH instead of data.mp3."""
+        target = tmp_path / "custom.mp3"
+        with patch('sys.argv', ['TTS_ka', 'hello', '--lang', 'en', '--no-play',
+                                '--output', str(target)]):
+            with patch('TTS_ka.main.fast_generate_audio',
+                       new=AsyncMock(return_value=True)) as mfa, \
+                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
+                 patch('TTS_ka.main.get_optimal_settings',
+                       return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
+                from TTS_ka.main import main
+                main()
+        # third positional arg of fast_generate_audio is output_path
+        args, _ = mfa.call_args
+        assert args[2] == str(target)
+
+    def test_output_default_is_data_mp3(self):
+        """When --output is omitted, generation still targets data.mp3."""
+        with patch('sys.argv', ['TTS_ka', 'hello', '--lang', 'en', '--no-play']):
+            with patch('TTS_ka.main.fast_generate_audio',
+                       new=AsyncMock(return_value=True)) as mfa, \
+                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
+                 patch('TTS_ka.main.get_optimal_settings',
+                       return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
+                from TTS_ka.main import main
+                main()
+        args, _ = mfa.call_args
+        assert args[2] == "data.mp3"
+
+    def test_output_creates_parent_directories(self, tmp_path):
+        """Missing parent directories in --output PATH are auto-created."""
+        nested = tmp_path / "deep" / "nest" / "out.mp3"
+        assert not nested.parent.exists()
+        with patch('sys.argv', ['TTS_ka', 'hi', '--lang', 'en', '--no-play',
+                                '--output', str(nested)]):
+            with patch('TTS_ka.main.fast_generate_audio',
+                       new=AsyncMock(return_value=True)), \
+                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
+                 patch('TTS_ka.main.get_optimal_settings',
+                       return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
+                from TTS_ka.main import main
+                main()
+        assert nested.parent.is_dir()
+
+    def test_output_refuses_overwrite_without_force(self, tmp_path, capsys):
+        """If --output points at an existing file, refuse to overwrite (exit 2)."""
+        existing = tmp_path / "already.mp3"
+        existing.write_bytes(b"old")
+        with patch('sys.argv', ['TTS_ka', 'hi', '--lang', 'en', '--no-play',
+                                '--output', str(existing)]):
+            with patch('TTS_ka.main.fast_generate_audio',
+                       new=AsyncMock(return_value=True)), \
+                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
+                 patch('TTS_ka.main.get_optimal_settings',
+                       return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
+                with pytest.raises(SystemExit) as exc:
+                    from TTS_ka.main import main
+                    main()
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "already exists" in err
+        assert "--force" in err
+        # file must be untouched
+        assert existing.read_bytes() == b"old"
+
+    def test_output_force_overwrites_existing(self, tmp_path):
+        """--force allows overwriting an existing output file."""
+        existing = tmp_path / "already.mp3"
+        existing.write_bytes(b"old")
+        with patch('sys.argv', ['TTS_ka', 'hi', '--lang', 'en', '--no-play',
+                                '--output', str(existing), '--force']):
+            with patch('TTS_ka.main.fast_generate_audio',
+                       new=AsyncMock(return_value=True)) as mfa, \
+                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
+                 patch('TTS_ka.main.get_optimal_settings',
+                       return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
+                from TTS_ka.main import main
+                main()
+        args, _ = mfa.call_args
+        assert args[2] == str(existing)
+
+    def test_output_extension_inferred(self, tmp_path):
+        """An --output PATH with no extension gets `.mp3` appended."""
+        target_noext = tmp_path / "clip"
+        expected = str(target_noext) + ".mp3"
+        with patch('sys.argv', ['TTS_ka', 'hi', '--lang', 'en', '--no-play',
+                                '--output', str(target_noext)]):
+            with patch('TTS_ka.main.fast_generate_audio',
+                       new=AsyncMock(return_value=True)) as mfa, \
+                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
+                 patch('TTS_ka.main.get_optimal_settings',
+                       return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
+                from TTS_ka.main import main
+                main()
+        args, _ = mfa.call_args
+        assert args[2] == expected
+
+    def test_short_output_flag_o(self, tmp_path):
+        """`-o` is equivalent to `--output`."""
+        target = tmp_path / "short.mp3"
+        with patch('sys.argv', ['TTS_ka', 'hi', '--lang', 'en', '--no-play',
+                                '-o', str(target)]):
+            with patch('TTS_ka.main.fast_generate_audio',
+                       new=AsyncMock(return_value=True)) as mfa, \
+                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
+                 patch('TTS_ka.main.get_optimal_settings',
+                       return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
+                from TTS_ka.main import main
+                main()
+        args, _ = mfa.call_args
+        assert args[2] == str(target)
