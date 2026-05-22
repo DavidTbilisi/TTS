@@ -11,6 +11,18 @@ import sys
 import time
 from typing import Any, Callable, Dict, Optional
 
+from .rich_progress import console as _console, HAS_RICH as _HAS_RICH
+import re as _re
+
+
+def _cprint(msg: str) -> None:
+    """Rich console print with plain-text fallback."""
+    if _HAS_RICH and _console is not None:
+        _console.print(msg)
+    else:
+        print(_re.sub(r"\[/?[^\]]*\]", "", msg), file=sys.stderr)
+
+
 from .fast_audio import (
     fast_generate_audio,
     play_audio,
@@ -617,13 +629,16 @@ For comprehensive help with examples: %(prog)s --help-full
         if stream and chunk_seconds == 0:
             chunk_seconds = STREAMING_CHUNK_SECONDS
             optimal["method"] = "smart"
-            print(f"[stream] Streaming enabled - forcing chunked generation ({STREAMING_CHUNK_SECONDS}s chunks)")
 
         lang_names = {"ka": "Georgian", "ka-m": "Georgian (male)", "ru": "Russian", "en": "English"}
+        lang_flags = {"ka": "🇬🇪", "ka-m": "🇬🇪", "ru": "🇷🇺", "en": "🇬🇧"}
         lang_name = lang_names.get(args.lang, "Unknown")
-        print(f"OPTIMIZED MODE - {lang_name}")
-        print(f"Strategy: {optimal['method']} generation, {parallel} workers")
-        print(f"Processing: {len(text.split())} words, {len(text)} characters")
+        flag = lang_flags.get(args.lang, "🔊")
+        word_count = len(text.split())
+        _cprint(
+            f"\n  {flag}  [bold]{lang_name}[/bold]"
+            f"  [dim]·  {optimal['method']}  ·  {parallel} workers  ·  {word_count:,} words[/dim]\n"
+        )
 
     if parallel == 0:
         parallel = min(4, OPTIMAL_WORKERS)
@@ -712,7 +727,7 @@ For comprehensive help with examples: %(prog)s --help-full
         asyncio.run(run_generation())
     except KeyboardInterrupt:
         stop_active_streaming_player()
-        print("\n⚡ Generation cancelled")
+        _cprint("\n  [yellow]⚡[/yellow]  Generation cancelled")
         emit({"event": "error", "message": "cancelled"})
 
 

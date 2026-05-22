@@ -168,8 +168,9 @@ class TestUltraFastParallelGeneration:
              patch('TTS_ka.ultra_fast.create_progress_display', return_value=MagicMock()):
             parts = await ultra_fast_parallel_generation(chunks, "en", parallel=1, output_path=output_path)
 
-        # Error is caught, warning is printed
-        assert "oops" in capsys.readouterr().out
+        # Error is caught, warning is printed (goes to stderr via rich console)
+        captured = capsys.readouterr()
+        assert "oops" in (captured.out + captured.err)
 
 
 class TestSmartGenerateLongText:
@@ -182,7 +183,8 @@ class TestSmartGenerateLongText:
             await smart_generate_long_text(text, "en", output_path=output_path)
 
         mfa.assert_called_once()
-        assert "direct" in capsys.readouterr().out
+        captured = capsys.readouterr()
+        assert "direct" in (captured.out + captured.err)
 
     async def test_long_text_uses_chunks(self, tmp_path):
         """Long text is split into chunks and merged."""

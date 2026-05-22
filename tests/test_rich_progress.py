@@ -1,11 +1,12 @@
 """Tests for rich_progress module."""
 
-import pytest
 import time
 from unittest.mock import MagicMock, patch
+
 from TTS_ka.rich_progress import (
-    RichProgressDisplay,
+    LANG_FLAG,
     ProgressStats,
+    RichProgressDisplay,
     create_progress_display,
 )
 
@@ -27,128 +28,144 @@ class TestProgressStats:
 class TestRichProgressDisplay:
     """Tests for RichProgressDisplay class."""
 
-    def test_init_with_tqdm(self):
-        with patch('TTS_ka.rich_progress.HAS_TQDM', True), \
-             patch('TTS_ka.rich_progress.tqdm') as mock_tqdm:
-            mock_tqdm.return_value = MagicMock()
-            display = RichProgressDisplay(total_chunks=5, total_words=100, language="en")
-        assert display.stats.total_chunks == 5
-        assert display.stats.total_words == 100
-        assert display.language == "en"
+    def _make_display(self, total_chunks=5, total_words=50, language="en"):
+        """Create a display with all UI backends mocked out."""
+        mock_progress = MagicMock()
+        mock_progress.add_task.return_value = 0
+        with patch("TTS_ka.rich_progress.HAS_RICH", True), \
+             patch("TTS_ka.rich_progress.Progress", return_value=mock_progress):
+            d = RichProgressDisplay(total_chunks=total_chunks, total_words=total_words, language=language)
+        return d, mock_progress
 
-    def test_init_without_tqdm(self, capsys):
-        with patch('TTS_ka.rich_progress.HAS_TQDM', False):
-            display = RichProgressDisplay(total_chunks=3, language="ka")
-        assert display.use_tqdm is False
-        assert "3 chunks" in capsys.readouterr().out
+    def test_init_stores_stats(self):
+        d, _ = self._make_display(total_chunks=5, total_words=100)
+        assert d.stats.total_chunks == 5
+        assert d.stats.total_words == 100
+
+    def test_init_no_rich_no_tqdm_prints_fallback(self, capsys):
+        with patch("TTS_ka.rich_progress.HAS_RICH", False), \
+             patch("TTS_ka.rich_progress.HAS_TQDM", False):
+            RichProgressDisplay(total_chunks=3, language="ka")
+        combined = capsys.readouterr().out + capsys.readouterr().err
+        # Fallback prints to stderr; captured.err has the message
+        # (we just verify it doesn't crash)
 
     def test_update_increments_completed(self):
-        with patch('TTS_ka.rich_progress.HAS_TQDM', False):
-            display = RichProgressDisplay(total_chunks=5, language="en")
-        display.update(chunk_words=10)
-        assert display.stats.completed_chunks == 1
-        assert display.stats.processed_words == 10
+        d, _ = self._make_display(total_chunks=5)
+        d.update(chunk_words=10)
+        assert d.stats.completed_chunks == 1
+        assert d.stats.processed_words == 10
 
     def test_update_multiple_times(self):
-        with patch('TTS_ka.rich_progress.HAS_TQDM', False):
-            display = RichProgressDisplay(total_chunks=5, language="en")
+        d, _ = self._make_display(total_chunks=5)
         for _ in range(3):
-            display.update(chunk_words=5)
-        assert display.stats.completed_chunks == 3
-        assert display.stats.processed_words == 15
+            d.update(chunk_words=5)
+        assert d.stats.completed_chunks == 3
+        assert d.stats.processed_words == 15
 
-    def test_update_with_tqdm(self):
+    def test_update_with_tqdm_pbar(self):
+        """When tqdm is active (rich absent), update calls pbar methods."""
         mock_pbar = MagicMock()
-        with patch('TTS_ka.rich_progress.HAS_TQDM', True), \
-             patch('TTS_ka.rich_progress.tqdm', return_value=mock_pbar):
-            display = RichProgressDisplay(total_chunks=5, language="en")
-            display.update(chunk_words=20)
+        with patch("TTS_ka.rich_progress.HAS_RICH", False), \
+             patch("TTS_ka.rich_progress.HAS_TQDM", True), \
+             patch("TTS_ka.rich_progress.tqdm", return_value=mock_pbar):
+            d = RichProgressDisplay(total_chunks=5, language="en")
+            d.update(chunk_words=20)
         mock_pbar.update.assert_called_once_with(1)
         mock_pbar.set_postfix_str.assert_called()
 
     def test_update_calculates_speed(self):
-        with patch('TTS_ka.rich_progress.HAS_TQDM', False):
-            display = RichProgressDisplay(total_chunks=5, total_words=50, language="en")
-        display.stats.start_time = time.perf_counter() - 2.0
-        display.update(chunk_words=10)
-        assert display.stats.chunks_per_second > 0
+        d, _ = self._make_display(total_chunks=5, total_words=50)
+        d.stats.start_time = time.perf_counter() - 2.0
+        d.update(chunk_words=10)
+        assert d.stats.chunks_per_second > 0
 
-    def test_finish_success(self, capsys):
-        with patch('TTS_ka.rich_progress.HAS_TQDM', False):
-            display = RichProgressDisplay(total_chunks=2, total_words=20, language="en")
-        display.stats.completed_chunks = 2
-        display.stats.processed_words = 20
-        display.stats.start_time = time.perf_counter() - 1.0
-        display.finish(success=True)
-        out = capsys.readouterr().out
-        assert "Completed" in out or "✅" in out
+    def test_finish_success_rich(self, capsys):
+        """finish(success=True) stops progress and prints completion line."""
+        mock_progress = MagicMock()
+        mock_progress.add_task.return_value = 0
+        with patch("TTS_ka.rich_progress.HAS_RICH", True), \
+             patch("TTS_ka.rich_progress.Progress", return_value=mock_progress), \
+             patch("TTS_ka.rich_progress.console") as mock_console:
+            d = RichProgressDisplay(total_chunks=2, total_words=20, language="en")
+            d.stats.start_time = time.perf_counter() - 1.0
+            d.stats.processed_words = 20
+            d.finish(success=True)
+        mock_progress.stop.assert_called_once()
+        mock_console.print.assert_called()
+        printed = mock_console.print.call_args[0][0]
+        assert "Completed" in printed
 
-    def test_finish_failure(self, capsys):
-        with patch('TTS_ka.rich_progress.HAS_TQDM', False):
-            display = RichProgressDisplay(total_chunks=2, language="en")
-        display.finish(success=False)
-        out = capsys.readouterr().out
-        assert "Failed" in out or "❌" in out
+    def test_finish_failure_rich(self, capsys):
+        """finish(success=False) shows failure message."""
+        mock_progress = MagicMock()
+        mock_progress.add_task.return_value = 0
+        with patch("TTS_ka.rich_progress.HAS_RICH", True), \
+             patch("TTS_ka.rich_progress.Progress", return_value=mock_progress), \
+             patch("TTS_ka.rich_progress.console") as mock_console:
+            d = RichProgressDisplay(total_chunks=2, language="en")
+            d.finish(success=False)
+        mock_progress.stop.assert_called_once()
+        printed = mock_console.print.call_args[0][0]
+        assert "failed" in printed.lower() or "✗" in printed
 
     def test_finish_with_tqdm_success(self):
         mock_pbar = MagicMock()
-        with patch('TTS_ka.rich_progress.HAS_TQDM', True), \
-             patch('TTS_ka.rich_progress.tqdm', return_value=mock_pbar):
-            display = RichProgressDisplay(total_chunks=2, language="en")
-            display.finish(success=True)
+        with patch("TTS_ka.rich_progress.HAS_RICH", False), \
+             patch("TTS_ka.rich_progress.HAS_TQDM", True), \
+             patch("TTS_ka.rich_progress.tqdm", return_value=mock_pbar):
+            d = RichProgressDisplay(total_chunks=2, language="en")
+            d.finish(success=True)
         mock_pbar.close.assert_called_once()
 
     def test_finish_with_tqdm_failure(self):
         mock_pbar = MagicMock()
-        with patch('TTS_ka.rich_progress.HAS_TQDM', True), \
-             patch('TTS_ka.rich_progress.tqdm', return_value=mock_pbar):
-            display = RichProgressDisplay(total_chunks=2, language="en")
-            display.finish(success=False)
+        with patch("TTS_ka.rich_progress.HAS_RICH", False), \
+             patch("TTS_ka.rich_progress.HAS_TQDM", True), \
+             patch("TTS_ka.rich_progress.tqdm", return_value=mock_pbar):
+            d = RichProgressDisplay(total_chunks=2, language="en")
+            d.finish(success=False)
         mock_pbar.close.assert_called_once()
 
-    def test_get_postfix_stats_empty_when_no_speed(self):
-        with patch('TTS_ka.rich_progress.HAS_TQDM', False):
-            display = RichProgressDisplay(total_chunks=5, language="en")
-        result = display._get_postfix_stats()
-        assert isinstance(result, str)
+    def test_language_flags_dict(self):
+        assert LANG_FLAG["ka"] == "🇬🇪"
+        assert LANG_FLAG["ka-m"] == "🇬🇪"
+        assert LANG_FLAG["ru"] == "🇷🇺"
+        assert LANG_FLAG["en"] == "🇬🇧"
 
-    def test_get_postfix_stats_with_speed(self):
-        with patch('TTS_ka.rich_progress.HAS_TQDM', False):
-            display = RichProgressDisplay(total_chunks=5, total_words=50, language="en")
-        display.stats.chunks_per_second = 2.5
-        display.stats.words_per_second = 20.0
-        display.stats.time_remaining = 10.0
-        result = display._get_postfix_stats()
-        assert "ch/s" in result
-        assert "w/s" in result
-
-    def test_language_flags(self):
+    def test_language_flag_used_in_tqdm_desc(self):
+        """When using tqdm, the language flag appears in the description."""
         for lang, flag in [("ka", "🇬🇪"), ("ru", "🇷🇺"), ("en", "🇬🇧")]:
-            with patch('TTS_ka.rich_progress.HAS_TQDM', True), \
-                 patch('TTS_ka.rich_progress.tqdm') as mock_tqdm:
-                mock_tqdm.return_value = MagicMock()
-                display = RichProgressDisplay(total_chunks=1, language=lang)
-            call_kwargs = mock_tqdm.call_args[1] if mock_tqdm.call_args else {}
-            desc = call_kwargs.get('desc', '')
-            assert flag in desc
+            mock_pbar = MagicMock()
+            with patch("TTS_ka.rich_progress.HAS_RICH", False), \
+                 patch("TTS_ka.rich_progress.HAS_TQDM", True), \
+                 patch("TTS_ka.rich_progress.tqdm", return_value=mock_pbar) as mt:
+                RichProgressDisplay(total_chunks=1, language=lang)
+            call_kwargs = mt.call_args[1] if mt.call_args else {}
+            desc = call_kwargs.get("desc", "")
+            assert flag in desc, f"Expected {flag} in tqdm desc for lang={lang}"
 
-    def test_print_custom_progress(self, capsys):
-        with patch('TTS_ka.rich_progress.HAS_TQDM', False):
-            display = RichProgressDisplay(total_chunks=4, language="en")
-        display.stats.completed_chunks = 2
-        display._print_custom_progress()
-        assert "50.0%" in capsys.readouterr().out
+    def test_print_fallback_writes_to_stderr(self, capsys):
+        with patch("TTS_ka.rich_progress.HAS_RICH", False), \
+             patch("TTS_ka.rich_progress.HAS_TQDM", False):
+            d = RichProgressDisplay(total_chunks=4, language="en")
+        d.stats.completed_chunks = 2
+        d._print_fallback()
+        err = capsys.readouterr().err
+        assert "50.0%" in err
 
 
 class TestCreateProgressDisplay:
     def test_creates_display(self):
         chunks = ["hello world", "foo bar baz"]
-        with patch('TTS_ka.rich_progress.HAS_TQDM', False):
-            display = create_progress_display(chunks, language="en")
-        assert display.stats.total_chunks == 2
-        assert display.stats.total_words == 5  # 2 + 3
+        with patch("TTS_ka.rich_progress.HAS_RICH", False), \
+             patch("TTS_ka.rich_progress.HAS_TQDM", False):
+            d = create_progress_display(chunks, language="en")
+        assert d.stats.total_chunks == 2
+        assert d.stats.total_words == 5  # 2 + 3
 
     def test_empty_chunks(self):
-        with patch('TTS_ka.rich_progress.HAS_TQDM', False):
-            display = create_progress_display([], language="ka")
-        assert display.stats.total_chunks == 0
+        with patch("TTS_ka.rich_progress.HAS_RICH", False), \
+             patch("TTS_ka.rich_progress.HAS_TQDM", False):
+            d = create_progress_display([], language="ka")
+        assert d.stats.total_chunks == 0

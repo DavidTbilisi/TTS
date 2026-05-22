@@ -15,12 +15,21 @@ except ImportError:
 
 from .fast_audio import fast_generate_audio, fast_merge_audio_files
 from .not_reading import replace_not_readable
-from .rich_progress import create_progress_display
+from .rich_progress import console, create_progress_display, HAS_RICH
 from .streaming_player import StreamingAudioPlayer, stop_active_streaming_player
 from .constants import MAX_PARALLEL_WORKERS, STREAMING_CHUNK_SECONDS
 
 # Optimal worker count
 OPTIMAL_WORKERS = min(MAX_PARALLEL_WORKERS, (os.cpu_count() or 1) * 4)
+
+
+def _cprint(msg: str) -> None:
+    """Print styled message via rich console, or plain to stderr as fallback."""
+    if HAS_RICH and console is not None:
+        console.print(msg)
+    else:
+        import re
+        print(re.sub(r"\[/?[^\]]*\]", "", msg), file=sys.stderr)
 
 
 class GenerationCancelled(Exception):
@@ -127,7 +136,7 @@ async def ultra_fast_parallel_generation(
                     streaming_player.add_chunk(output, i)
                 return (i, result)
             except Exception as e:
-                print(f"⚠️  Error generating part {i}: {e}")
+                _cprint(f"  [yellow]⚠[/yellow]  Chunk {i} failed: [dim]{e}[/dim]")
                 return (i, False)
     
     # Create all tasks at once for better scheduling
@@ -263,13 +272,9 @@ async def smart_generate_long_text(
         if progress_callback:
             progress_callback(1, 1)
         elapsed = time.perf_counter() - start
-        print(f"⚡ Completed in {elapsed:.2f}s (direct)")
+        _cprint(f"  [bold green]✓[/bold green]  [bold]Completed in {elapsed:.2f}s[/bold]  [dim](direct)[/dim]")
         return
-    
-    # Debug logging for streaming
-    if enable_streaming:
-        print(f"📊 Streaming mode: {word_count} words, proceeding with chunked generation")
-    
+
     # Optimize chunk size based on text length and parallel workers
     optimal_chunk_seconds = max(15, min(60, word_count // (parallel * 2)))
     if chunk_seconds == 0:
@@ -291,10 +296,10 @@ async def smart_generate_long_text(
         if progress_callback:
             progress_callback(1, 1)
         elapsed = time.perf_counter() - start
-        print(f"⚡ Completed in {elapsed:.2f}s (direct)")
+        _cprint(f"  [bold green]✓[/bold green]  [bold]Completed in {elapsed:.2f}s[/bold]  [dim](direct)[/dim]")
         return
-    
-    print(f"⚡ Using {len(chunks)} chunks with {parallel} workers")
+
+    _cprint(f"  [cyan]⚡[/cyan]  [bold]{len(chunks)} chunks[/bold]  [dim]·  {parallel} workers[/dim]")
     
     # Initialize streaming player if enabled
     streaming_player = None
@@ -312,14 +317,10 @@ async def smart_generate_long_text(
         streaming_player = StreamingAudioPlayer(show_gui=show_gui)
         streaming_player.start()
         if sys.platform.startswith('win'):
-            if show_gui:
-                print(
-                    "🔊 Streaming enabled (Windows, GUI)"
-                )
-            else:
-                print("🔊 Streaming enabled (Windows, headless)")
+            mode = "GUI" if show_gui else "headless"
+            _cprint(f"  [green]🔊[/green]  [bold]Streaming enabled[/bold]  [dim](Windows, {mode})[/dim]")
         else:
-            print("🔊 Streaming playback enabled - audio will start playing immediately")
+            _cprint("  [green]🔊[/green]  [bold]Streaming enabled[/bold]  [dim]· audio starts immediately[/dim]")
     
     # Generate chunks in parallel
     parts: List[str] = []
@@ -359,12 +360,12 @@ async def smart_generate_long_text(
                             os.remove(backup_path)
 
                     except Exception as e:
-                        print(f"⚠️  Merge warning: {e}")
+                        _cprint(f"  [yellow]⚠[/yellow]  Merge warning: [dim]{e}[/dim]")
                         if os.path.exists(backup_path):
                             try:
                                 shutil.move(backup_path, output_path)
                             except OSError as restore_err:
-                                print(f"⚠️  Could not restore backup: {restore_err}")
+                                _cprint(f"  [yellow]⚠[/yellow]  Could not restore backup: [dim]{restore_err}[/dim]")
         else:
             fast_merge_audio_files(parts, output_path)
 
@@ -372,12 +373,15 @@ async def smart_generate_long_text(
         ultra_fast_cleanup_parts(cleanup_parts, keep_parts)
 
         if streaming_player:
-            print("⏸️  Waiting for playback to complete...")
+            _cprint("  [dim]⏸  Waiting for playback to finish…[/dim]")
             streaming_player.wait_for_completion()
             await asyncio.sleep(0.2)
 
         elapsed = time.perf_counter() - start
-        print(f"⚡ Completed in {elapsed:.2f}s ({len(chunks)} chunks, {parallel} workers)")
+        _cprint(
+            f"  [bold green]✓[/bold green]  [bold]Completed in {elapsed:.2f}s[/bold]"
+            f"  [dim]({len(chunks)} chunks, {parallel} workers)[/dim]"
+        )
     except GenerationCancelled:
         _interrupt_streaming_cleanup(streaming_player, parts)
         raise

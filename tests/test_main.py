@@ -178,7 +178,8 @@ class TestMain:
             with patch('asyncio.run', side_effect=interrupt_before_run):
                 from TTS_ka.main import main
                 main()
-        assert "cancelled" in capsys.readouterr().out.lower()
+        captured = capsys.readouterr()
+        assert "cancelled" in (captured.out + captured.err).lower()
 
     @pytest.mark.parametrize("lang", ["ka", "ka-m", "ru", "en"])
     def test_valid_languages_accepted(self, lang):

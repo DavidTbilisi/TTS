@@ -38,6 +38,7 @@ dependencies = [
     "pydub>=0.25.1",  # optional / recommended runtime helpers
     "tqdm>=4.65.0",
     "httpx>=0.28.1",
+    "rich>=13.0.0",
     # ffmpeg must be installed on the system (not a pip package)
 ]
 
