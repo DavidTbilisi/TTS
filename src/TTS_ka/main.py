@@ -617,7 +617,7 @@ For comprehensive help with examples: %(prog)s --help-full
         if stream and chunk_seconds == 0:
             chunk_seconds = STREAMING_CHUNK_SECONDS
             optimal["method"] = "smart"
-            print(f"🔊 Streaming enabled - forcing chunked generation ({STREAMING_CHUNK_SECONDS}s chunks)")
+            print(f"[stream] Streaming enabled - forcing chunked generation ({STREAMING_CHUNK_SECONDS}s chunks)")
 
         lang_names = {"ka": "Georgian", "ka-m": "Georgian (male)", "ru": "Russian", "en": "English"}
         lang_name = lang_names.get(args.lang, "Unknown")

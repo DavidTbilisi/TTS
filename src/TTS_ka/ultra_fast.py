@@ -308,24 +308,16 @@ async def smart_generate_long_text(
                 file=sys.stderr,
             )
             show_gui = False
-        elif show_gui and 'vlc' not in os.path.basename(detected).lower():
-            player_name = os.path.basename(detected)
-            print(
-                f"Warning: VLC not found; falling back to {player_name} (no GUI). "
-                "Install VLC for an interactive player.",
-                file=sys.stderr,
-            )
-            show_gui = False
 
         streaming_player = StreamingAudioPlayer(show_gui=show_gui)
         streaming_player.start()
         if sys.platform.startswith('win'):
             if show_gui:
                 print(
-                    "🔊 Streaming enabled - VLC GUI, one window (playlist + controls; Windows)"
+                    "🔊 Streaming enabled (Windows, GUI)"
                 )
             else:
-                print("🔊 Streaming enabled - VLC headless, one playlist session (Windows)")
+                print("🔊 Streaming enabled (Windows, headless)")
         else:
             print("🔊 Streaming playback enabled - audio will start playing immediately")
     

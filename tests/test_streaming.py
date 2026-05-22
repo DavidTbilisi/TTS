@@ -239,6 +239,115 @@ class TestStreamingAudioPlayer:
             argv = call[0][0]
             assert "--play-and-exit" in argv
 
+    @patch('subprocess.Popen')
+    def test_windows_mpv_stdin_playlist_preferred_over_vlc(self, mock_popen, temp_dir):
+        """When mpv is available on Windows, _playback_worker_windows uses stdin playlist."""
+        from TTS_ka.streaming_player import PlayerDetector
+
+        mock_stdin = MagicMock()
+        mock_proc = MagicMock()
+        mock_proc.wait.return_value = 0
+        mock_proc.stdin = mock_stdin
+        mock_popen.return_value = mock_proc
+
+        chunk1 = os.path.join(temp_dir, "a.mp3")
+        chunk2 = os.path.join(temp_dir, "b.mp3")
+        for p in (chunk1, chunk2):
+            with open(p, "wb") as f:
+                f.write(b"x")
+
+        player = StreamingAudioPlayer(show_gui=False)
+        player.chunk_queue.put(chunk1)
+        player.chunk_queue.put(chunk2)
+        player.chunk_queue.put(None)
+
+        # find(preferred="mpv") returns mpv; find() without preferred would return vlc
+        def find_side_effect(preferred=None):
+            if preferred == "mpv":
+                return "mpv"
+            return "vlc"
+
+        with patch("sys.platform", "win32"), patch.object(
+            PlayerDetector, "find", side_effect=find_side_effect
+        ):
+            player._playback_worker_windows()
+
+        # Popen must be called with --playlist=- and stdin=PIPE
+        assert mock_popen.call_count == 1
+        argv = mock_popen.call_args[0][0]
+        assert "--playlist=-" in argv
+        assert "--gapless-audio=yes" in argv
+        assert mock_popen.call_args[1].get("stdin") == -1 or \
+               mock_popen.call_args[0] and \
+               mock_popen.call_args[1].get("stdin") is not None  # subprocess.PIPE
+
+        # Both chunk paths must have been written to stdin
+        written = b"".join(
+            call_args[0][0]
+            for call_args in mock_stdin.write.call_args_list
+        )
+        assert os.path.basename(chunk1).encode() in written
+        assert os.path.basename(chunk2).encode() in written
+
+    @patch('subprocess.Popen')
+    def test_unix_mpv_uses_stdin_playlist(self, mock_popen, temp_dir):
+        """On Unix, _play_mpv uses stdin playlist (doesn't wait for all chunks)."""
+        mock_stdin = MagicMock()
+        mock_proc = MagicMock()
+        mock_proc.wait.return_value = 0
+        mock_proc.stdin = mock_stdin
+        mock_popen.return_value = mock_proc
+
+        chunk1 = os.path.join(temp_dir, "c1.mp3")
+        chunk2 = os.path.join(temp_dir, "c2.mp3")
+        for p in (chunk1, chunk2):
+            with open(p, "wb") as f:
+                f.write(b"x")
+
+        player = StreamingAudioPlayer()
+        player.chunk_queue.put(chunk1)
+        player.chunk_queue.put(chunk2)
+        player.chunk_queue.put(None)
+
+        player._play_mpv("mpv")
+
+        assert mock_popen.call_count == 1
+        argv = mock_popen.call_args[0][0]
+        assert "--playlist=-" in argv
+        written = b"".join(
+            ca[0][0] for ca in mock_stdin.write.call_args_list
+        )
+        assert os.path.basename(chunk1).encode() in written
+        assert os.path.basename(chunk2).encode() in written
+
+    @patch('subprocess.Popen')
+    def test_unix_ffplay_sequential_chunks(self, mock_popen, temp_dir):
+        """On Unix, _play_ffplay plays one chunk at a time (sequential)."""
+        mock_proc = MagicMock()
+        mock_proc.wait.return_value = 0
+        mock_popen.return_value = mock_proc
+
+        chunks = []
+        for i in range(3):
+            p = os.path.join(temp_dir, f"ff{i}.mp3")
+            with open(p, "wb") as f:
+                f.write(b"x")
+            chunks.append(p)
+
+        player = StreamingAudioPlayer()
+        for c in chunks:
+            player.chunk_queue.put(c)
+        player.chunk_queue.put(None)
+
+        player._play_ffplay("ffplay")
+
+        # One Popen per chunk
+        assert mock_popen.call_count == 3
+        for i, call in enumerate(mock_popen.call_args_list):
+            argv = call[0][0]
+            assert "-autoexit" in argv
+            assert chunks[i] in argv
+
     @patch('os.startfile', create=True)
     def test_windows_playback(self, mock_startfile, temp_dir):
         """Test Windows playback path (no VLC, falls back to os.startfile)."""

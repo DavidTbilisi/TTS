@@ -105,15 +105,19 @@ def stop_active_streaming_player() -> None:
 class PlayerDetector:
     """Finds a suitable streaming audio player on the current platform.
 
-    Preference order: vlc → mpv → ffplay → mplayer.
-    On Windows, common VLC installation paths are checked when ``vlc`` is not
-    on ``PATH``.
+    Preference order: mpv → vlc → ffplay → mplayer.
+    On Windows, common installation paths are checked for both mpv and vlc
+    when they are not on ``PATH``.
     """
 
-    _CANDIDATES: List[str] = ["vlc", "mpv", "ffplay", "mplayer"]
+    _CANDIDATES: List[str] = ["mpv", "vlc", "ffplay", "mplayer"]
     _WIN_VLC_PATHS: List[str] = [
         r"C:\Program Files\VideoLAN\VLC\vlc.exe",
         r"C:\Program Files (x86)\VideoLAN\VLC\vlc.exe",
+    ]
+    _WIN_MPV_PATHS: List[str] = [
+        r"C:\Program Files\MPV Player\mpv.exe",
+        r"C:\Program Files (x86)\MPV Player\mpv.exe",
     ]
 
     @classmethod
@@ -151,6 +155,10 @@ class PlayerDetector:
             pass
         if player == "vlc":
             for path in cls._WIN_VLC_PATHS:
+                if os.path.exists(path):
+                    return path
+        if player == "mpv":
+            for path in cls._WIN_MPV_PATHS:
                 if os.path.exists(path):
                     return path
         return None
@@ -271,6 +279,72 @@ class StreamingAudioPlayer:
         finally:
             unregister_active_streaming_player(self)
 
+    # ── mpv stdin-playlist (Windows + Unix) ───────────────────────────────────
+
+    def _play_mpv_stdin_playlist(
+        self, player: str, first_chunk: Optional[str] = None
+    ) -> None:
+        """True streaming via ``mpv --playlist=-``.
+
+        mpv reads one absolute file path per line from stdin and starts
+        playing immediately, with gapless transitions between tracks.
+        Feed each chunk as it arrives; close stdin when generation is done.
+
+        *first_chunk* is the path already popped from the queue (Windows
+        worker pops before dispatching).  Pass ``None`` when the queue
+        hasn't been pre-popped (Unix ``_play_mpv`` path).
+        """
+        if self.show_gui:
+            cmd = [
+                player,
+                "--force-window",       # show OSC even for audio: seek bar, pause, skip
+                "--keep-open=yes",      # pause at end instead of closing — user can replay
+                "--gapless-audio=yes",
+                "--playlist=-",
+            ]
+        else:
+            cmd = [
+                player,
+                "--no-video",
+                "--really-quiet",
+                "--gapless-audio=yes",
+                "--playlist=-",
+            ]
+        try:
+            self.process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as e:
+            print(f"⚠️  mpv --playlist=- failed to start: {e}")
+            return
+
+        print("[mpv] streaming (gapless) -- chunks fed as they arrive")
+        try:
+            if first_chunk is not None:
+                self.process.stdin.write(
+                    (os.path.abspath(first_chunk) + "\n").encode("utf-8", errors="replace")
+                )
+                self.process.stdin.flush()
+            while True:
+                chunk = self.chunk_queue.get()
+                if chunk is None:
+                    break
+                self.process.stdin.write(
+                    (os.path.abspath(chunk) + "\n").encode("utf-8", errors="replace")
+                )
+                self.process.stdin.flush()
+            self.process.stdin.close()
+            # GUI mode: --keep-open means mpv never exits on its own.
+            # Don't block — let the user close the window whenever they like.
+            if not self.show_gui:
+                self.process.wait()
+        except (OSError, BrokenPipeError) as e:
+            print(f"⚠️  mpv streaming error: {e}")
+            _terminate_process_quietly(self.process)
+
     def _vlc_rc_cmd(
         self,
         sock: socket.socket,
@@ -386,7 +460,7 @@ class StreamingAudioPlayer:
 
         try:
             mode = "GUI" if self.show_gui else "headless"
-            print(f"🔊 VLC ({mode}) — one window, playlist fills as chunks are ready")
+            print(f"[VLC] ({mode}) -- one window, playlist fills as chunks are ready")
             self._vlc_rc_cmd(sock, f"add {_filepath_to_mrl(first_chunk)}")
             while True:
                 chunk = self.chunk_queue.get()
@@ -419,14 +493,28 @@ class StreamingAudioPlayer:
             vlc_cmd = [player, "--play-and-exit", chunk]
         else:
             vlc_cmd = [player, "--intf", "dummy", "--play-and-exit", chunk]
-        print(f"🔊 Playing chunk {chunk_index}...")
+        print(f"[play] chunk {chunk_index}...")
         self.process = subprocess.Popen(
             vlc_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
         self.process.wait()
 
     def _playback_worker_windows(self) -> None:
-        """Windows: prefer one VLC + TCP oldrc; else per-chunk VLC or os.startfile."""
+        """Windows streaming: mpv stdin-playlist > VLC TCP oldrc > per-chunk fallback.
+
+        mpv's ``--playlist=-`` is tried first when mpv is on PATH — it is
+        simpler and more reliable than the VLC RC interface.  VLC RC is kept
+        as a fallback for machines where only VLC is installed.
+        """
+        # Prefer mpv: stdin playlist avoids VLC's TCP RC complexity entirely.
+        mpv = PlayerDetector.find(preferred="mpv")
+        if mpv and "mpv" in mpv.lower():
+            first = self.chunk_queue.get()
+            if first is None:
+                return
+            self._play_mpv_stdin_playlist(mpv, first_chunk=first)
+            return
+
         player = PlayerDetector.find()
         use_vlc = bool(player and "vlc" in player.lower())
 
@@ -446,7 +534,7 @@ class StreamingAudioPlayer:
                     self._vlc_windows_play_one_subprocess(player, chunk, chunk_index)
                 else:
                     os.startfile(os.path.abspath(chunk))
-                    print(f"🔊 Playing chunk {chunk_index}...")
+                    print(f"[play] chunk {chunk_index}...")
             except Exception as e:
                 print(f"⚠️  Could not play chunk {chunk_index}: {e}")
             nxt = self.chunk_queue.get()
@@ -513,7 +601,7 @@ class StreamingAudioPlayer:
                 else [player, "--intf", "dummy", "--play-and-exit", chunks[0]]
             )
             label = "VLC GUI" if self.show_gui else "VLC"
-            print(f"🔊 Starting {label} playback...")
+            print(f"[{label}] playback starting...")
             self.process = subprocess.Popen(
                 first_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
@@ -526,7 +614,7 @@ class StreamingAudioPlayer:
                         if self.show_gui
                         else [player, "--intf", "dummy", "--play-and-exit", playlist]
                     )
-                    print(f"🎵 {label} playlist with {len(chunks)} chunks")
+                    print(f"[{label}] playlist with {len(chunks)} chunks")
                     self.process = subprocess.Popen(
                         full_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                     )
@@ -534,39 +622,28 @@ class StreamingAudioPlayer:
             print(f"⚠️  VLC playback error: {e}")
 
     def _play_mpv(self, player: str) -> None:
-        chunks: List[str] = []
-        while True:
-            chunk = self.chunk_queue.get()
-            if chunk is None:
-                break
-            chunks.append(chunk)
-        if chunks:
-            try:
-                print(f"🔊 Starting mpv with {len(chunks)} chunks")
-                self.process = subprocess.Popen(
-                    [player, "--no-video", "--really-quiet"] + chunks,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            except Exception as e:
-                print(f"⚠️  mpv playback error: {e}")
+        """mpv streaming via stdin playlist — starts on first chunk, gapless."""
+        self._play_mpv_stdin_playlist(player)
 
     def _play_ffplay(self, player: str) -> None:
-        chunks: List[str] = []
+        """ffplay: one subprocess per chunk (ffplay doesn't support stdin playlists)."""
+        chunk_idx = 0
         while True:
             chunk = self.chunk_queue.get()
             if chunk is None:
                 break
-            chunks.append(chunk)
-        if chunks:
+            chunk_idx += 1
+            if chunk_idx == 1:
+                print("[ffplay] streaming...")
             try:
                 self.process = subprocess.Popen(
-                    [player, "-nodisp", "-autoexit", "-loglevel", "quiet"] + chunks,
+                    [player, "-nodisp", "-autoexit", "-loglevel", "quiet", chunk],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
+                self.process.wait()
             except OSError as e:
-                print(f"⚠️  Could not start ffplay: {e}")
+                print(f"⚠️  ffplay error on chunk {chunk_idx}: {e}")
 
     def _play_mplayer(self, player: str) -> None:
         chunks: List[str] = []
@@ -577,7 +654,7 @@ class StreamingAudioPlayer:
             chunks.append(chunk)
         if chunks:
             try:
-                print(f"🔊 Starting mplayer with {len(chunks)} chunks")
+                print(f"[mplayer] {len(chunks)} chunks")
                 self.process = subprocess.Popen(
                     [player, "-really-quiet", "-noconsolecontrols"] + chunks,
                     stdout=subprocess.DEVNULL,
