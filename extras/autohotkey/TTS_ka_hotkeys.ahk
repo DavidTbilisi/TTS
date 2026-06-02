@@ -34,11 +34,11 @@ global g_LastPID := 0
 ; -----------------------------------------------------------------------------
 ; Tray menu (right-click green H in notification area)
 ; -----------------------------------------------------------------------------
-A_IconTip := "TTS_ka hotkeys  ·  Alt+E/R/X · Alt+Q stop"
+A_IconTip := "TTS_ka hotkeys  ·  Alt+E/R/X  ·  Ctrl+Shift+E/R/X (stream)  ·  Alt+Q stop"
 A_TrayMenu.Add("Reload this script", (*) => Reload())
 A_TrayMenu.Add()
 A_TrayMenu.Add("Exit", (*) => ExitApp())
-TrayTip("TTS_ka", "Ready  ·  Alt+E R X  ·  Alt+Shift+E R X (stream)  ·  Alt+Q stop", 4)
+TrayTip("TTS_ka", "Ready  ·  Alt+E R X  ·  Ctrl+Shift+E R X (stream)  ·  Alt+Q stop", 4)
 
 ; -----------------------------------------------------------------------------
 ; Core — you rarely need to change below here
@@ -121,9 +121,16 @@ AppsKey:: ShowReadLanguageMenu()     ; Menu key (next to Right Ctrl): copy selec
 !x:: RunTTS("ka")      ; Alt+X         — Georgian (female)
 !+x:: RunTTS("ka-m")   ; Alt+Shift+X   — Georgian (male)
 
-; Streaming variants — plays each chunk as it synthesizes (needs VLC/mpv/ffplay)
+; Streaming variants — plays each chunk as it synthesizes (needs mpv/VLC/ffplay)
+; Audio starts within ~1 s of pressing the hotkey.  The cmd window closes once
+; generation is done; that is normal — mpv continues playing in the background.
 !+e:: RunTTS_Stream("en")   ; Alt+Shift+E — English, streaming
 !+r:: RunTTS_Stream("ru")   ; Alt+Shift+R — Russian, streaming
+
+; Ctrl+Shift variants — same actions, alternative modifier (some find it easier)
+^+e:: RunTTS_Stream("en")   ; Ctrl+Shift+E — English, streaming
+^+r:: RunTTS_Stream("ru")   ; Ctrl+Shift+R — Russian, streaming
+^+x:: RunTTS_Stream("ka")   ; Ctrl+Shift+X — Georgian (female), streaming
 
 ; =============================================================================
 ; STOP / KILL — abort the current synthesis
