@@ -369,13 +369,19 @@ async def smart_generate_long_text(
         else:
             fast_merge_audio_files(parts, output_path)
 
-        cleanup_parts = [p for p in parts if p != output_path]
-        ultra_fast_cleanup_parts(cleanup_parts, keep_parts)
-
         if streaming_player:
             _cprint("  [dim]⏸  Waiting for playback to finish…[/dim]")
             streaming_player.wait_for_completion()
             await asyncio.sleep(0.2)
+
+        # Temp-file cleanup.
+        # Non-streaming / headless streaming: merge is done and mpv has exited — safe to delete.
+        # GUI streaming (show_gui=True): mpv queues chunk paths lazily; it opens each file just
+        # before playing, so deleting files that are queued-but-not-yet-opened breaks playback.
+        # Skip cleanup now — orphaned .part_*.mp3 files are swept at the next-run startup.
+        if not (streaming_player and getattr(streaming_player, 'show_gui', False)):
+            cleanup_parts = [p for p in parts if p != output_path]
+            ultra_fast_cleanup_parts(cleanup_parts, keep_parts)
 
         elapsed = time.perf_counter() - start
         _cprint(

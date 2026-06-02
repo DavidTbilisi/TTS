@@ -416,13 +416,14 @@ class TestStreamingAudioPlayer:
         assert result is not None
 
     def test_locate_windows_subprocess_oserror(self):
-        """When 'where' raises OSError, _locate_windows still works (returns None or VLC path)."""
+        """When 'where' raises OSError, _locate_windows returns None when no path exists."""
         from TTS_ka.streaming_player import PlayerDetector
 
         with patch('subprocess.run', side_effect=OSError("not found")), \
-             patch('sys.platform', 'win32'):
+             patch('sys.platform', 'win32'), \
+             patch('os.path.exists', return_value=False):  # mpv not at any standard path
             result = PlayerDetector._locate_windows("mpv")
-        assert result is None  # non-vlc player, no fallback path
+        assert result is None  # 'where' failed and no installation path matched
 
     def test_locate_windows_vlc_path_fallback(self):
         """When 'where' fails but a VLC installation path exists, it is returned."""

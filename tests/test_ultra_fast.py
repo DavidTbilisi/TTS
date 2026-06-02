@@ -261,8 +261,8 @@ class TestBigTextParallelVsSequentialTiming:
 class TestStreamingFallback:
     """BUG-3: --stream falls back gracefully when VLC (or any player) is missing."""
 
-    async def test_stream_falls_back_to_mpv_when_vlc_missing(self, tmp_path, capsys):
-        """When VLC isn't found but mpv is, streaming uses mpv with show_gui=False."""
+    async def test_stream_with_mpv_player(self, tmp_path, capsys):
+        """When mpv is the detected player, streaming preserves show_gui as passed."""
         output_path = str(tmp_path / "out.mp3")
         text = "word " * 300
         captured_show_gui = {}
@@ -285,10 +285,11 @@ class TestStreamingFallback:
                                            output_path=output_path,
                                            enable_streaming=True, show_gui=True)
 
-        assert captured_show_gui['value'] is False
+        # mpv is the primary player — show_gui is passed through unchanged
+        # (mpv supports GUI playback via --force-window)
+        assert captured_show_gui['value'] is True
         err = capsys.readouterr().err
-        assert "VLC not found" in err
-        assert "mpv" in err
+        assert "Streaming enabled" in err
 
     async def test_stream_no_player_still_generates_file(self, tmp_path, capsys):
         """No audio player at all -> warn, but generation proceeds."""
@@ -366,11 +367,11 @@ class TestPlayerDetectorPreferred:
         assert first_call_arg == "mpv"
 
     def test_no_preferred_uses_default_order(self):
-        """Without preferred, the first candidate tried is VLC."""
+        """Without preferred, the first candidate tried is mpv (highest priority player)."""
         from TTS_ka.streaming_player import PlayerDetector
         with patch.object(PlayerDetector, '_locate', return_value=None) as mloc:
             PlayerDetector.find()
-        assert mloc.call_args_list[0].args[0] == "vlc"
+        assert mloc.call_args_list[0].args[0] == "mpv"
 
     def test_preferred_returned_when_found(self):
         """When the preferred player is available, return its path."""
