@@ -26,6 +26,7 @@ HTTP_MAX_CONNECTIONS = 100
 
 # Audio generation
 STREAMING_CHUNK_SECONDS = 15    # Default chunk size when streaming is enabled
+STREAMING_FIRST_CHUNK_SECONDS = 6  # Smaller first chunk when streaming → lower time-to-first-audio
 WPM = 160                       # Estimated words-per-minute for chunk sizing
 MAX_PARALLEL_WORKERS = 32       # Upper cap on concurrent generation workers
 

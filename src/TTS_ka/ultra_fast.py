@@ -17,7 +17,11 @@ from .fast_audio import fast_generate_audio, fast_merge_audio_files
 from .not_reading import replace_not_readable
 from .rich_progress import console, create_progress_display, HAS_RICH
 from .streaming_player import StreamingAudioPlayer, stop_active_streaming_player
-from .constants import MAX_PARALLEL_WORKERS, STREAMING_CHUNK_SECONDS
+from .constants import (
+    MAX_PARALLEL_WORKERS,
+    STREAMING_CHUNK_SECONDS,
+    STREAMING_FIRST_CHUNK_SECONDS,
+)
 
 # Optimal worker count
 OPTIMAL_WORKERS = min(MAX_PARALLEL_WORKERS, (os.cpu_count() or 1) * 4)
@@ -280,7 +284,12 @@ async def smart_generate_long_text(
     if chunk_seconds == 0:
         chunk_seconds = optimal_chunk_seconds
     
-    chunks = split_text_into_chunks(text, approx_seconds=chunk_seconds)
+    # When streaming, carve a short lead-in first chunk so audio starts sooner
+    # (lower time-to-first-audio); later chunks keep the normal size.
+    first_chunk_seconds = STREAMING_FIRST_CHUNK_SECONDS if enable_streaming else 0
+    chunks = split_text_into_chunks(
+        text, approx_seconds=chunk_seconds, first_chunk_seconds=first_chunk_seconds
+    )
     if not chunks:
         raise ValueError("No text chunks to process — input text may be empty or whitespace-only")
 

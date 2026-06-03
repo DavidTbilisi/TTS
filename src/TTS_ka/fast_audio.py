@@ -28,11 +28,15 @@ import sys
 # If set, skip unofficial Bing HTTP TTS (often 401/403) and use edge-tts only.
 _SKIP_HTTP_ENV = "TTS_KA_SKIP_HTTP"
 import asyncio
+import json
 import shutil
 import subprocess
-from typing import List, Optional, Protocol, runtime_checkable
+import tempfile
+import time
+from typing import TYPE_CHECKING, List, Optional, Protocol, runtime_checkable
 
-import httpx
+if TYPE_CHECKING:  # httpx is imported lazily at runtime (only for the HTTP path)
+    import httpx
 
 try:
     import uvloop
@@ -94,10 +98,11 @@ class AudioMerger(Protocol):
 _http_client: Optional[httpx.AsyncClient] = None
 
 
-async def get_http_client() -> httpx.AsyncClient:
+async def get_http_client() -> "httpx.AsyncClient":
     """Return the shared async HTTP client, creating it on first call."""
     global _http_client
     if _http_client is None:
+        import httpx
         limits = httpx.Limits(
             max_keepalive_connections=HTTP_MAX_KEEPALIVE,
             max_connections=HTTP_MAX_CONNECTIONS,
@@ -142,6 +147,7 @@ class HttpAudioGenerator:
             f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{xml_lang}'>"
             f"<voice name='{resolved_voice}'>{inner}</voice></speak>"
         )
+        import httpx
         try:
             client = await get_http_client()
             async with client.stream(
@@ -162,6 +168,79 @@ class HttpAudioGenerator:
 def _env_truthy(name: str) -> bool:
     v = os.environ.get(name, "").strip().lower()
     return v in ("1", "true", "yes", "on")
+
+
+# ── HTTP health circuit breaker ───────────────────────────────────────────────
+# The unofficial Bing HTTP endpoint almost always returns 401/403 today. Probing
+# it on every chunk — and on every fresh ``python -m TTS_ka`` process (each hotkey
+# press is a new process) — wastes ~0.7s each time, which directly inflates
+# streaming's time-to-first-audio. We remember a recent "down" verdict (in memory
+# for this process, on disk for later runs) and skip the doomed request until a
+# TTL elapses, re-probing afterward so a recovered endpoint is picked up again.
+
+_HTTP_STATE_ENV = "TTS_KA_HTTP_STATE"   # override marker path (used by tests)
+_HTTP_RECHECK_TTL = 6 * 3600.0          # seconds before re-probing a down endpoint
+_http_down_memo: Optional[bool] = None  # process cache: None=unknown/not-probed
+
+
+def _http_state_path() -> str:
+    """Path to the tiny persisted HTTP-health marker."""
+    override = os.environ.get(_HTTP_STATE_ENV)
+    if override:
+        return override
+    base = (
+        os.environ.get("LOCALAPPDATA")
+        or os.environ.get("XDG_CACHE_HOME")
+        or tempfile.gettempdir()
+    )
+    return os.path.join(base, "tts_ka_http_health.json")
+
+
+def _http_should_skip(now: Optional[float] = None) -> bool:
+    """Return True if a recent probe found the HTTP endpoint down."""
+    global _http_down_memo
+    if _http_down_memo is not None:
+        return _http_down_memo
+    if now is None:
+        now = time.time()
+    try:
+        with open(_http_state_path(), "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if bool(data.get("down")) and (now - float(data.get("ts", 0.0))) < _HTTP_RECHECK_TTL:
+            _http_down_memo = True
+            return True
+    except (OSError, ValueError, TypeError):
+        pass
+    return False
+
+
+def _http_record(ok: bool, now: Optional[float] = None) -> None:
+    """Persist the probe result: clear the marker on success, write it on failure."""
+    global _http_down_memo
+    _http_down_memo = not ok
+    path = _http_state_path()
+    if ok:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return
+    if now is None:
+        now = time.time()
+    try:
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"down": True, "ts": now}, fh)
+    except OSError:
+        pass
+
+
+def _reset_http_health() -> None:
+    """Clear the in-process memo (test hook; does not touch disk)."""
+    global _http_down_memo
+    _http_down_memo = None
 
 
 def _edge_tts_transient(err: BaseException) -> bool:
@@ -333,12 +412,17 @@ async def fast_generate_audio(text: str, language: str, output_path: str,
     if HAS_UVLOOP and sys.platform != "win32":
         asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
-    if not _env_truthy(_SKIP_HTTP_ENV) and await HttpAudioGenerator().generate(
-        text, language, output_path, quiet=True, voice=voice, prosody=prosody
-    ):
-        if not quiet:
-            print(f"⚡ Generated: {os.path.abspath(output_path)}")
-        return True
+    # Skip the HTTP probe entirely when disabled by env or when the circuit
+    # breaker recently saw it fail (saves ~0.7s of doomed request per chunk).
+    if not _env_truthy(_SKIP_HTTP_ENV) and not _http_should_skip():
+        http_ok = await HttpAudioGenerator().generate(
+            text, language, output_path, quiet=True, voice=voice, prosody=prosody
+        )
+        _http_record(http_ok)
+        if http_ok:
+            if not quiet:
+                print(f"⚡ Generated: {os.path.abspath(output_path)}")
+            return True
 
     if _env_truthy("TTS_KA_VERBOSE") and not quiet:
         print("Notice: Bing HTTP TTS unavailable; using edge-tts.", flush=True)
