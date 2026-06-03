@@ -75,6 +75,48 @@ class TestSplitTextIntoChunks:
         assert all(c.strip() for c in chunks)
 
 
+class TestFastFirstChunk:
+    """first_chunk_seconds carves a smaller lead-in chunk for faster start."""
+
+    def test_first_chunk_is_smaller(self):
+        text = "word " * 500
+        chunks = split_text_into_chunks(
+            text, approx_seconds=30, first_chunk_seconds=6
+        )
+        # 6s ≈ 16 words vs 30s ≈ 80 words → first chunk noticeably shorter
+        assert len(chunks[0].split()) < len(chunks[1].split())
+        assert len(chunks[0].split()) == max(8, int(160 / 60 * 6))
+
+    def test_all_words_preserved_with_fast_first(self):
+        text = "The quick brown fox jumps over the lazy dog again and again " * 10
+        chunks = split_text_into_chunks(
+            text, approx_seconds=30, first_chunk_seconds=6
+        )
+        assert " ".join(chunks).split() == text.split()
+
+    def test_no_effect_when_zero(self):
+        text = "word " * 500
+        assert split_text_into_chunks(text, approx_seconds=30) == \
+            split_text_into_chunks(text, approx_seconds=30, first_chunk_seconds=0)
+
+    def test_short_text_not_split_by_first_chunk(self):
+        # If the lead-in would be the whole text (nothing after), don't carve.
+        text = "just a few words here"
+        chunks = split_text_into_chunks(
+            text, approx_seconds=30, first_chunk_seconds=6
+        )
+        assert chunks == [text]
+
+    def test_first_chunk_capped_below_normal(self):
+        # first_chunk_seconds >= approx_seconds must not enlarge the first chunk.
+        text = "word " * 500
+        chunks = split_text_into_chunks(
+            text, approx_seconds=10, first_chunk_seconds=30
+        )
+        # No carve happens (30 not smaller than 10); behaves like plain split.
+        assert chunks == split_text_into_chunks(text, approx_seconds=10)
+
+
 class TestShouldChunkText:
     def test_chunk_seconds_zero_returns_false(self):
         assert should_chunk_text("any text", chunk_seconds=0) is False

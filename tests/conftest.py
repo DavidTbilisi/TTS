@@ -52,6 +52,23 @@ def _silence_windows_real_media_players():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _isolate_http_health(tmp_path, monkeypatch):
+    """Keep the HTTP circuit breaker from reading/writing real on-disk state.
+
+    Points the marker at a per-test path and resets the in-process memo so test
+    order never matters and a real "down" verdict cannot leak into mocked tests.
+    """
+    monkeypatch.setenv("TTS_KA_HTTP_STATE", str(tmp_path / "http_health.json"))
+    try:
+        from TTS_ka.fast_audio import _reset_http_health
+        _reset_http_health()
+        yield
+        _reset_http_health()
+    except Exception:
+        yield
+
+
 @pytest.fixture
 def temp_dir():
     """Create a temporary directory for tests."""
