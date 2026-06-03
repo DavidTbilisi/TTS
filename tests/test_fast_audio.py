@@ -277,7 +277,7 @@ class TestFastPlayAudio:
         with open(f, "wb") as fp:
             fp.write(b"x")
         with patch('sys.platform', 'win32'), patch('os.startfile', create=True) as m:
-            play_audio(f)
+            assert play_audio(f) is True
         m.assert_called_once()
 
     def test_mac(self, temp_dir):
@@ -298,14 +298,22 @@ class TestFastPlayAudio:
         with patch('sys.platform', 'linux'), \
              patch('TTS_ka.fast_audio.shutil.which', return_value='/usr/bin/mpv'), \
              patch('TTS_ka.fast_audio.subprocess.Popen'):
-            play_audio(f)  # must not raise
+            assert play_audio(f) is True  # must not raise
 
     def test_oserror_silenced(self, temp_dir):
         f = os.path.join(temp_dir, "t.mp3")
         with open(f, "wb") as fp:
             fp.write(b"x")
         with patch('sys.platform', 'win32'), patch('os.startfile', side_effect=OSError, create=True):
-            play_audio(f)  # must not raise
+            assert play_audio(f) is False  # must not raise; reports failure
+
+    def test_linux_no_player_returns_false(self, temp_dir):
+        f = os.path.join(temp_dir, "t.mp3")
+        with open(f, "wb") as fp:
+            fp.write(b"x")
+        with patch('sys.platform', 'linux'), \
+             patch('TTS_ka.fast_audio.shutil.which', return_value=None):
+            assert play_audio(f) is False
 
 
 # ---------------------------------------------------------------------------

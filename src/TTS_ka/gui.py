@@ -302,12 +302,17 @@ class TTSSpeakApp:
         outer.pack(fill=tk.BOTH, expand=True)
         nb = ttk.Notebook(outer)
         nb.pack(fill=tk.BOTH, expand=True)
+        self._nb = nb
 
+        tab_setup = ttk.Frame(nb, padding=8)
         tab_speak = ttk.Frame(nb, padding=8)
         tab_cfg = ttk.Frame(nb, padding=8)
+        self._tab_speak = tab_speak
+        nb.add(tab_setup, text="Setup")
         nb.add(tab_speak, text="Speak")
         nb.add(tab_cfg, text="Config")
 
+        self._build_setup_tab(tab_setup)
         self._build_speak_tab(tab_speak)
         self._build_config_tab(tab_cfg)
 
@@ -327,6 +332,140 @@ class TTSSpeakApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_quit)
 
         self._worker: threading.Thread | None = None
+
+    def _build_setup_tab(self, frm: Any) -> None:
+        """Guided first screen: verify setup, pick + preview a voice, then speak."""
+        import tkinter as tk
+        from tkinter import ttk, scrolledtext
+
+        from . import voices as _voices
+
+        frm.columnconfigure(0, weight=1)
+
+        ttk.Label(frm, text="Welcome to TTS_ka").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(
+            frm,
+            text="Three quick steps to get going.",
+            wraplength=520,
+            justify=tk.LEFT,
+        ).grid(row=1, column=0, sticky=tk.W, pady=(2, 10))
+
+        # --- Step 1: verify setup -------------------------------------------
+        ttk.Label(frm, text="1.  Verify your setup").grid(row=2, column=0, sticky=tk.W)
+        self._setup_report = scrolledtext.ScrolledText(frm, height=9, wrap=tk.WORD)
+        self._setup_report.grid(row=3, column=0, sticky=(tk.E, tk.W), pady=(4, 0))
+        self._setup_report.insert("1.0", "Checking dependencies…")
+        self._setup_report.configure(state=tk.DISABLED)
+        ttk.Button(frm, text="Re-check", command=self._on_setup_recheck).grid(
+            row=4, column=0, sticky=tk.W, pady=(4, 0)
+        )
+
+        ttk.Separator(frm, orient=tk.HORIZONTAL).grid(
+            row=5, column=0, sticky=(tk.E, tk.W), pady=12
+        )
+
+        # --- Step 2: pick + preview a voice ---------------------------------
+        ttk.Label(frm, text="2.  Pick a voice and preview it").grid(row=6, column=0, sticky=tk.W)
+        self._setup_voices = _voices.all_voices()
+        names = [f"{v.display_name} — {v.locale} ({v.gender})" for v in self._setup_voices]
+        row7 = ttk.Frame(frm)
+        row7.grid(row=7, column=0, sticky=tk.W, pady=(4, 0))
+        self.setup_voice_var = tk.StringVar(value=names[0] if names else "")
+        self._setup_voice_combo = ttk.Combobox(
+            row7, values=names, textvariable=self.setup_voice_var,
+            state="readonly", width=40,
+        )
+        self._setup_voice_combo.pack(side=tk.LEFT)
+        self._setup_preview_btn = ttk.Button(
+            row7, text="Preview voice", command=self._on_setup_preview
+        )
+        self._setup_preview_btn.pack(side=tk.LEFT, padx=(8, 0))
+        self.setup_status = tk.StringVar(value="")
+        ttk.Label(frm, textvariable=self.setup_status, wraplength=520, justify=tk.LEFT).grid(
+            row=8, column=0, sticky=tk.W, pady=(4, 0)
+        )
+
+        ttk.Separator(frm, orient=tk.HORIZONTAL).grid(
+            row=9, column=0, sticky=(tk.E, tk.W), pady=12
+        )
+
+        # --- Step 3: start speaking -----------------------------------------
+        ttk.Label(frm, text="3.  Start speaking").grid(row=10, column=0, sticky=tk.W)
+        ttk.Button(
+            frm, text="Go to Speak tab →",
+            command=lambda: self._nb.select(self._tab_speak),
+        ).grid(row=11, column=0, sticky=tk.W, pady=(4, 0))
+
+        # Kick off the dependency check in the background so the UI stays responsive.
+        self._run_setup_check_async()
+
+    def _run_setup_check_async(self) -> None:
+        from .deps import collect_dep_rows, format_dep_report
+
+        def work() -> None:
+            try:
+                report = format_dep_report(collect_dep_rows())
+            except Exception as exc:  # noqa: BLE001
+                report = f"Could not run the dependency check: {exc}"
+
+            def show() -> None:
+                self._setup_report.configure(state=self._tk.NORMAL)
+                self._setup_report.delete("1.0", "end")
+                self._setup_report.insert("1.0", report)
+                self._setup_report.configure(state=self._tk.DISABLED)
+
+            self.root.after(0, show)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_setup_recheck(self) -> None:
+        self._setup_report.configure(state=self._tk.NORMAL)
+        self._setup_report.delete("1.0", "end")
+        self._setup_report.insert("1.0", "Checking dependencies…")
+        self._setup_report.configure(state=self._tk.DISABLED)
+        self._run_setup_check_async()
+
+    def _on_setup_preview(self) -> None:
+        from . import voices as _voices
+
+        names = [f"{v.display_name} — {v.locale} ({v.gender})" for v in self._setup_voices]
+        sel = self.setup_voice_var.get()
+        if sel not in names:
+            self.setup_status.set("Pick a voice first.")
+            return
+        voice = self._setup_voices[names.index(sel)]
+        phrase = _voices.PREVIEW_PHRASE.get(voice.lang, _voices.PREVIEW_PHRASE["en"])
+
+        self._setup_preview_btn.configure(state=self._tk.DISABLED)
+        self.setup_status.set(f"Generating preview for {voice.display_name}…")
+
+        def work() -> None:
+            import tempfile
+
+            err: str | None = None
+            tmp_path = ""
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+                    tmp_path = tmp.name
+                asyncio.run(
+                    fast_generate_audio(phrase, voice.lang, tmp_path, voice=voice.id)
+                )
+                played = play_audio(tmp_path)
+                if not played:
+                    err = f"Saved {tmp_path}, but no player opened it."
+            except BaseException as exc:  # noqa: BLE001
+                err = str(exc)
+
+            def done() -> None:
+                self._setup_preview_btn.configure(state=self._tk.NORMAL)
+                if err:
+                    self.setup_status.set(err[:300])
+                else:
+                    self.setup_status.set(f"Played a sample of {voice.display_name}.")
+
+            self.root.after(0, done)
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _build_speak_tab(self, frm: Any) -> None:
         import tkinter as tk

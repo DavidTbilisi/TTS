@@ -318,7 +318,9 @@ async def smart_generate_long_text(
 
         if detected is None:
             print(
-                f"Warning: no audio player found; audio will be saved to {output_path} but not streamed.",
+                "--stream needs a media player (vlc/mpv/ffplay); none found — "
+                f"generating without live playback. Audio will be saved to {output_path}. "
+                "Install one (run `tts-ka --doctor` for the command) to enable --stream.",
                 file=sys.stderr,
             )
             show_gui = False

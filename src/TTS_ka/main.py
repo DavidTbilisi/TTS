@@ -23,6 +23,37 @@ def _cprint(msg: str) -> None:
         print(_re.sub(r"\[/?[^\]]*\]", "", msg), file=sys.stderr)
 
 
+def _warn_no_player(file_path: str) -> None:
+    """Tell the user where the audio is when no player opened it automatically."""
+    abs_path = os.path.abspath(file_path)
+    print(
+        f"Saved {abs_path}. No audio player opened it automatically — open it manually.",
+        file=sys.stderr,
+    )
+    if not sys.platform.startswith("win") and sys.platform != "darwin":
+        print("Install mpv or vlc to enable auto-play.", file=sys.stderr)
+
+
+def _print_welcome() -> None:
+    """Friendly no-args banner: the common example plus where to go next."""
+    if is_first_run():
+        print("Looks like your first run — verify your setup with: tts-ka --doctor")
+        print()
+        mark_first_run_done()
+    print("TTS_ka — text to speech for Georgian, Russian, and English.")
+    print()
+    print("Languages:  en (English)   ru (Russian)   ka / ka-m (Georgian female/male)")
+    print()
+    print("Try:")
+    print('  tts-ka "Hello world" -l en      Speak some text')
+    print("  tts-ka cb                       Speak whatever you copied (clipboard)")
+    print("  tts-ka file.txt -l ru           Speak a file")
+    print()
+    print("Next:")
+    print("  tts-ka --doctor                 Verify ffmpeg / players / Python deps")
+    print("  tts-ka --help-full              All options and examples")
+
+
 from .fast_audio import (
     fast_generate_audio,
     play_audio,
@@ -37,7 +68,9 @@ from .user_config import (
     apply_env_from_config,
     argparse_defaults_from_config,
     default_config_path,
+    is_first_run,
     load_user_config,
+    mark_first_run_done,
     resolved_playback_flags,
 )
 from . import voices as _voices
@@ -295,8 +328,10 @@ For comprehensive help with examples: %(prog)s --help-full
     )
     parser.add_argument(
         "--check-deps",
+        "--doctor",
         action="store_true",
-        help="Print ffmpeg, streaming player, and Python dependency status; exit 1 if critical deps missing.",
+        dest="check_deps",
+        help="Diagnose setup: ffmpeg, streaming player, and Python deps with fix commands; exit 1 if critical deps missing. (--doctor is an alias)",
     )
 
     parser.add_argument(
@@ -525,7 +560,8 @@ For comprehensive help with examples: %(prog)s --help-full
             preview_path = tmp.name
         try:
             asyncio.run(_run_preview(phrase, voice.id, preview_path))
-            play_audio(preview_path)
+            if not play_audio(preview_path):
+                _warn_no_player(preview_path)
         finally:
             try:
                 os.remove(preview_path)
@@ -589,9 +625,7 @@ For comprehensive help with examples: %(prog)s --help-full
 
     if not args.text or not args.text.strip():
         if not args.json:
-            show_simple_help()
-            print("Error: No text provided")
-            print("Try: python -m TTS_ka 'your text' --lang en")
+            _print_welcome()
         else:
             emit({"event": "error", "message": "no text provided"})
         return
@@ -708,7 +742,8 @@ For comprehensive help with examples: %(prog)s --help-full
                     raise SystemExit(2)
 
             if not no_play and not stream:
-                play_audio(output_path)
+                if not play_audio(output_path):
+                    _warn_no_player(output_path)
             emit({
                 "event": "done",
                 "output": output_path,

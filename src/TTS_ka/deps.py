@@ -15,6 +15,29 @@ class DepRow:
     name: str
     ok: bool
     detail: str
+    fix: str = ""
+
+
+def _platform_fix(win: str, mac: str, linux: str) -> str:
+    """Return the install command for the current platform."""
+    if sys.platform.startswith("win"):
+        return win
+    if sys.platform == "darwin":
+        return mac
+    return linux
+
+
+_FFMPEG_FIX = _platform_fix(
+    win="winget install Gyan.FFmpeg  (or: choco install ffmpeg / scoop install ffmpeg)",
+    mac="brew install ffmpeg",
+    linux="sudo apt install ffmpeg  (or your distro's package manager)",
+)
+
+_PLAYER_FIX = _platform_fix(
+    win="winget install mpv  (or install VLC)",
+    mac="brew install mpv",
+    linux="sudo apt install mpv  (or vlc)",
+)
 
 
 def _check_module(spec: str, import_name: str) -> DepRow:
@@ -34,7 +57,8 @@ def check_ffmpeg() -> DepRow:
         return DepRow(
             "ffmpeg",
             False,
-            "not on PATH - install ffmpeg (required for merging chunks / pydub MP3)",
+            "not on PATH - required for merging chunks / pydub MP3",
+            fix=_FFMPEG_FIX,
         )
     try:
         r = subprocess.run(
@@ -61,6 +85,7 @@ def check_streaming_player() -> DepRow:
         "streaming player",
         False,
         "none of vlc, mpv, ffplay, mplayer found - optional unless you use --stream",
+        fix=_PLAYER_FIX,
     )
 
 
@@ -69,7 +94,8 @@ def check_soundfile() -> DepRow:
         return DepRow(
             "soundfile",
             False,
-            "optional pip install soundfile - faster merges when available",
+            "optional - faster merges when available",
+            fix="pip install soundfile",
         )
     return _check_module("soundfile", "soundfile")
 
@@ -81,7 +107,8 @@ def check_uvloop() -> DepRow:
         return DepRow(
             "uvloop",
             False,
-            "optional - pip install uvloop for faster asyncio on Linux/macOS",
+            "optional - faster asyncio on Linux/macOS",
+            fix="pip install uvloop",
         )
     return _check_module("uvloop", "uvloop")
 
@@ -113,9 +140,15 @@ def format_dep_report(rows: Optional[List[DepRow]] = None) -> str:
         else:
             flag = "!!"
         lines.append(f"  [{flag}]  {r.name.ljust(w)}  {r.detail}")
+        if not r.ok and r.fix:
+            lines.append(f"  {' ' * (len(flag) + 4)}{' ' * w}  fix: {r.fix}")
     lines.append("")
     lines.append("ffmpeg: required for long/chunked output and reliable MP3 handling.")
     lines.append("streaming player: needed only for --stream (live playback while generating).")
+    critical = ("edge-tts", "pydub", "ffmpeg")
+    if all(r.ok for r in rows if r.name in critical):
+        lines.append("")
+        lines.append('All set — try: tts-ka "Hello world" -l en')
     return "\n".join(lines)
 
 

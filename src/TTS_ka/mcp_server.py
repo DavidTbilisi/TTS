@@ -39,6 +39,32 @@ MAX_SESSIONS = 8
 MAX_CONCURRENT_PER_SESSION = 4
 
 
+def _audio_duration_seconds(path: str) -> Optional[float]:
+    """Best-effort audio duration in seconds (via ffprobe through pydub).
+
+    Used to make ``speak(blocking=True)`` wait for playback to finish.
+    Returns ``None`` when the duration can't be determined.
+    """
+    try:
+        from pydub.utils import mediainfo
+        info = mediainfo(path)
+        raw = info.get("duration")
+        return float(raw) if raw else None
+    except Exception:  # noqa: BLE001 - any failure → unknown duration
+        return None
+
+
+def _describe_settings(lang: str, voice: Optional[str],
+                       prosody: Optional[ProsodyOpts]) -> str:
+    """Short human-readable echo of the resolved synthesis settings."""
+    parts = [f"lang={lang}", f"voice={voice or 'default'}"]
+    if prosody is not None:
+        parts.append(f"rate={prosody.rate}")
+        parts.append(f"pitch={prosody.pitch}")
+        parts.append(f"volume={prosody.volume}")
+    return ", ".join(parts)
+
+
 class _LiveSession:
     """Long-lived sentence buffer + streaming player for one MCP stream."""
 
@@ -53,6 +79,8 @@ class _LiveSession:
         self.tmp_dir = tempfile.mkdtemp(prefix="ttska-mcp-")
         self._idx = 0      # output-file counter (incremented inside _speak)
         self._queued = 0   # sentences ever scheduled — visible in status
+        self._failed = 0   # synth tasks that raised — visible in status
+        self._last_error: Optional[str] = None
         self._sem = asyncio.Semaphore(MAX_CONCURRENT_PER_SESSION)
         self._tasks: List[asyncio.Task] = []
         self._closed = False
@@ -83,8 +111,10 @@ class _LiveSession:
             "closed": self._closed,
             "total_sentences": self._queued,
             "synths_pending": self.synths_pending(),
+            "synths_failed": self._failed,
+            "last_error": self._last_error,
             "buffer_chars": len(preview),
-            "buffer_preview": preview[:80],
+            "buffer_preview": preview[:400],
         }
 
     async def _speak(self, sentence: str) -> None:
@@ -100,6 +130,8 @@ class _LiveSession:
                                           voice=self.voice, prosody=self.prosody)
                 self.player.add_chunk(path, chunk_index=idx)
             except Exception as exc:  # noqa: BLE001
+                self._failed += 1
+                self._last_error = f"{type(exc).__name__}: {exc}"
                 print(f"⚠️  synth failed (idx={idx}): {exc}", file=sys.stderr)
 
     async def close(self) -> int:
@@ -206,7 +238,12 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
                     pitch: Optional[str] = None,
                     volume: Optional[str] = None,
                     blocking: bool = False) -> str:
-        """Speak *text* immediately. Returns when synth starts (or finishes if blocking).
+        """Speak *text* immediately.
+
+        With ``blocking=False`` (default) the call returns as soon as
+        playback is launched. With ``blocking=True`` it waits for the audio's
+        full duration before returning, so an agent can sequence speech
+        without overlapping. The return string echoes the resolved settings.
 
         rate / pitch / volume are signed percentages or Hz (rate '+30%',
         pitch '+5Hz' or '-10%', volume '-25%'). Unspecified values fall
@@ -216,6 +253,7 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
         if not cleaned.strip():
             return "skipped: empty"
         prosody = _resolve_prosody(rate, pitch, volume, default_prosody)
+        echo = _describe_settings(lang, voice, prosody)
         tmp_dir = tempfile.mkdtemp(prefix="ttska-mcp-one-")
         path = os.path.join(tmp_dir, "out.mp3")
         try:
@@ -224,14 +262,19 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
         except Exception as exc:  # noqa: BLE001
             shutil.rmtree(tmp_dir, ignore_errors=True)
             return f"error: {exc}"
+        played = play_audio(path)
+        if not played:
+            return f"error: no audio player available; saved {path} [{echo}]"
         if blocking:
-            # play_audio is non-blocking on most platforms; for blocking we'd
-            # need a sync waiter. Honour the parameter as a documentation hint
-            # and warn if true — current impl is fire-and-forget.
-            play_audio(path)
-            return f"played {path}"
-        play_audio(path)
-        return f"queued {path}"
+            # Truly wait for playback: sleep for the audio's measured duration
+            # so the agent can sequence speech instead of racing ahead.
+            dur = await asyncio.to_thread(_audio_duration_seconds, path)
+            if dur:
+                await asyncio.sleep(dur + 0.3)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            played_for = f" in {dur:.1f}s" if dur else ""
+            return f"played{played_for} [{echo}]"
+        return f"queued {path} [{echo}]"
 
     @server.tool()
     async def stream_open(lang: str = "en",
@@ -277,9 +320,11 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
     async def session_status(session_id: str) -> Dict[str, object]:
         """Return progress info for a streaming session.
 
-        Fields: lang, voice, closed, total_sentences, synths_pending,
-        buffer_chars, buffer_preview. Useful for an agent to decide whether
-        to keep streaming or wait for synths to drain.
+        Fields: lang, voice, rate, pitch, volume, closed, total_sentences,
+        synths_pending, synths_failed, last_error, buffer_chars,
+        buffer_preview. Useful for an agent to decide whether to keep
+        streaming or wait for synths to drain, and to detect failed synths
+        (synths_failed > 0 with the most recent message in last_error).
         """
         sess = sessions.get(session_id)
         if sess is None:
@@ -300,6 +345,7 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
                 "closed": sess._closed,
                 "total_sentences": sess._queued,
                 "synths_pending": sess.synths_pending(),
+                "synths_failed": sess._failed,
             })
         return out
 

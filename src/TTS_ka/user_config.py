@@ -44,6 +44,29 @@ def default_config_path() -> Path:
     return Path.home() / ".tts_config.json"
 
 
+def first_run_marker_path() -> Path:
+    """Marker written after the first run so the one-time nudge shows only once."""
+    return Path.home() / ".tts_ka_first_run"
+
+
+def is_first_run() -> bool:
+    """True when there is no config file and the first-run marker is absent."""
+    try:
+        if default_config_path().is_file() or first_run_marker_path().exists():
+            return False
+    except OSError:
+        return False
+    return True
+
+
+def mark_first_run_done() -> None:
+    """Write the first-run marker; never raise if the home dir is not writable."""
+    try:
+        first_run_marker_path().write_text("ok\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
 def resolve_config_path(explicit: str | None) -> Path | None:
     """Pick config path: CLI ``--config``, then ``TTS_KA_CONFIG``, then default if it exists."""
     if explicit and explicit.strip():

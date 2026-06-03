@@ -116,6 +116,22 @@ class TestCLIServeSubcommand:
 
 
 class TestSemaphore:
+    def setup_method(self):
+        # On Python 3.9, asyncio.Semaphore() binds to the current event loop at
+        # construction time. pytest-asyncio can leave the main thread with no
+        # current (or a closed) loop after an async test, which makes the sync
+        # construction below raise "There is no current event loop". Ensure a
+        # usable loop exists. Production is unaffected: _generation_semaphore()
+        # is first called inside uvicorn's running loop.
+        import asyncio
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_closed():
+                raise RuntimeError("closed")
+        except RuntimeError:
+            asyncio.set_event_loop(asyncio.new_event_loop())
+
     def test_semaphore_value_matches_max_workers(self):
         # Force a fresh allocation
         globals_in_server = vars(server)
