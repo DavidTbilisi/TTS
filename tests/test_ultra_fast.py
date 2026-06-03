@@ -314,7 +314,7 @@ class TestStreamingFallback:
         msp_cls.assert_called_once()
         assert msp_cls.call_args.kwargs.get('show_gui') is False
         err = capsys.readouterr().err
-        assert "no audio player found" in err.lower()
+        assert "media player" in err.lower()
 
     async def test_stream_does_not_raise_systemexit(self, tmp_path):
         """The old SystemExit(1) path must NOT be reached when VLC is missing."""

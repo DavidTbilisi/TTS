@@ -97,12 +97,13 @@ class TestMain:
         assert "TTS_ka" in capsys.readouterr().out
 
     def test_no_text_shows_help(self, capsys):
-        """main() with no text argument prints help and returns."""
+        """main() with no text argument prints the friendly welcome and returns."""
         with patch('sys.argv', ['TTS_ka']):
             from TTS_ka.main import main
             main()
         out = capsys.readouterr().out
-        assert "Error: No text provided" in out
+        assert "--doctor" in out
+        assert "--help-full" in out
 
     def test_help_full_calls_show_simple_help(self, capsys):
         """--help-full calls show_simple_help and show_troubleshooting."""

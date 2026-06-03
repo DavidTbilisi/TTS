@@ -540,21 +540,26 @@ def _spawn_detached(argv: List[str]) -> bool:
         return False
 
 
-def play_audio(file_path: str) -> None:
-    """Play an audio file using a platform-appropriate command (no shell)."""
+def play_audio(file_path: str) -> bool:
+    """Play an audio file using a platform-appropriate command (no shell).
+
+    Returns ``True`` when a player was launched, ``False`` when no player
+    could open the file so callers can tell the user instead of leaving them
+    in silence.
+    """
     try:
         abs_path = os.path.abspath(file_path)
         if sys.platform.startswith("win"):
             os.startfile(abs_path)
-            return
+            return True
         if sys.platform == "darwin":
-            _spawn_detached(["open", abs_path])
-            return
+            return _spawn_detached(["open", abs_path])
         for player in ("mpv", "vlc", "xdg-open"):
             if shutil.which(player) and _spawn_detached([player, abs_path]):
-                return
+                return True
     except OSError:
         pass
+    return False
 
 
 async def cleanup_http() -> None:

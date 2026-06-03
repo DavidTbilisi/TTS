@@ -55,7 +55,7 @@ class TestStdinInput:
             from TTS_ka.main import main
             main()
         mfa.assert_not_called()
-        assert "No text provided" in capsys.readouterr().out
+        assert "--doctor" in capsys.readouterr().out
 
 
 class TestJSONMode:

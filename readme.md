@@ -285,6 +285,18 @@ Debian/Ubuntu may need Tk: `sudo apt install python3-tk`.
 
 ## Windows extras
 
+### One-step setup (recommended)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\extras\windows\Install-TTS_ka-Windows.ps1
+```
+
+Checks that TTS_ka is runnable and that AutoHotkey v2 is present (printing
+`winget install AutoHotkey.AutoHotkey` if not), then installs the Explorer/Desktop
+context menu and the global hotkeys, and prints a short "what you can do now" summary.
+Flags: `-SkipHotkeys`, `-SkipContextMenu`, `-PythonPath`, `-Uninstall`, `-WhatIf`. The
+individual installers below still work if you want finer control.
+
 ### Native global hotkeys (no AutoHotkey)
 
 ```bash
