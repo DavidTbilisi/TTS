@@ -111,16 +111,16 @@ Tools exposed:
 
 | Tool | Purpose |
 |------|--------|
-| `speak(text, lang?, voice?)` | One-shot: synthesize and play immediately |
+| `speak(text, lang?, voice?, blocking?)` | One-shot: synthesize and play. `blocking=True` waits for the audio's full duration before returning so the agent can sequence speech; the return string echoes the resolved settings |
 | `stream_open(lang?, voice?)` | Start a streaming session, returns `session_id` |
 | `stream_append(session_id, text)` | Push text; speaks each complete sentence |
 | `stream_close(session_id)` | Drain remaining buffer, end the session |
-| `session_status(session_id)` | Inspect progress: total, pending synths, buffer preview |
+| `session_status(session_id)` | Inspect progress: total, pending synths, `synths_failed` + `last_error`, buffer preview |
 | `list_sessions()` | All active session IDs |
 | `stop()` | Abort all playback and tear down sessions |
 | `list_voices(lang?)` | Voice catalog as JSON |
 
-Why streaming over single `speak` calls: the LLM can push tokens as it generates them. Each completed sentence is synthesized immediately, so the user hears audio with sub-second latency from the LLM's first word. `session_status` reports `synths_pending` so the agent knows when the queue is backed up.
+Why streaming over single `speak` calls: the LLM can push tokens as it generates them. Each completed sentence is synthesized immediately, so the user hears audio with sub-second latency from the LLM's first word. `session_status` reports `synths_pending` (queue backed up) and `synths_failed` / `last_error` (a synthesis failed) so the agent can react.
 
 ### `--json`: machine-readable progress
 

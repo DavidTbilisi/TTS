@@ -189,6 +189,58 @@ class TestSpeakTool:
         assert "network down" in r
 
     @pytest.mark.asyncio
+    async def test_speak_blocking_waits_for_duration(self):
+        """blocking=True sleeps for the measured duration and echoes settings."""
+        import asyncio as _asyncio
+        server = build_server()
+        slept = {}
+
+        async def fake(text, lang, output, *, voice=None, prosody=None):
+            with open(output, "wb") as f:
+                f.write(b"x")
+
+        async def fake_sleep(secs):
+            slept["secs"] = secs
+
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=fake), \
+             patch("TTS_ka.mcp_server.play_audio", return_value=True), \
+             patch("TTS_ka.mcp_server._audio_duration_seconds", return_value=2.0), \
+             patch.object(_asyncio, "sleep", side_effect=fake_sleep):
+            r = await _call(server, "speak", text="Hello", lang="en", blocking=True)
+        assert "played" in r
+        assert "lang=en" in r
+        assert slept["secs"] >= 2.0
+
+    @pytest.mark.asyncio
+    async def test_speak_no_player_reports_error(self):
+        """When no player launches, speak says so instead of pretending success."""
+        server = build_server()
+
+        async def fake(text, lang, output, *, voice=None, prosody=None):
+            with open(output, "wb") as f:
+                f.write(b"x")
+
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=fake), \
+             patch("TTS_ka.mcp_server.play_audio", return_value=False):
+            r = await _call(server, "speak", text="Hi", lang="en")
+        assert "no audio player" in r
+
+    @pytest.mark.asyncio
+    async def test_speak_echoes_settings_when_queued(self):
+        server = build_server()
+
+        async def fake(text, lang, output, *, voice=None, prosody=None):
+            with open(output, "wb") as f:
+                f.write(b"x")
+
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=fake), \
+             patch("TTS_ka.mcp_server.play_audio", return_value=True):
+            r = await _call(server, "speak", text="Hi", lang="en",
+                            voice="en-US-JennyNeural")
+        assert "queued" in r
+        assert "voice=en-US-JennyNeural" in r
+
+    @pytest.mark.asyncio
     async def test_speak_propagates_voice(self):
         server = build_server()
         seen = {}
@@ -263,6 +315,27 @@ class TestSessionStatus:
             assert snap["synths_pending"] == 2
             # Release the gate and wait for close to drain.
             gate.set()
+            await _call(server, "stream_close", session_id=sid)
+
+    @pytest.mark.asyncio
+    async def test_status_failure_fields_present(self):
+        """synths_failed / last_error appear in the status snapshot."""
+        sessions = {}
+        server = build_server(sessions=sessions)
+
+        async def boom(text, lang, output, *, voice=None, prosody=None):
+            raise RuntimeError("network down")
+
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=boom):
+            sid = await _call(server, "stream_open", lang="en")
+            await _call(server, "stream_append", session_id=sid, text="One. ")
+            # Let the synth task run and fail.
+            import asyncio as _a
+            await _a.sleep(0)
+            await _a.gather(*sessions[sid]._tasks, return_exceptions=True)
+            snap = await _call(server, "session_status", session_id=sid)
+            assert snap["synths_failed"] == 1
+            assert "network down" in (snap["last_error"] or "")
             await _call(server, "stream_close", session_id=sid)
 
     @pytest.mark.asyncio
