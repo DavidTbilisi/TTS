@@ -435,3 +435,170 @@ class TestFFmpegMergerEdgeCases:
              patch('os.remove', side_effect=OSError("locked")):
             # Must not raise — the OSError in finally block is caught
             FFmpegMerger().merge(parts, out)
+
+
+# ---------------------------------------------------------------------------
+# HTTP health circuit breaker
+# ---------------------------------------------------------------------------
+
+class TestHttpHealthBreaker:
+    """The breaker skips the (usually-dead) Bing HTTP probe after it fails once,
+    persisting the verdict across processes to cut streaming time-to-first-audio.
+    """
+
+    def _state_file(self, monkeypatch, tmp_path):
+        from TTS_ka import fast_audio
+        p = tmp_path / "hh.json"
+        monkeypatch.setenv("TTS_KA_HTTP_STATE", str(p))
+        fast_audio._reset_http_health()
+        return p
+
+    def test_state_path_uses_env_override(self, monkeypatch, tmp_path):
+        from TTS_ka import fast_audio
+        monkeypatch.setenv("TTS_KA_HTTP_STATE", str(tmp_path / "x.json"))
+        assert fast_audio._http_state_path() == str(tmp_path / "x.json")
+
+    def test_state_path_default_when_no_override(self, monkeypatch):
+        from TTS_ka import fast_audio
+        monkeypatch.delenv("TTS_KA_HTTP_STATE", raising=False)
+        monkeypatch.setenv("LOCALAPPDATA", os.path.join("C:", "appdata"))
+        path = fast_audio._http_state_path()
+        assert path.endswith("tts_ka_http_health.json")
+        assert "appdata" in path
+
+    def test_should_skip_false_when_no_file(self, monkeypatch, tmp_path):
+        from TTS_ka import fast_audio
+        self._state_file(monkeypatch, tmp_path)
+        assert fast_audio._http_should_skip() is False
+
+    def test_record_failure_then_skip(self, monkeypatch, tmp_path):
+        from TTS_ka import fast_audio
+        p = self._state_file(monkeypatch, tmp_path)
+        fast_audio._http_record(False, now=1000.0)
+        assert p.exists()
+        # fresh process: clear memo, must read disk verdict and skip
+        fast_audio._reset_http_health()
+        assert fast_audio._http_should_skip(now=1000.0) is True
+
+    def test_record_success_clears_marker(self, monkeypatch, tmp_path):
+        from TTS_ka import fast_audio
+        p = self._state_file(monkeypatch, tmp_path)
+        fast_audio._http_record(False, now=1000.0)
+        assert p.exists()
+        fast_audio._http_record(True, now=1001.0)
+        assert not p.exists()
+        fast_audio._reset_http_health()
+        assert fast_audio._http_should_skip(now=1001.0) is False
+
+    def test_stale_marker_triggers_reprobe(self, monkeypatch, tmp_path):
+        from TTS_ka import fast_audio
+        self._state_file(monkeypatch, tmp_path)
+        fast_audio._http_record(False, now=1000.0)
+        fast_audio._reset_http_health()
+        # well past the TTL → do not skip (re-probe)
+        later = 1000.0 + fast_audio._HTTP_RECHECK_TTL + 1
+        assert fast_audio._http_should_skip(now=later) is False
+
+    def test_memo_short_circuits_disk(self, monkeypatch, tmp_path):
+        from TTS_ka import fast_audio
+        self._state_file(monkeypatch, tmp_path)
+        fast_audio._http_record(False, now=1000.0)  # memo now True
+        with patch("builtins.open", side_effect=AssertionError("disk read!")):
+            assert fast_audio._http_should_skip(now=1000.0) is True
+
+    def test_corrupt_marker_is_ignored(self, monkeypatch, tmp_path):
+        from TTS_ka import fast_audio
+        p = self._state_file(monkeypatch, tmp_path)
+        p.write_text("{not json", encoding="utf-8")
+        fast_audio._reset_http_health()
+        assert fast_audio._http_should_skip(now=1000.0) is False
+
+    def test_record_write_oserror_silenced(self, monkeypatch, tmp_path):
+        from TTS_ka import fast_audio
+        self._state_file(monkeypatch, tmp_path)
+        with patch("TTS_ka.fast_audio.open", side_effect=OSError("ro fs"), create=True):
+            fast_audio._http_record(False, now=1000.0)  # must not raise
+        assert fast_audio._http_down_memo is True
+
+    async def test_breaker_skips_http_in_fast_generate(self, temp_dir, monkeypatch, tmp_path):
+        """When the breaker is tripped, fast_generate_audio must not touch HTTP."""
+        from TTS_ka import fast_audio
+        self._state_file(monkeypatch, tmp_path)
+        fast_audio._http_record(False, now=1000.0)  # trip breaker
+        out = os.path.join(temp_dir, "out.mp3")
+        with patch("TTS_ka.fast_audio.get_http_client", new=AsyncMock()) as mock_http, \
+             patch.object(EdgeTTSGenerator, "generate", new_callable=AsyncMock,
+                          return_value=True) as mock_edge:
+            result = await fast_generate_audio("Hi", "en", out, quiet=True)
+        assert result is True
+        mock_http.assert_not_called()       # HTTP probe skipped entirely
+        mock_edge.assert_called_once()
+
+    async def test_first_failure_records_then_second_call_skips(self, temp_dir, monkeypatch, tmp_path):
+        """First chunk probes HTTP (fails); the breaker then skips it next time."""
+        from TTS_ka import fast_audio
+        self._state_file(monkeypatch, tmp_path)
+        out = os.path.join(temp_dir, "out.mp3")
+        mock_client = MagicMock()
+        mock_client.stream.return_value = _make_stream_cm(401, b"")
+        with patch("TTS_ka.fast_audio.get_http_client",
+                   new=AsyncMock(return_value=mock_client)) as mock_http, \
+             patch.object(EdgeTTSGenerator, "generate", new_callable=AsyncMock,
+                          return_value=True):
+            await fast_generate_audio("one", "en", out, quiet=True)
+            first_calls = mock_http.call_count
+            await fast_generate_audio("two", "en", out, quiet=True)
+            second_calls = mock_http.call_count
+        assert first_calls == 1            # probed on the first chunk
+        assert second_calls == 1           # breaker prevented a second probe
+        assert fast_audio._http_down_memo is True
+
+
+# ---------------------------------------------------------------------------
+# EdgeTTSGenerator transient-error retry/backoff
+# ---------------------------------------------------------------------------
+
+class TestEdgeTTSRetry:
+    async def test_transient_retries_then_succeeds(self, temp_dir):
+        from TTS_ka.fast_audio import EdgeTTSGenerator
+        out = os.path.join(temp_dir, "o.mp3")
+        bad = AsyncMock()
+        bad.save = AsyncMock(side_effect=Exception("403 Forbidden"))
+        good = AsyncMock()
+        mock_edge = MagicMock()
+        mock_edge.Communicate = MagicMock(side_effect=[bad, good])
+        with patch.dict('sys.modules', {'edge_tts': mock_edge}), \
+             patch('TTS_ka.fast_audio.asyncio.sleep', new=AsyncMock()) as msleep:
+            result = await EdgeTTSGenerator().generate("hi", "en", out, quiet=True)
+        assert result is True
+        assert mock_edge.Communicate.call_count == 2   # retried once
+        msleep.assert_awaited_once()                    # backed off between tries
+
+    async def test_transient_all_fail_prints_hint(self, temp_dir, capsys):
+        from TTS_ka.fast_audio import EdgeTTSGenerator
+        out = os.path.join(temp_dir, "o.mp3")
+        inst = AsyncMock()
+        inst.save = AsyncMock(side_effect=Exception("429 Too Many Requests"))
+        mock_edge = MagicMock()
+        mock_edge.Communicate = MagicMock(return_value=inst)
+        with patch.dict('sys.modules', {'edge_tts': mock_edge}), \
+             patch('TTS_ka.fast_audio.asyncio.sleep', new=AsyncMock()) as msleep:
+            result = await EdgeTTSGenerator().generate("hi", "en", out, quiet=False)
+        assert result is False
+        assert mock_edge.Communicate.call_count == 3   # exhausted all retries
+        assert msleep.await_count == 2                 # slept between the 3 attempts
+        assert "403" in capsys.readouterr().out        # actionable hint shown
+
+    async def test_non_transient_breaks_immediately(self, temp_dir):
+        from TTS_ka.fast_audio import EdgeTTSGenerator
+        out = os.path.join(temp_dir, "o.mp3")
+        inst = AsyncMock()
+        inst.save = AsyncMock(side_effect=Exception("disk full"))
+        mock_edge = MagicMock()
+        mock_edge.Communicate = MagicMock(return_value=inst)
+        with patch.dict('sys.modules', {'edge_tts': mock_edge}), \
+             patch('TTS_ka.fast_audio.asyncio.sleep', new=AsyncMock()) as msleep:
+            result = await EdgeTTSGenerator().generate("hi", "en", out, quiet=True)
+        assert result is False
+        assert mock_edge.Communicate.call_count == 1   # no retry on non-transient
+        msleep.assert_not_awaited()

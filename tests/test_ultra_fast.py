@@ -354,6 +354,53 @@ class TestStreamingFallback:
                                            preferred_player="mpv")
         mfind.assert_called_with(preferred="mpv")
 
+    async def test_streaming_uses_fast_first_chunk(self, tmp_path):
+        """Streaming carves a small lead-in first chunk for lower latency."""
+        from TTS_ka.constants import STREAMING_FIRST_CHUNK_SECONDS
+        output_path = str(tmp_path / "out.mp3")
+        captured = {}
+
+        def fake_split(t, approx_seconds=60, first_chunk_seconds=0):
+            captured['first'] = first_chunk_seconds
+            return ["a", "b", "c"]
+
+        with patch('TTS_ka.chunking.split_text_into_chunks', side_effect=fake_split), \
+             patch('TTS_ka.streaming_player.PlayerDetector.find',
+                   return_value="/usr/bin/mpv"), \
+             patch('TTS_ka.ultra_fast.StreamingAudioPlayer'), \
+             patch('TTS_ka.ultra_fast.ultra_fast_parallel_generation',
+                   new=AsyncMock(return_value=[output_path])), \
+             patch('TTS_ka.ultra_fast.fast_merge_audio_files'), \
+             patch('TTS_ka.ultra_fast.create_progress_display',
+                   return_value=MagicMock()):
+            await smart_generate_long_text(
+                "word " * 300, "en", chunk_seconds=20, parallel=2,
+                output_path=output_path, enable_streaming=True, show_gui=True)
+
+        assert captured['first'] == STREAMING_FIRST_CHUNK_SECONDS
+        assert STREAMING_FIRST_CHUNK_SECONDS > 0
+
+    async def test_non_streaming_keeps_uniform_chunks(self, tmp_path):
+        """Without streaming, no special first chunk (first_chunk_seconds == 0)."""
+        output_path = str(tmp_path / "out.mp3")
+        captured = {}
+
+        def fake_split(t, approx_seconds=60, first_chunk_seconds=0):
+            captured['first'] = first_chunk_seconds
+            return ["a", "b", "c"]
+
+        with patch('TTS_ka.chunking.split_text_into_chunks', side_effect=fake_split), \
+             patch('TTS_ka.ultra_fast.ultra_fast_parallel_generation',
+                   new=AsyncMock(return_value=[output_path])), \
+             patch('TTS_ka.ultra_fast.fast_merge_audio_files'), \
+             patch('TTS_ka.ultra_fast.create_progress_display',
+                   return_value=MagicMock()):
+            await smart_generate_long_text(
+                "word " * 300, "en", chunk_seconds=20, parallel=2,
+                output_path=output_path, enable_streaming=False)
+
+        assert captured['first'] == 0
+
 
 class TestPlayerDetectorPreferred:
     """BUG-3 supporting: PlayerDetector.find(preferred=...)."""
