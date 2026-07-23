@@ -46,6 +46,7 @@ python -m TTS_ka "Hello world" --lang en
 
 # Clipboard (shorthand: cb / clip / paste)
 python -m TTS_ka cb --lang ka
+# Linux: needs wl-clipboard (Wayland) or xclip/xsel (X11) — `--doctor` reports which.
 
 # File (auto-dispatched by extension)
 python -m TTS_ka chapter1.pdf --lang en        # needs [readers] extra
@@ -56,9 +57,12 @@ python -m TTS_ka document.docx --lang en
 python -m TTS_ka "Lecture excerpt" --lang en -o lectures/lec1.mp3
 ```
 
-A short console-script alias is installed as `TTS_ka`:
+Console-script aliases are installed under both spellings — `tts-ka` and `TTS_ka`
+(likewise `tts-ka-gui` / `TTS_ka-gui`, `tts-ka-mcp` / `TTS_ka-mcp`). Linux
+filesystems are case-sensitive, so pick whichever you prefer and it will resolve:
 
 ```bash
+tts-ka "Hello" -l en
 TTS_ka "Hello" -l en
 ```
 

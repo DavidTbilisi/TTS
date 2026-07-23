@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -186,12 +187,53 @@ def _resolve_output_path(raw: Optional[str], force: bool = False,
     return path
 
 
+def _read_clipboard_linux() -> str:
+    """Read the clipboard on Linux via the session's own clipboard helper.
+
+    Preferred over tkinter on Linux: under Wayland, tkinter talks to XWayland
+    and returns a *stale* X11 selection (or nothing) when the compositor does
+    not bridge clipboards, so ``wl-paste`` is the only authoritative source.
+    Returns an empty string when no helper is installed or the clipboard is
+    empty.
+    """
+    candidates = []
+    if os.environ.get("WAYLAND_DISPLAY"):
+        candidates.append(["wl-paste", "--no-newline"])
+    candidates.append(["xclip", "-selection", "clipboard", "-o"])
+    candidates.append(["xsel", "--clipboard", "--output"])
+
+    for cmd in candidates:
+        if shutil.which(cmd[0]) is None:
+            continue
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+            )
+        except Exception:
+            continue
+        # Non-zero usually just means "nothing is copied" — try the next helper.
+        if result.returncode == 0 and result.stdout:
+            return result.stdout
+    return ""
+
+
 def _read_clipboard() -> str:
     """Read clipboard text using stdlib — no third-party dependencies.
 
-    Tries tkinter first (cross-platform), then platform-specific fallbacks.
+    On Linux the session clipboard helper wins (see ``_read_clipboard_linux``);
+    elsewhere tkinter is tried first, then platform-specific fallbacks.
     Returns an empty string when the clipboard cannot be accessed.
     """
+    if sys.platform.startswith("linux"):
+        text = _read_clipboard_linux()
+        if text:
+            return text
+
     try:
         import tkinter as tk
         root = tk.Tk()
