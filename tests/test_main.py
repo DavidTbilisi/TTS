@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch, AsyncMock
 from TTS_ka.main import (
     get_input_text,
     _read_clipboard,
+    _read_clipboard_linux,
     format_cli_version_info,
     resolve_positional_text_source,
 )
@@ -303,7 +304,8 @@ class TestReadClipboard:
         mock_root.clipboard_get.return_value = "tkinter clipboard"
         mock_tk_mod = MagicMock()
         mock_tk_mod.Tk.return_value = mock_root
-        with patch.dict('sys.modules', {'tkinter': mock_tk_mod}):
+        with patch.dict('sys.modules', {'tkinter': mock_tk_mod}), \
+             patch('TTS_ka.main._read_clipboard_linux', return_value=""):
             result = _read_clipboard()
         assert result == "tkinter clipboard"
 
@@ -314,7 +316,8 @@ class TestReadClipboard:
         mock_tk_mod = MagicMock()
         mock_tk_mod.Tk.return_value = mock_root
         with patch.dict('sys.modules', {'tkinter': mock_tk_mod}), \
-             patch('sys.platform', 'linux'):
+             patch('sys.platform', 'linux'), \
+             patch('TTS_ka.main._read_clipboard_linux', return_value=""):
             result = _read_clipboard()
         assert result == ""
 
@@ -366,14 +369,95 @@ class TestReadClipboard:
             result = _read_clipboard()
         assert result == "mac clipboard text"
 
-    def test_linux_no_fallback_returns_empty(self):
-        """On Linux (non-darwin, non-win32), return empty if tkinter fails."""
+    def test_linux_no_helper_and_no_tkinter_returns_empty(self):
+        """On Linux, return empty when no clipboard helper and tkinter fail."""
         mock_tk_mod = MagicMock()
         mock_tk_mod.Tk.side_effect = Exception("no display")
         with patch.dict('sys.modules', {'tkinter': mock_tk_mod}), \
-             patch('sys.platform', 'linux'):
+             patch('sys.platform', 'linux'), \
+             patch('TTS_ka.main._read_clipboard_linux', return_value=""):
             result = _read_clipboard()
         assert result == ""
+
+    def test_linux_helper_wins_over_tkinter(self):
+        """On Linux the session helper is preferred over tkinter's stale X11 value."""
+        mock_root = MagicMock()
+        mock_root.clipboard_get.return_value = "stale x11 text"
+        mock_tk_mod = MagicMock()
+        mock_tk_mod.Tk.return_value = mock_root
+        with patch.dict('sys.modules', {'tkinter': mock_tk_mod}), \
+             patch('sys.platform', 'linux'), \
+             patch('TTS_ka.main._read_clipboard_linux', return_value="wayland text"):
+            result = _read_clipboard()
+        assert result == "wayland text"
+
+
+class TestReadClipboardLinux:
+    """Tests for the Linux clipboard-helper chain."""
+
+    @staticmethod
+    def _proc(returncode=0, stdout=""):
+        proc = MagicMock()
+        proc.returncode = returncode
+        proc.stdout = stdout
+        return proc
+
+    def test_wayland_prefers_wl_paste(self):
+        """With WAYLAND_DISPLAY set, wl-paste is tried first."""
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return self._proc(0, "wayland clipboard")
+
+        with patch.dict(os.environ, {"WAYLAND_DISPLAY": "wayland-0"}), \
+             patch('TTS_ka.main.shutil.which', return_value="/usr/bin/wl-paste"), \
+             patch('subprocess.run', side_effect=fake_run):
+            result = _read_clipboard_linux()
+        assert result == "wayland clipboard"
+        assert calls[0][0] == "wl-paste"
+
+    def test_x11_session_skips_wl_paste(self):
+        """Without WAYLAND_DISPLAY, xclip is the first helper tried."""
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return self._proc(0, "x11 clipboard")
+
+        env = {k: v for k, v in os.environ.items() if k != "WAYLAND_DISPLAY"}
+        with patch.dict(os.environ, env, clear=True), \
+             patch('TTS_ka.main.shutil.which', return_value="/usr/bin/xclip"), \
+             patch('subprocess.run', side_effect=fake_run):
+            result = _read_clipboard_linux()
+        assert result == "x11 clipboard"
+        assert calls[0][0] == "xclip"
+
+    def test_falls_through_to_next_helper(self):
+        """An empty/failed helper falls through to the next one."""
+        results = {
+            "wl-paste": self._proc(1, ""),          # nothing copied
+            "xclip": self._proc(0, ""),             # empty
+            "xsel": self._proc(0, "xsel text"),
+        }
+        with patch.dict(os.environ, {"WAYLAND_DISPLAY": "wayland-0"}), \
+             patch('TTS_ka.main.shutil.which', side_effect=lambda c: "/usr/bin/" + c), \
+             patch('subprocess.run', side_effect=lambda cmd, **kw: results[cmd[0]]):
+            result = _read_clipboard_linux()
+        assert result == "xsel text"
+
+    def test_missing_helpers_return_empty(self):
+        """No helper installed → empty string, no subprocess spawned."""
+        with patch('TTS_ka.main.shutil.which', return_value=None), \
+             patch('subprocess.run', side_effect=AssertionError("should not run")):
+            assert _read_clipboard_linux() == ""
+
+    def test_subprocess_error_is_swallowed(self):
+        """A helper that raises (timeout, OSError) does not propagate."""
+        with patch.dict(os.environ, {"WAYLAND_DISPLAY": "wayland-0"}), \
+             patch('TTS_ka.main.shutil.which', side_effect=lambda c: "/usr/bin/" + c), \
+             patch('subprocess.run', side_effect=OSError("boom")):
+            assert _read_clipboard_linux() == ""
 
 
 class TestCheckDepsFlag:

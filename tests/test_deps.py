@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import os
 from unittest.mock import patch
 
 from TTS_ka.deps import (
     DepRow,
+    check_clipboard,
     check_ffmpeg,
     format_dep_report,
     run_dependency_check,
 )
+
+
+def _which(*present: str):
+    """shutil.which stub: only *present* executables resolve."""
+    return lambda cmd: f"/usr/bin/{cmd}" if cmd in present else None
 
 
 def test_format_dep_report_smoke() -> None:
@@ -48,6 +55,65 @@ def test_check_ffmpeg_missing_populates_fix() -> None:
         row = check_ffmpeg()
     assert not row.ok
     assert row.fix  # a platform-specific install command is present
+
+
+class TestCheckClipboard:
+    """`cb` needs a session clipboard helper on Linux; OS-native elsewhere."""
+
+    def test_wayland_with_wl_paste_is_ok(self) -> None:
+        with patch("TTS_ka.deps.sys.platform", "linux"), \
+             patch.dict(os.environ, {"WAYLAND_DISPLAY": "wayland-0"}), \
+             patch("TTS_ka.deps.shutil.which", _which("wl-paste", "xclip")):
+            row = check_clipboard()
+        assert row.ok
+        assert "wl-paste" in row.detail
+
+    def test_wayland_with_only_x11_helper_warns_about_stale_selection(self) -> None:
+        with patch("TTS_ka.deps.sys.platform", "linux"), \
+             patch.dict(os.environ, {"WAYLAND_DISPLAY": "wayland-0"}), \
+             patch("TTS_ka.deps.shutil.which", _which("xsel")):
+            row = check_clipboard()
+        assert not row.ok
+        assert "stale" in row.detail
+        assert "wl-clipboard" in row.fix
+
+    def test_x11_with_xclip_is_ok(self) -> None:
+        env = {k: v for k, v in os.environ.items() if k != "WAYLAND_DISPLAY"}
+        with patch("TTS_ka.deps.sys.platform", "linux"), \
+             patch.dict(os.environ, env, clear=True), \
+             patch("TTS_ka.deps.shutil.which", _which("xclip")):
+            row = check_clipboard()
+        assert row.ok
+        assert "xclip" in row.detail
+
+    def test_no_helper_reports_fix(self) -> None:
+        env = {k: v for k, v in os.environ.items() if k != "WAYLAND_DISPLAY"}
+        with patch("TTS_ka.deps.sys.platform", "linux"), \
+             patch.dict(os.environ, env, clear=True), \
+             patch("TTS_ka.deps.shutil.which", _which()):
+            row = check_clipboard()
+        assert not row.ok
+        assert row.fix
+
+    def test_windows_and_macos_are_built_in(self) -> None:
+        for platform in ("win32", "darwin"):
+            with patch("TTS_ka.deps.sys.platform", platform), \
+                 patch("TTS_ka.deps.shutil.which", _which()):
+                row = check_clipboard()
+            assert row.ok, platform
+
+    def test_clipboard_row_is_optional_not_critical(self) -> None:
+        """A missing clipboard helper must not fail the whole doctor run."""
+        rows = [
+            DepRow("edge-tts", True, "ok"),
+            DepRow("pydub", True, "ok"),
+            DepRow("ffmpeg", True, "ok"),
+            DepRow("clipboard", False, "no wl-paste / xclip / xsel"),
+        ]
+        text = format_dep_report(rows)
+        assert "[opt]" in text
+        with patch("TTS_ka.deps.collect_dep_rows", return_value=rows):
+            assert run_dependency_check() == 0
 
 
 @patch("TTS_ka.deps.collect_dep_rows")

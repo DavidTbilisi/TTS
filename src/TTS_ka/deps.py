@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import shutil
 import subprocess
 import sys
@@ -89,6 +90,41 @@ def check_streaming_player() -> DepRow:
     )
 
 
+def check_clipboard() -> DepRow:
+    """Report the helper that ``TTS_ka cb`` will use to read the clipboard.
+
+    Only meaningful on Linux: Windows and macOS read the clipboard through the
+    OS itself. Under Wayland, tkinter sees a stale XWayland selection, so
+    wl-clipboard is what makes `cb` correct there.
+    """
+    if sys.platform.startswith("win") or sys.platform == "darwin":
+        return DepRow("clipboard", True, "built in (OS clipboard)")
+
+    wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
+    if wayland and shutil.which("wl-paste"):
+        return DepRow("clipboard", True, "wl-paste (Wayland)")
+    for exe, label in (("xclip", "xclip (X11)"), ("xsel", "xsel (X11)")):
+        if shutil.which(exe):
+            if wayland:
+                return DepRow(
+                    "clipboard",
+                    False,
+                    f"only {exe} found - on Wayland it reads a stale X11 selection",
+                    fix="sudo apt install wl-clipboard  (or your distro's package manager)",
+                )
+            return DepRow("clipboard", True, label)
+    return DepRow(
+        "clipboard",
+        False,
+        "no wl-paste / xclip / xsel - `cb` cannot read the clipboard",
+        fix=(
+            "sudo apt install wl-clipboard"
+            if wayland
+            else "sudo apt install xclip  (or xsel)"
+        ),
+    )
+
+
 def check_soundfile() -> DepRow:
     if importlib.util.find_spec("soundfile") is None:
         return DepRow(
@@ -122,10 +158,11 @@ def collect_dep_rows() -> List[DepRow]:
     rows.append(check_uvloop())
     rows.append(check_ffmpeg())
     rows.append(check_streaming_player())
+    rows.append(check_clipboard())
     return rows
 
 
-_OPTIONAL_NAMES = frozenset({"soundfile", "uvloop", "streaming player"})
+_OPTIONAL_NAMES = frozenset({"soundfile", "uvloop", "streaming player", "clipboard"})
 
 
 def format_dep_report(rows: Optional[List[DepRow]] = None) -> str:
@@ -145,6 +182,7 @@ def format_dep_report(rows: Optional[List[DepRow]] = None) -> str:
     lines.append("")
     lines.append("ffmpeg: required for long/chunked output and reliable MP3 handling.")
     lines.append("streaming player: needed only for --stream (live playback while generating).")
+    lines.append("clipboard: needed only for `tts-ka cb` (speak what you copied).")
     critical = ("edge-tts", "pydub", "ffmpeg")
     if all(r.ok for r in rows if r.name in critical):
         lines.append("")

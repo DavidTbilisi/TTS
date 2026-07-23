@@ -50,6 +50,13 @@ Issues = "https://github.com/DavidTbilisi/TTS/issues"
 Changelog = "https://github.com/DavidTbilisi/TTS/releases"
 
 [project.scripts]
+# Lowercase names are the documented ones; the TTS_ka* spellings are kept for
+# back-compat. Both must exist: Linux filesystems are case-sensitive, so a user
+# copy-pasting `tts-ka` from the readme gets "command not found" without these.
+tts-ka = "TTS_ka.main:main"
+tts-ka-gui = "TTS_ka.gui:main"
+tts-ka-hotkeys = "TTS_ka.native_hotkeys:main"
+tts-ka-mcp = "TTS_ka.mcp_server:main"
 TTS_ka = "TTS_ka.main:main"
 TTS_ka-gui = "TTS_ka.gui:main"
 TTS_ka-hotkeys = "TTS_ka.native_hotkeys:main"
