@@ -551,6 +551,18 @@ For comprehensive help with examples: %(prog)s --help-full
         default=800,
         help="In --live mode, flush a partial sentence after this many ms of stdin silence (default 800).",
     )
+    parser.add_argument(
+        "--study",
+        action="store_true",
+        help="Open the synchronized RSVP + audio study window for the input text "
+             "(requires the [study] extra: `pip install -e \".[study]\"`).",
+    )
+    parser.add_argument(
+        "--study-chunk-words",
+        type=int,
+        default=200,
+        help="Words per chunk for study-mode comprehension checks (default 200).",
+    )
 
     args = parser.parse_args(argv_rest)
 
@@ -679,6 +691,24 @@ For comprehensive help with examples: %(prog)s --help-full
             emit({"event": "error", "message": "empty input"})
         else:
             print("Error: No text provided")
+        return
+
+    if args.study:
+        try:
+            from .study_player import launch as _study_launch
+        except ImportError as exc:
+            print(
+                f"Error: study mode requires the 'study' extra. "
+                f"Install with: pip install -e \".[study]\"  ({exc})",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        _study_launch(
+            text=text,
+            language=args.lang,
+            rate=args.rate,
+            chunk_size_words=args.study_chunk_words,
+        )
         return
 
     # Overwrite protection applies only to explicit CLI --output / -o, not config defaults.
