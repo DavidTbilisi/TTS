@@ -1032,12 +1032,10 @@ class TTSSpeakApp:
         bf = ttk.Frame(frm)
         bf.grid(row=7, column=0, sticky=tk.W, pady=(10, 0))
         ttk.Button(bf, text="Install soundfile", command=self._on_pip_install_soundfile).pack(side=tk.LEFT, padx=(0, 8))
-        if not sys.platform.startswith("win"):
-            ttk.Button(bf, text="Install uvloop", command=self._on_pip_install_uvloop).pack(side=tk.LEFT)
 
         tip = (
             "Install global hotkeys (pynput) from the Hotkeys tab on Windows. "
-            "Commands: pip install \"TTS_ka[soundfile]\"  |  pip install uvloop (Unix/macOS)"
+            "Command: pip install \"TTS_ka[soundfile]\""
         )
         ttk.Label(frm, text=tip, wraplength=520, justify=tk.LEFT).grid(row=8, column=0, sticky=tk.W, pady=(12, 0))
 
@@ -1053,9 +1051,6 @@ class TTSSpeakApp:
 
     def _on_pip_install_soundfile(self) -> None:
         self._run_pip_install_async(("TTS_ka[soundfile]",), "TTS_ka[soundfile]")
-
-    def _on_pip_install_uvloop(self) -> None:
-        self._run_pip_install_async(("uvloop",), "uvloop")
 
     def _on_quit(self) -> None:
         if self._hotkey_mgr is not None:

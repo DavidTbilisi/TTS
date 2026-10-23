@@ -123,7 +123,7 @@ def test_run_dependency_check_success(mock_collect) -> None:
         DepRow("pydub", True, "ok"),
         DepRow("httpx", True, "ok"),
         DepRow("soundfile", False, "optional"),
-        DepRow("uvloop", False, "optional"),
+        DepRow("clipboard", False, "optional"),
         DepRow("ffmpeg", True, "ok"),
         DepRow("streaming player", False, "none"),
     ]
@@ -137,7 +137,7 @@ def test_run_dependency_check_missing_ffmpeg(mock_collect) -> None:
         DepRow("pydub", True, "ok"),
         DepRow("httpx", True, "ok"),
         DepRow("soundfile", False, "optional"),
-        DepRow("uvloop", False, "optional"),
+        DepRow("clipboard", False, "optional"),
         DepRow("ffmpeg", False, "missing"),
         DepRow("streaming player", True, "vlc"),
     ]
@@ -151,7 +151,7 @@ def test_run_dependency_check_missing_edge(mock_collect) -> None:
         DepRow("pydub", True, "ok"),
         DepRow("httpx", True, "ok"),
         DepRow("soundfile", False, "optional"),
-        DepRow("uvloop", False, "optional"),
+        DepRow("clipboard", False, "optional"),
         DepRow("ffmpeg", True, "ok"),
         DepRow("streaming player", True, "vlc"),
     ]

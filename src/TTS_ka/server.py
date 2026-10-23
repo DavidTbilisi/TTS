@@ -28,16 +28,9 @@ from typing import Optional
 
 from .constants import MAX_PARALLEL_WORKERS, VOICE_MAP
 from . import voices as _voices
+from .deps import MissingExtraError
 
-
-class MissingExtraError(RuntimeError):
-    """Raised when fastapi/uvicorn aren't installed."""
-
-    def __init__(self) -> None:
-        super().__init__(
-            "TTS_ka serve requires 'fastapi' and 'uvicorn'. "
-            "Install with: pip install TTS_ka[server]"
-        )
+_SERVER_REQUIREMENT = "TTS_ka serve requires 'fastapi' and 'uvicorn'"
 
 
 def _check_token(authorization: Optional[str], expected: Optional[str]) -> bool:
@@ -66,7 +59,7 @@ def create_app(token: Optional[str] = None):
         from fastapi import FastAPI, HTTPException, Header, Request
         from fastapi.responses import JSONResponse, StreamingResponse, PlainTextResponse
     except ImportError:
-        raise MissingExtraError()
+        raise MissingExtraError(_SERVER_REQUIREMENT, "server")
 
     from .fast_audio import fast_generate_audio  # local import to avoid cycles
 
@@ -142,6 +135,6 @@ def run_server(host: str = "127.0.0.1", port: int = 7777,
     try:
         import uvicorn
     except ImportError:
-        raise MissingExtraError()
+        raise MissingExtraError(_SERVER_REQUIREMENT, "server")
     app = create_app(token=token)
     uvicorn.run(app, host=host, port=port, log_level="info")

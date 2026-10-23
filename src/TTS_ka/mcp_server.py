@@ -368,10 +368,8 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
 
     @server.tool()
     def list_voices(lang: Optional[str] = None) -> List[Dict[str, str]]:
-        """Return available voices. Optionally filter by lang (ka, ru, en, en-US)."""
-        catalog = (_voices.voices_for_lang(lang)
-                   if lang and lang in {"ka", "ru", "en", "en-US"}
-                   else _voices.all_voices())
+        """Return available voices. Optionally filter by catalog lang (ka, ru, en)."""
+        catalog = (lang and _voices.voices_for_lang(lang)) or _voices.all_voices()
         return [
             {
                 "id": v.id,

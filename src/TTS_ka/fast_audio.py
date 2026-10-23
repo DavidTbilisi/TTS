@@ -38,12 +38,6 @@ if TYPE_CHECKING:  # httpx is imported lazily at runtime (only for the HTTP path
     import httpx
 
 try:
-    import uvloop
-    HAS_UVLOOP = True
-except ImportError:
-    HAS_UVLOOP = False
-
-try:
     import soundfile as sf
     import numpy as np
     HAS_SOUNDFILE = True
@@ -290,7 +284,7 @@ class EdgeTTSGenerator:
 # ── AudioMerger implementations ───────────────────────────────────────────────
 
 class SoundFileMerger:
-    """Merges MP3 parts via soundfile + numpy (fastest; lossless concat)."""
+    """Merges MP3 parts via soundfile + numpy (decodes and re-encodes)."""
 
     def merge(self, parts: List[str], output_path: str) -> None:
         combined_data = []
@@ -321,13 +315,12 @@ class PydubMerger:
 
 
 class FFmpegMerger:
-    """Merges MP3 parts via an FFmpeg concat-demuxer subprocess."""
-
-    _LISTFILE = ".ff_concat.txt"
+    """Merges MP3 parts via an FFmpeg concat-demuxer subprocess (stream copy)."""
 
     def merge(self, parts: List[str], output_path: str) -> None:
+        fd, listfile = tempfile.mkstemp(prefix="tts_ka_concat_", suffix=".txt")
         try:
-            with open(self._LISTFILE, "w", encoding="utf-8") as f:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 for part in parts:
                     if os.path.exists(part):
                         abs_path = os.path.abspath(part).replace("\\", "/")
@@ -341,7 +334,7 @@ class FFmpegMerger:
                 "-loglevel", "error",
                 "-f", "concat",
                 "-safe", "0",
-                "-i", self._LISTFILE,
+                "-i", listfile,
                 "-c", "copy",
                 output_path,
             ]
@@ -358,7 +351,7 @@ class FFmpegMerger:
                     raise RuntimeError("FFmpegMerger: no valid parts found")
         finally:
             try:
-                os.remove(self._LISTFILE)
+                os.remove(listfile)
             except OSError:
                 pass
 
@@ -383,9 +376,6 @@ async def fast_generate_audio(text: str, language: str, output_path: str,
     * ``TTS_KA_VERBOSE=1`` — print a notice when falling back from HTTP to
       edge-tts (off by default; HTTP failure is normal for many networks).
     """
-    if HAS_UVLOOP and sys.platform != "win32":
-        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-
     # Skip the HTTP probe entirely when disabled by env or when the circuit
     # breaker recently saw it fail (saves ~0.7s of doomed request per chunk).
     if not _env_truthy(_SKIP_HTTP_ENV) and not _http_should_skip():

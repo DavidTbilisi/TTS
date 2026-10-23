@@ -63,9 +63,9 @@ class TestShowSimpleHelp:
         out = self._get_output()
         assert "=" in out or "-" in out
 
-    def test_contains_python_command(self):
+    def test_contains_cli_command(self):
         out = self._get_output()
-        assert "python" in out.lower()
+        assert "tts-ka" in out
 
     def test_contains_lang_flag(self):
         out = self._get_output()

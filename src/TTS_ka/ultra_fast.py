@@ -7,15 +7,9 @@ import threading
 from typing import Callable, List, Optional
 from concurrent.futures import ThreadPoolExecutor
 
-try:
-    import uvloop
-    HAS_UVLOOP = True
-except ImportError:
-    HAS_UVLOOP = False
-
 from .fast_audio import fast_generate_audio, fast_merge_audio_files
 from .not_reading import replace_not_readable
-from .rich_progress import console, create_progress_display, HAS_RICH
+from .rich_progress import cprint as _cprint, create_progress_display
 from .streaming_player import StreamingAudioPlayer, stop_active_streaming_player
 from .constants import (
     MAX_PARALLEL_WORKERS,
@@ -24,15 +18,6 @@ from .constants import (
 
 # Optimal worker count
 OPTIMAL_WORKERS = min(MAX_PARALLEL_WORKERS, (os.cpu_count() or 1) * 4)
-
-
-def _cprint(msg: str) -> None:
-    """Print styled message via rich console, or plain to stderr as fallback."""
-    if HAS_RICH and console is not None:
-        console.print(msg)
-    else:
-        import re
-        print(re.sub(r"\[/?[^\]]*\]", "", msg), file=sys.stderr)
 
 
 class GenerationCancelled(Exception):
@@ -92,15 +77,6 @@ async def ultra_fast_parallel_generation(
     progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> List[str]:
     """Ultra-fast parallel generation with optional cancel, progress, voice, and prosody."""
-    
-    # Use uvloop for maximum performance on Unix systems
-    if HAS_UVLOOP and sys.platform != 'win32':
-        try:
-            loop = uvloop.new_event_loop()
-            asyncio.set_event_loop(loop)
-        except Exception:
-            pass
-    
     parts = []
     
     # Pre-allocate part files - if streaming, first chunk becomes output file

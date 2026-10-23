@@ -21,8 +21,8 @@ def _popen_argv_head(argv):
 def _silence_windows_real_media_players():
     """Do not spawn VLC / media players for fake ``*.mp3`` paths during tests (Windows).
 
-    ``PlayerDetector`` uses ``subprocess.run`` → ``Popen`` for ``where``/``which``; a
-    blanket ``Popen`` mock breaks that. We only stub Popen for real player binaries.
+    A blanket ``Popen`` mock would break tests that really run helper binaries, so we
+    only stub Popen for real player binaries.
     """
     if not sys.platform.startswith("win"):
         yield

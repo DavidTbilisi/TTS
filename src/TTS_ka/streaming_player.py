@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
 import socket
 import subprocess
@@ -137,40 +138,13 @@ class PlayerDetector:
 
     @classmethod
     def _locate(cls, player: str) -> Optional[str]:
+        if shutil.which(player):
+            return player
         if sys.platform.startswith("win"):
-            return cls._locate_windows(player)
-        return cls._locate_unix(player)
-
-    @classmethod
-    def _locate_windows(cls, player: str) -> Optional[str]:
-        try:
-            result = subprocess.run(
-                ["where", player], capture_output=True, timeout=1
-            )
-            if result.returncode == 0:
-                return player
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-        if player == "vlc":
-            for path in cls._WIN_VLC_PATHS:
+            fallbacks = {"vlc": cls._WIN_VLC_PATHS, "mpv": cls._WIN_MPV_PATHS}
+            for path in fallbacks.get(player, []):
                 if os.path.exists(path):
                     return path
-        if player == "mpv":
-            for path in cls._WIN_MPV_PATHS:
-                if os.path.exists(path):
-                    return path
-        return None
-
-    @classmethod
-    def _locate_unix(cls, player: str) -> Optional[str]:
-        try:
-            result = subprocess.run(
-                ["which", player], capture_output=True, timeout=1
-            )
-            if result.returncode == 0:
-                return player
-        except (OSError, subprocess.TimeoutExpired):
-            pass
         return None
 
 

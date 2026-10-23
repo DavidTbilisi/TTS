@@ -107,7 +107,7 @@ class TestCLIServeSubcommand:
     def test_serve_missing_fastapi_exits_2(self, capsys):
         with patch("sys.argv", ["TTS_ka", "serve"]):
             with patch("TTS_ka.server.run_server",
-                       side_effect=server.MissingExtraError()):
+                       side_effect=server.MissingExtraError(server._SERVER_REQUIREMENT, "server")):
                 with pytest.raises(SystemExit) as exc:
                     from TTS_ka.main import main
                     main()
