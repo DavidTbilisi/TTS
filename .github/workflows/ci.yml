@@ -44,3 +44,10 @@ jobs:
 
       - name: Run tests (exclude slow)
         run: pytest -m "not slow"
+
+      # The MCP e2e tests spawn tts-ka-mcp over stdio and are marked slow, so
+      # the run above skips them; only this leg has the mcp extra installed.
+      # --no-cov: one file alone would trip the suite-wide coverage gate.
+      - name: Run MCP end-to-end tests (slow)
+        if: contains(matrix.extras, 'mcp')
+        run: pytest tests/test_mcp_server_e2e.py -m slow --no-cov
