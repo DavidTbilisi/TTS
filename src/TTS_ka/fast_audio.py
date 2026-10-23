@@ -63,6 +63,36 @@ def _edge_tts_transient(err: BaseException) -> bool:
     return "403" in msg or "invalid response status" in msg or "429" in msg
 
 
+class GenerationFailed(RuntimeError):
+    """Synthesis produced no audio (unsupported language, network or service error)."""
+
+
+# Most recent synthesis failure. Generators report failure as ``False`` (often
+# with ``quiet=True``, e.g. parallel chunks), so callers use this to tell the
+# user *why* when they turn that into a ``GenerationFailed``.
+_last_error: Optional[BaseException] = None
+
+
+def generation_failed(summary: str, err: Optional[BaseException] = None) -> GenerationFailed:
+    """Build a ``GenerationFailed`` carrying *err* (default: the latest edge-tts error) and a fix hint."""
+    err = err or _last_error
+    # edge-tts errors embed the full websocket URL (with tokens); keep the gist.
+    reason = str(err).split(", url=")[0] if err else "edge-tts returned no audio"
+    msg = f"{summary}: {reason}"
+    if err is not None and _edge_tts_transient(err):
+        msg += " (Microsoft rejected the request; try: pip install -U edge-tts)"
+    return GenerationFailed(msg)
+
+
+def discard_empty_output(path: str) -> None:
+    """Remove *path* if a failed synthesis left it behind as a 0-byte file."""
+    try:
+        if os.path.getsize(path) == 0:
+            os.remove(path)
+    except OSError:
+        pass
+
+
 class EdgeTTSGenerator:
     """Single-chunk generator using the ``edge-tts`` library."""
 
@@ -72,8 +102,12 @@ class EdgeTTSGenerator:
     async def generate(self, text: str, language: str, output_path: str,
                        quiet: bool = False, voice: Optional[str] = None,
                        prosody: Optional[ProsodyOpts] = None) -> bool:
+        global _last_error
         resolved_voice = voice or VOICE_MAP.get(language)
         if not resolved_voice:
+            _last_error = ValueError(
+                f"language {language!r} not supported (use: {', '.join(VOICE_MAP)})"
+            )
             if not quiet:
                 print(f"❌ Language '{language}' not supported. Use: {', '.join(VOICE_MAP)}")
             return False
@@ -105,6 +139,7 @@ class EdgeTTSGenerator:
                     )
                     continue
                 break
+        _last_error = last_err
         if not quiet:
             print(f"Error generating audio: {last_err}")
             if last_err is not None and _edge_tts_transient(last_err):

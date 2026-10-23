@@ -172,3 +172,16 @@ class TestSynthesizeLangValidation:
     def test_unknown_lang_rejected(self, client):
         resp = client.post("/synthesize", json={"text": "hi", "lang": "xx"})
         assert resp.status_code == 400
+
+
+def test_synthesize_failure_is_502_not_empty_200():
+    testclient = pytest.importorskip("fastapi.testclient")
+
+    async def failing(text, lang, out_path, **kwargs):
+        return False
+
+    with patch("TTS_ka.fast_audio.fast_generate_audio", new=failing):
+        client = testclient.TestClient(server.create_app(token=""))
+    resp = client.post("/synthesize", json={"text": "hi", "lang": "en"})
+    assert resp.status_code == 502
+    assert "synthesis failed" in resp.json()["detail"]

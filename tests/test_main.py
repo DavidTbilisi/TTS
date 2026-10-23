@@ -180,6 +180,39 @@ class TestMain:
         assert kwargs.get('enable_streaming') is True
         assert kwargs.get(key) == int(value)
 
+    def test_generation_failure_exits_1_without_completed(self, tmp_path, capsys):
+        """A failed synth must not print "Completed" or leave a 0-byte MP3 behind."""
+        out = tmp_path / "out.mp3"
+
+        async def fake(text, lang, path, **kw):
+            open(path, "wb").close()  # edge-tts leaves an empty file on 403
+            return False
+
+        with patch('sys.argv', ['TTS_ka', 'hello', '--lang', 'en', '--no-play', '-o', str(out)]):
+            with patch('TTS_ka.main.fast_generate_audio', side_effect=fake), \
+                 patch('TTS_ka.main.play_audio') as mpa:
+                from TTS_ka.main import main
+                with pytest.raises(SystemExit) as exc:
+                    main()
+        assert exc.value.code == 1
+        captured = capsys.readouterr()
+        assert "Completed" not in captured.out + captured.err
+        assert "Audio generation failed" in captured.err
+        assert not out.exists()
+        mpa.assert_not_called()
+
+    def test_generation_failure_json_emits_error_event(self, tmp_path, capsys):
+        out = tmp_path / "out.mp3"
+        with patch('sys.argv', ['TTS_ka', 'hello', '--lang', 'en', '--no-play', '--json',
+                                '-o', str(out)]):
+            with patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=False)):
+                from TTS_ka.main import main
+                with pytest.raises(SystemExit):
+                    main()
+        events = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line]
+        assert events[-1]["event"] == "error"
+        assert "Audio generation failed" in events[-1]["message"]
+
     def test_help_flag_exits(self):
         with patch('sys.argv', ['TTS_ka', '--help']):
             from TTS_ka.main import main

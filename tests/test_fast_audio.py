@@ -43,6 +43,34 @@ class TestVoiceMap:
 # fast_generate_audio
 # ---------------------------------------------------------------------------
 
+class TestGenerationFailureHelpers:
+    def test_message_trims_url_and_adds_403_hint(self):
+        from TTS_ka.fast_audio import generation_failed
+        err = Exception("403, message='Invalid response status', url='wss://x?TrustedClientToken=SECRET'")
+        msg = str(generation_failed("Audio generation failed", err))
+        assert msg.startswith("Audio generation failed: 403, message='Invalid response status'")
+        assert "SECRET" not in msg
+        assert "pip install -U edge-tts" in msg
+
+    async def test_unsupported_language_becomes_reason(self, temp_dir):
+        from TTS_ka.fast_audio import generation_failed
+        assert await EdgeTTSGenerator().generate("hi", "xx", os.path.join(temp_dir, "o.mp3"),
+                                                 quiet=True) is False
+        assert "language 'xx' not supported" in str(generation_failed("failed"))
+
+    def test_discard_empty_output_only_removes_empty_files(self, temp_dir):
+        from TTS_ka.fast_audio import discard_empty_output
+        empty, full = os.path.join(temp_dir, "e.mp3"), os.path.join(temp_dir, "f.mp3")
+        open(empty, "wb").close()
+        with open(full, "wb") as f:
+            f.write(b"audio")
+        discard_empty_output(empty)
+        discard_empty_output(full)
+        discard_empty_output(os.path.join(temp_dir, "missing.mp3"))  # no error
+        assert not os.path.exists(empty)
+        assert os.path.exists(full)
+
+
 class TestFastGenerateAudio:
     async def test_delegates_to_edge_tts_with_voice_and_prosody(self, temp_dir):
         out = os.path.join(temp_dir, "out.mp3")

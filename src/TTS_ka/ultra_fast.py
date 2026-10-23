@@ -7,7 +7,13 @@ import threading
 from typing import Callable, List, Optional
 from concurrent.futures import ThreadPoolExecutor
 
-from .fast_audio import fast_generate_audio, fast_merge_audio_files
+from .fast_audio import (
+    GenerationFailed,
+    discard_empty_output,
+    fast_generate_audio,
+    fast_merge_audio_files,
+    generation_failed,
+)
 from .not_reading import replace_not_readable
 from .rich_progress import cprint as _cprint, create_progress_display
 from .streaming_player import StreamingAudioPlayer, stop_active_streaming_player
@@ -102,7 +108,8 @@ async def ultra_fast_parallel_generation(
     
     # Use optimized semaphore with higher limits for I/O bound tasks
     sem = asyncio.Semaphore(max_workers)
-    
+    worker_errors: List[BaseException] = []
+
     async def worker(i: int, text: str, output: str):
         """Generate audio for a single chunk, notifying the streaming player on success."""
         async with sem:
@@ -116,6 +123,7 @@ async def ultra_fast_parallel_generation(
                 return (i, result)
             except Exception as e:
                 _cprint(f"  [yellow]⚠[/yellow]  Chunk {i} failed: [dim]{e}[/dim]")
+                worker_errors.append(e)
                 return (i, False)
     
     # Create all tasks at once for better scheduling
@@ -136,6 +144,7 @@ async def ultra_fast_parallel_generation(
 
     try:
         done_count = 0
+        failed = 0
         for coro in asyncio.as_completed(tasks):
             if cancel_event is not None and cancel_event.is_set():
                 for t in tasks:
@@ -146,8 +155,10 @@ async def ultra_fast_parallel_generation(
                     progress.finish(success=False)
                 ultra_fast_cleanup_parts(parts, keep_parts=False)
                 raise GenerationCancelled()
-            chunk_idx, _result = await coro
+            chunk_idx, ok = await coro
             done_count += 1
+            if not ok:
+                failed += 1
             chunk_words = (
                 len(chunks[chunk_idx].split()) if 0 <= chunk_idx < len(chunks) else 0
             )
@@ -155,6 +166,14 @@ async def ultra_fast_parallel_generation(
                 progress.update(chunk_words)
             if progress_callback:
                 progress_callback(done_count, len(chunks))
+
+        if failed:
+            # A missing chunk means missing text, so never merge a partial result.
+            ultra_fast_cleanup_parts(parts, keep_parts=False)
+            raise generation_failed(
+                f"{failed} of {len(chunks)} chunks failed to synthesize",
+                worker_errors[-1] if worker_errors else None,
+            )
 
         if progress:
             progress.finish(success=True)
@@ -170,6 +189,18 @@ async def ultra_fast_parallel_generation(
         raise e
 
     return parts
+
+
+async def _generate_direct(text, language, output_path, voice, prosody, cancel_event) -> None:
+    """Single-shot synthesis of *text*; raises ``GenerationFailed`` instead of returning False."""
+    ok = await _await_with_cancel(
+        fast_generate_audio(text, language, output_path, quiet=True,
+                            voice=voice, prosody=prosody),
+        cancel_event,
+    )
+    if not ok:
+        discard_empty_output(output_path)
+        raise generation_failed("Audio generation failed")
 
 
 def ultra_fast_cleanup_parts(parts: List[str], keep_parts: bool = False) -> None:
@@ -243,11 +274,7 @@ async def smart_generate_long_text(
         # Very short text - direct generation is fastest (unless streaming is requested)
         if progress_callback:
             progress_callback(0, 1)
-        await _await_with_cancel(
-            fast_generate_audio(text, language, output_path,
-                                voice=voice, prosody=prosody),
-            cancel_event,
-        )
+        await _generate_direct(text, language, output_path, voice, prosody, cancel_event)
         if progress_callback:
             progress_callback(1, 1)
         elapsed = time.perf_counter() - start
@@ -272,11 +299,7 @@ async def smart_generate_long_text(
         # Still short enough for direct generation (unless streaming is requested)
         if progress_callback:
             progress_callback(0, 1)
-        await _await_with_cancel(
-            fast_generate_audio(text, language, output_path,
-                                voice=voice, prosody=prosody),
-            cancel_event,
-        )
+        await _generate_direct(text, language, output_path, voice, prosody, cancel_event)
         if progress_callback:
             progress_callback(1, 1)
         elapsed = time.perf_counter() - start
@@ -374,7 +397,7 @@ async def smart_generate_long_text(
             f"  [bold green]✓[/bold green]  [bold]Completed in {elapsed:.2f}s[/bold]"
             f"  [dim]({len(chunks)} chunks, {parallel} workers)[/dim]"
         )
-    except GenerationCancelled:
+    except (GenerationCancelled, GenerationFailed):
         _interrupt_streaming_cleanup(streaming_player, parts)
         raise
     except KeyboardInterrupt:

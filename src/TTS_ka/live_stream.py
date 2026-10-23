@@ -26,7 +26,7 @@ import threading
 import time
 from typing import AsyncIterator, Callable, List, Optional, Tuple
 
-from .fast_audio import fast_generate_audio
+from .fast_audio import fast_generate_audio, generation_failed
 from .not_reading import replace_not_readable
 from .streaming_player import StreamingAudioPlayer
 
@@ -169,7 +169,8 @@ class SentenceBuffer:
 
 # Async iterator yielding either a text chunk or ``None`` to signal EOF.
 InputReader = AsyncIterator[Optional[str]]
-# Coroutine: (text, lang, output_path, *, voice, prosody) -> None
+# Coroutine: (text, lang, output_path, *, voice, prosody); signals failure by
+# returning ``False`` (like ``fast_generate_audio``) or raising.
 AudioGenerator = Callable
 
 
@@ -234,7 +235,8 @@ async def live_loop(
         async with sem:
             path = os.path.join(tmp_dir, f".part_{idx:04d}.mp3")
             try:
-                await gen(text, lang, path, voice=voice, prosody=prosody)
+                if await gen(text, lang, path, voice=voice, prosody=prosody) is False:
+                    raise generation_failed("synthesis failed")
                 player.add_chunk(path, chunk_index=idx)
             except Exception as exc:  # noqa: BLE001 — surface to user, keep going
                 print(f"⚠️  Could not speak sentence {idx}: {exc}",

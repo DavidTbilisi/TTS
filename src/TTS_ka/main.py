@@ -47,9 +47,12 @@ def _print_welcome() -> None:
 
 
 from .fast_audio import (
+    GenerationFailed,
+    discard_empty_output,
     fast_generate_audio,
-    play_audio,
     generate_audio_with_subs,
+    generation_failed,
+    play_audio,
 )
 from .streaming_player import stop_active_streaming_player
 from .ultra_fast import smart_generate_long_text, get_optimal_settings, OPTIMAL_WORKERS
@@ -737,8 +740,11 @@ For comprehensive help with examples: %(prog)s --help-full
                 )
             else:
                 start = time.perf_counter()
-                await fast_generate_audio(text, args.lang, output_path,
-                                           voice=args.voice, prosody=prosody_opts)
+                ok = await fast_generate_audio(text, args.lang, output_path, quiet=True,
+                                               voice=args.voice, prosody=prosody_opts)
+                if not ok:
+                    discard_empty_output(output_path)
+                    raise generation_failed("Audio generation failed")
                 elapsed = time.perf_counter() - start
                 print(f"⚡ Completed in {elapsed:.2f}s (direct)")
 
@@ -779,6 +785,10 @@ For comprehensive help with examples: %(prog)s --help-full
 
     try:
         asyncio.run(run_generation())
+    except GenerationFailed as exc:
+        # run_generation already emitted the --json error event.
+        print(f"❌ {exc}", file=sys.stderr)
+        raise SystemExit(1)
     except KeyboardInterrupt:
         stop_active_streaming_player()
         _cprint("\n  [yellow]⚡[/yellow]  Generation cancelled")

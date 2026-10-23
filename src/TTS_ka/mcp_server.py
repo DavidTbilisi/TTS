@@ -28,7 +28,7 @@ import tempfile
 import uuid
 from typing import Dict, List, Optional
 
-from .fast_audio import fast_generate_audio, play_audio
+from .fast_audio import fast_generate_audio, generation_failed, play_audio
 from .live_stream import DEFAULT_IDLE_FLUSH_MS, SentenceBuffer
 from .not_reading import replace_not_readable
 from .prosody import ProsodyOpts, parse_pitch, parse_rate, parse_volume
@@ -128,8 +128,10 @@ class _LiveSession:
             self._idx += 1
             path = os.path.join(self.tmp_dir, f".part_{idx:04d}.mp3")
             try:
-                await fast_generate_audio(cleaned, self.lang, path,
-                                          voice=self.voice, prosody=self.prosody)
+                ok = await fast_generate_audio(cleaned, self.lang, path,
+                                               voice=self.voice, prosody=self.prosody)
+                if ok is False:
+                    raise generation_failed("synthesis failed")
                 self.player.add_chunk(path, chunk_index=idx)
             except Exception as exc:  # noqa: BLE001
                 self._failed += 1
@@ -259,8 +261,10 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
         tmp_dir = tempfile.mkdtemp(prefix="ttska-mcp-one-")
         path = os.path.join(tmp_dir, "out.mp3")
         try:
-            await fast_generate_audio(cleaned, lang, path,
-                                      voice=voice, prosody=prosody)
+            ok = await fast_generate_audio(cleaned, lang, path,
+                                           voice=voice, prosody=prosody)
+            if ok is False:
+                raise generation_failed("synthesis failed")
         except Exception as exc:  # noqa: BLE001
             shutil.rmtree(tmp_dir, ignore_errors=True)
             return f"error: {exc}"

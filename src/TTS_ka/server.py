@@ -53,6 +53,13 @@ def _generation_semaphore() -> "asyncio.Semaphore":
     return _SEM
 
 
+def _remove_quietly(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 def create_app(token: Optional[str] = None):
     """Build the FastAPI app. Importing FastAPI is deferred so tests can mock it."""
     try:
@@ -61,7 +68,7 @@ def create_app(token: Optional[str] = None):
     except ImportError:
         raise MissingExtraError(_SERVER_REQUIREMENT, "server")
 
-    from .fast_audio import fast_generate_audio  # local import to avoid cycles
+    from .fast_audio import fast_generate_audio, generation_failed  # local import to avoid cycles
 
     app = FastAPI(title="TTS_ka", version="serve")
     token_value = token if token is not None else os.environ.get("TTS_API_TOKEN")
@@ -99,32 +106,30 @@ def create_app(token: Optional[str] = None):
         if voice and _voices.get_voice(voice) is None:
             raise HTTPException(status_code=400, detail=f"unknown voice {voice!r}")
 
-        sem = _generation_semaphore()
+        # Synthesize fully before responding so a failure can still be a
+        # proper HTTP error instead of an empty 200 body.
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+            out_path = tmp.name
+        async with _generation_semaphore():
+            ok = await fast_generate_audio(text, lang, out_path,
+                                           quiet=True, voice=voice)
+        if not ok:
+            _remove_quietly(out_path)
+            raise HTTPException(status_code=502,
+                                detail=str(generation_failed("synthesis failed")))
 
-        async def stream_audio():
-            async with sem:
-                with tempfile.NamedTemporaryFile(
-                    suffix=".mp3", delete=False
-                ) as tmp:
-                    out_path = tmp.name
-                try:
-                    ok = await fast_generate_audio(text, lang, out_path,
-                                                    quiet=True, voice=voice)
-                    if not ok:
-                        return
-                    with open(out_path, "rb") as f:
-                        while True:
-                            chunk = f.read(8192)
-                            if not chunk:
-                                break
-                            yield chunk
-                finally:
-                    try:
-                        os.remove(out_path)
-                    except OSError:
-                        pass
+        def stream_file():
+            try:
+                with open(out_path, "rb") as f:
+                    while True:
+                        chunk = f.read(8192)
+                        if not chunk:
+                            break
+                        yield chunk
+            finally:
+                _remove_quietly(out_path)
 
-        return StreamingResponse(stream_audio(), media_type="audio/mpeg")
+        return StreamingResponse(stream_file(), media_type="audio/mpeg")
 
     return app
 

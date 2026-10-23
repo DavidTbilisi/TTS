@@ -15,7 +15,13 @@ from types import SimpleNamespace
 from typing import Any, Dict
 
 from .constants import STREAMING_CHUNK_SECONDS, VOICE_MAP
-from .fast_audio import fast_generate_audio, play_audio
+from .fast_audio import (
+    GenerationFailed,
+    discard_empty_output,
+    fast_generate_audio,
+    generation_failed,
+    play_audio,
+)
 from .ultra_fast import (
     OPTIMAL_WORKERS,
     GenerationCancelled,
@@ -243,10 +249,11 @@ def _run_async_speak(
         else:
             if progress_callback:
                 progress_callback(0, 1)
-            if cancel_event is None:
-                await fast_generate_audio(text, lang, output_path)
-            else:
-                await _await_with_cancel(fast_generate_audio(text, lang, output_path), cancel_event)
+            gen = fast_generate_audio(text, lang, output_path, quiet=True)
+            ok = await (gen if cancel_event is None else _await_with_cancel(gen, cancel_event))
+            if not ok:
+                discard_empty_output(output_path)
+                raise generation_failed("Audio generation failed")
             if progress_callback:
                 progress_callback(1, 1)
 
@@ -1265,6 +1272,8 @@ class TTSSpeakApp:
                     err = "Streaming stopped: install VLC for GUI streaming, or turn off \"VLC window\"."
             except GenerationCancelled:
                 err = "Cancelled."
+            except GenerationFailed as exc:
+                err = str(exc)
             except KeyboardInterrupt:
                 err = "Cancelled."
             except BaseException:
