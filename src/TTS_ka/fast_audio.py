@@ -3,7 +3,9 @@
 Design
 ------
 ``EdgeTTSGenerator`` synthesises one chunk with the ``edge-tts`` library,
-retrying transient 403/429 responses with backoff.
+retrying transient failures (timeouts, dropped connections, 403/408/429/5xx)
+with jittered exponential backoff. ``fast_generate_audio`` serves repeats
+from ``chunk_cache`` and stores every new chunk there.
 
 ``AudioMerger`` (Protocol) abstracts the merge back-ends:
 
@@ -25,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
 import shutil
 import subprocess
 import sys
@@ -45,6 +48,7 @@ try:
 except ImportError:
     HAS_PYDUB = False
 
+from . import chunk_cache
 from .constants import VOICE_MAP
 from .not_reading import replace_not_readable
 from .prosody import ProsodyOpts
@@ -64,8 +68,46 @@ class AudioMerger(Protocol):
 # ── Generator ─────────────────────────────────────────────────────────────────
 
 def _edge_tts_transient(err: BaseException) -> bool:
+    """403/429-style rejections; these get the ``pip install -U edge-tts`` hint."""
     msg = str(err).lower()
     return "403" in msg or "invalid response status" in msg or "429" in msg
+
+
+_RETRY_STATUSES = frozenset({403, 408, 429})
+# edge-tts / aiohttp errors matched by name: the module may be absent or mocked.
+_RETRY_ERROR_NAMES = frozenset({"NoAudioReceived", "WebSocketError"})
+# Thrown when the service returned nothing for the text; retrying more than
+# once rarely helps and only delays the error.
+_NO_AUDIO = "NoAudioReceived"
+_RETRY_AFTER_CAP = 30.0
+
+
+def _is_retryable(err: BaseException) -> bool:
+    """True for failures worth another attempt: network hiccups and throttling."""
+    if isinstance(err, (TimeoutError, asyncio.TimeoutError, ConnectionError)):
+        return True
+    status = getattr(err, "status", None)
+    if isinstance(status, int):
+        return status in _RETRY_STATUSES or 500 <= status < 600
+    if type(err).__name__ in _RETRY_ERROR_NAMES:
+        return True
+    try:
+        import aiohttp
+        if isinstance(err, aiohttp.ClientError):
+            return True
+    except ImportError:  # pragma: no cover - aiohttp ships with edge-tts
+        pass
+    return _edge_tts_transient(err)
+
+
+def _retry_after_seconds(err: BaseException) -> Optional[float]:
+    """The server's ``Retry-After`` (seconds) on a throttled response, if any."""
+    headers = getattr(err, "headers", None)
+    try:
+        value = headers.get("Retry-After") if headers is not None else None
+        return min(float(value), _RETRY_AFTER_CAP) if value is not None else None
+    except (TypeError, ValueError, AttributeError):
+        return None
 
 
 class GenerationFailed(RuntimeError):
@@ -90,18 +132,27 @@ def generation_failed(summary: str, err: Optional[BaseException] = None) -> Gene
 
 
 async def _retry_edge(attempt: Callable[[], Awaitable[None]], retries: int,
-                      base_delay: float) -> None:
-    """Await *attempt()* up to *retries* times, backing off on transient edge-tts errors.
+                      base_delay: float, max_delay: float) -> None:
+    """Await *attempt()* up to *retries* times, backing off on retryable errors.
 
-    Re-raises the last error when it is not transient or retries run out.
+    The delay doubles per attempt (capped at *max_delay*) with 0.5-1.5x jitter
+    so parallel chunks don't retry in lockstep; a ``Retry-After`` header wins
+    when it asks for longer. Re-raises the last error when it is not
+    retryable or retries run out.
     """
+    no_audio_seen = False
     for n in range(retries):
         try:
             await attempt()
             return
         except Exception as e:
-            if n < retries - 1 and _edge_tts_transient(e):
-                await asyncio.sleep(base_delay * (2**n))
+            if type(e).__name__ == _NO_AUDIO:
+                if no_audio_seen:
+                    raise
+                no_audio_seen = True
+            if n < retries - 1 and _is_retryable(e):
+                delay = min(max_delay, base_delay * (2**n)) * random.uniform(0.5, 1.5)
+                await asyncio.sleep(max(delay, _retry_after_seconds(e) or 0.0))
                 continue
             raise
 
@@ -118,12 +169,14 @@ def discard_empty_output(path: str) -> None:
 class EdgeTTSGenerator:
     """Single-chunk generator using the ``edge-tts`` library."""
 
-    _EDGE_RETRIES = 3
-    _EDGE_RETRY_BASE_DELAY = 0.45
+    _EDGE_RETRIES = 4
+    _EDGE_RETRY_BASE_DELAY = 0.5
+    _EDGE_RETRY_MAX_DELAY = 4.0
 
     async def generate(self, text: str, language: str, output_path: str,
                        quiet: bool = False, voice: Optional[str] = None,
-                       prosody: Optional[ProsodyOpts] = None) -> bool:
+                       prosody: Optional[ProsodyOpts] = None,
+                       use_cache: bool = True) -> bool:
         global _last_error
         resolved_voice = voice or VOICE_MAP.get(language)
         if not resolved_voice:
@@ -133,9 +186,17 @@ class EdgeTTSGenerator:
             if not quiet:
                 print(f"❌ Language '{language}' not supported. Use: {', '.join(VOICE_MAP)}")
             return False
-        from edge_tts import Communicate
 
         clean_text = replace_not_readable(text)
+        cache = chunk_cache.get_cache() if use_cache else None
+        key = chunk_cache.cache_key(clean_text, resolved_voice, prosody) if cache else ""
+        if cache is not None and cache.fetch(key, output_path):
+            if not quiet:
+                print(f"Generated (cached): {os.path.abspath(output_path)}")
+            return True
+
+        from edge_tts import Communicate
+
         edge_kwargs: dict = {}
         if prosody and not prosody.is_default():
             edge_kwargs["rate"] = prosody.rate
@@ -147,10 +208,13 @@ class EdgeTTSGenerator:
             await communicate.save(output_path)
 
         try:
-            await _retry_edge(attempt, self._EDGE_RETRIES, self._EDGE_RETRY_BASE_DELAY)
+            await _retry_edge(attempt, self._EDGE_RETRIES, self._EDGE_RETRY_BASE_DELAY,
+                              self._EDGE_RETRY_MAX_DELAY)
         except Exception as e:
             last_err: Optional[BaseException] = e
         else:
+            if cache is not None:
+                cache.store(key, output_path)
             if not quiet:
                 print(f"Generated: {os.path.abspath(output_path)}")
             return True
@@ -310,16 +374,20 @@ class FFmpegMerger:
 async def fast_generate_audio(text: str, language: str, output_path: str,
                                quiet: bool = False,
                                voice: Optional[str] = None,
-                               prosody: Optional[ProsodyOpts] = None) -> bool:
+                               prosody: Optional[ProsodyOpts] = None,
+                               use_cache: bool = True) -> bool:
     """Generate audio for one chunk of *text* via edge-tts.
 
     When *voice* is set, it overrides the per-language default from VOICE_MAP.
     When *prosody* is set with non-default rate/pitch/volume, the values are
-    passed through to ``edge_tts.Communicate``.
+    passed through to ``edge_tts.Communicate``. A chunk synthesized before
+    with the same text, voice and prosody is copied from ``chunk_cache``
+    instead (unless *use_cache* is False or the cache is disabled).
     """
     return await EdgeTTSGenerator().generate(text, language, output_path,
                                               quiet, voice=voice,
-                                              prosody=prosody)
+                                              prosody=prosody,
+                                              use_cache=use_cache)
 
 
 async def generate_audio_with_subs(text: str, language: str, output_path: str,
@@ -346,6 +414,13 @@ async def generate_audio_with_subs(text: str, language: str, output_path: str,
         raise ValueError(f"Language {language!r} is not supported")
 
     clean_text = replace_not_readable(text)
+    cache = chunk_cache.get_cache()
+    key = chunk_cache.cache_key(clean_text, resolved_voice, prosody) if cache else ""
+    if cache is not None:
+        cached_events = cache.fetch_words(key)
+        if cached_events is not None and cache.fetch(key, output_path):
+            return cached_events
+
     kwargs: dict = {}
     if prosody and not prosody.is_default():
         kwargs["rate"] = prosody.rate
@@ -378,13 +453,17 @@ async def generate_audio_with_subs(text: str, language: str, output_path: str,
 
     try:
         await _retry_edge(attempt, EdgeTTSGenerator._EDGE_RETRIES,
-                          EdgeTTSGenerator._EDGE_RETRY_BASE_DELAY)
+                          EdgeTTSGenerator._EDGE_RETRY_BASE_DELAY,
+                          EdgeTTSGenerator._EDGE_RETRY_MAX_DELAY)
     except Exception as exc:
         try:
             os.remove(output_path)
         except OSError:
             pass
         raise generation_failed("Subtitled audio generation failed", exc) from exc
+    if cache is not None:
+        cache.store(key, output_path)
+        cache.store_words(key, events)
     return events
 
 

@@ -268,7 +268,7 @@ POST /synthesize             → audio/mpeg stream
      auth: Authorization: Bearer <token>
 ```
 
-Concurrency is capped at `MAX_PARALLEL_WORKERS` (32 by default; see `constants.py`). Each request is synthesized to a temporary MP3 that is streamed back as `audio/mpeg` and then deleted.
+Concurrency is capped at `MAX_PARALLEL_WORKERS` (6; see `constants.py`). Each request is synthesized to a temporary MP3 that is streamed back as `audio/mpeg` and then deleted.
 
 ---
 
@@ -375,7 +375,7 @@ tts-ka-hotkeys    # background hotkey listener (Windows, [hotkeys] extra)
 | `-o`, `--output PATH` | Output MP3 path (default `data.mp3`); refuses overwrite without `--force` |
 | `--force` | Overwrite an existing output file |
 | `-c`, `--chunk-seconds N` | Chunk size (`0` = auto, `20–60` is the sweet spot) |
-| `-j`, `--parallel N` | Workers (`0` = auto, max from `MAX_PARALLEL_WORKERS`) |
+| `-j`, `--parallel N` | Workers (`0` = auto, capped at `MAX_PARALLEL_WORKERS` = 6) |
 | `-n`, `--no-play` | Skip automatic playback after generation |
 | `-s`, `--stream` | Play chunks as they finish |
 | `--no-gui` | With `--stream`, run VLC headless |
@@ -426,6 +426,8 @@ tts-ka-hotkeys    # background hotkey listener (Windows, [hotkeys] extra)
 | `--help-full`, `-H` | Comprehensive help screen |
 | `--print-completion {bash,zsh,fish}` | Emit a completion script |
 | `--config PATH` | Use this JSON config (also `TTS_KA_CONFIG` env var) |
+| `--no-cache` | Synthesize everything fresh this run (don't read or write the chunk cache) |
+| `--clear-cache` | Delete the chunk cache, report the space freed, exit |
 
 ---
 
@@ -455,6 +457,8 @@ All keys are optional. Real, supported schema:
   "volume":        "+0%",
 
   "vlc_rc":        true,
+  "cache":         true,
+  "cache_max_mb":  500,
 
   "hotkeys": {
     "<ctrl>+<alt>+1": "en",
@@ -467,7 +471,7 @@ All keys are optional. Real, supported schema:
 
 `rate` / `pitch` / `volume` are signed strings in the same form `--rate` / `--pitch` / `--volume` accept on the CLI. They become the default for **every** invocation — CLI, GUI, REST server, and MCP server. Pass them per-call on `mcp__tts-ka__speak` / `stream_open` to override for one call; pass `--rate` etc. on the CLI to override one run.
 
-`"vlc_rc": false` sets `TTS_KA_VLC_RC=0` for the process (unless that variable is already set), so you don't have to export it in every shell.
+`"vlc_rc": false` sets `TTS_KA_VLC_RC=0` for the process (unless that variable is already set), so you don't have to export it in every shell. Likewise `"cache": false` → `TTS_KA_CACHE=0` and `"cache_max_mb"` → `TTS_KA_CACHE_MAX_MB`.
 
 `hotkeys`: pynput combo strings → `--lang` codes. JSON `null` removes a default.
 
@@ -478,6 +482,9 @@ All keys are optional. Real, supported schema:
 | `TTS_KA_CONFIG` | Alternate config file path |
 | `TTS_KA_VLC_RC` | `0` → disable VLC remote-control mode (one VLC per chunk instead) |
 | `TTS_KA_MPV_IPC` | `0` → don't drive headless mpv over JSON IPC (falls back to a stdin playlist; no pause/skip) |
+| `TTS_KA_CACHE` | `0` → disable the chunk cache |
+| `TTS_KA_CACHE_DIR` | Chunk cache location (default `$XDG_CACHE_HOME/tts-ka`, `~/Library/Caches/tts-ka`, `%LOCALAPPDATA%\tts-ka\Cache`) |
+| `TTS_KA_CACHE_MAX_MB` | Chunk cache size cap, least-recently-used pruned (default `500`, ≈ 23 h of speech) |
 | `TTS_API_TOKEN` | Bearer token required by `tts-ka serve` |
 
 ---
@@ -508,6 +515,8 @@ The shape of the call is what matters, not magic flags:
 - **Short text** (under ~200 words, no streaming): one direct edge-tts call. Latency is dominated by the network round-trip.
 - **Long text**: split into ~30-second chunks, synthesized in parallel (`--parallel` workers) into a private temp dir, then joined losslessly by byte-concatenating the MP3 parts (no re-encode). Non-MP3 output falls back to `soundfile` → `pydub` → `ffmpeg`. A merge that would drop a chunk fails the run instead of writing a shorter file.
 - **Streaming**: chunk size drops to `STREAMING_CHUNK_SECONDS = 15` so the first chunk lands fast and feeds the player while the rest synthesizes.
+- **Chunk cache**: every synthesized chunk is cached by (text, voice, rate/pitch/volume), so re-reading the same text is near-instant and a run that failed part-way **resumes**: re-run the same command and only the missing chunks are synthesized. Resuming needs the same chunking — keep `--chunk-seconds`, `-j` and `--stream` unchanged. `tts-ka --doctor` shows the cache size; `--clear-cache` empties it.
+- **Retries**: timeouts, dropped connections and 403/408/429/5xx responses are retried with jittered exponential backoff (honouring `Retry-After`). The first chunk that still fails stops the run at once rather than spending requests on a result that can't be used.
 
 For honest timings, run `python -m TTS_ka your-real-text --lang en` and read the printed `Completed in X.XXs` line. Numbers depend heavily on your network to Edge's TTS endpoint, so machine-published benchmarks are not meaningful.
 

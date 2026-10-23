@@ -81,7 +81,8 @@ class TestFastGenerateAudio:
                                                voice="en-US-JennyNeural", prosody=prosody)
         assert result is True
         mock_edge.assert_awaited_once_with("Hello", "en", out, True,
-                                           voice="en-US-JennyNeural", prosody=prosody)
+                                           voice="en-US-JennyNeural", prosody=prosody,
+                                           use_cache=True)
 
     async def test_invalid_language_returns_false(self, temp_dir):
         out = os.path.join(temp_dir, "out.mp3")
@@ -369,9 +370,10 @@ class TestEdgeTTSRetry:
         with patch.dict('sys.modules', {'edge_tts': mock_edge}), \
              patch('TTS_ka.fast_audio.asyncio.sleep', new=AsyncMock()) as msleep:
             result = await EdgeTTSGenerator().generate("hi", "en", out, quiet=False)
+        retries = EdgeTTSGenerator._EDGE_RETRIES
         assert result is False
-        assert mock_edge.Communicate.call_count == 3   # exhausted all retries
-        assert msleep.await_count == 2                 # slept between the 3 attempts
+        assert mock_edge.Communicate.call_count == retries   # exhausted all retries
+        assert msleep.await_count == retries - 1             # slept between attempts
         assert "403" in capsys.readouterr().out        # actionable hint shown
 
     async def test_non_transient_breaks_immediately(self, temp_dir):
@@ -536,3 +538,170 @@ class TestGenerateAudioWithSubsContract:
         with pytest.raises(GenerationFailed, match="disk full"):
             await generate_audio_with_subs("hi", "en", str(out))
         assert not out.exists()
+
+
+# ---------------------------------------------------------------------------
+# Retry classification and backoff
+# ---------------------------------------------------------------------------
+
+def _edge_failing(*errors):
+    """edge_tts stand-in whose save() raises *errors* in turn, then succeeds."""
+    insts = []
+    for err in errors:
+        inst = AsyncMock()
+        inst.save = AsyncMock(side_effect=err)
+        insts.append(inst)
+    insts.append(AsyncMock())
+    mod = MagicMock()
+    mod.Communicate = MagicMock(side_effect=insts)
+    return mod
+
+
+class NoAudioReceived(Exception):
+    """Same name as edge_tts.exceptions.NoAudioReceived (matched by name)."""
+
+
+class _Throttled(Exception):
+    def __init__(self, status, retry_after=None):
+        super().__init__(f"status {status}")
+        self.status = status
+        self.headers = {"Retry-After": retry_after} if retry_after else {}
+
+
+class TestRetryPolicy:
+    @pytest.mark.parametrize("err", [
+        ConnectionResetError("reset by peer"),
+        TimeoutError("read timed out"),
+        _Throttled(503),
+        _Throttled(408),
+        NoAudioReceived("no audio"),
+    ])
+    async def test_transient_errors_are_retried(self, temp_dir, err):
+        mod = _edge_failing(err)
+        with patch.dict('sys.modules', {'edge_tts': mod}), \
+             patch('TTS_ka.fast_audio.asyncio.sleep', new=AsyncMock()):
+            ok = await EdgeTTSGenerator().generate("hi", "en", os.path.join(temp_dir, "o.mp3"),
+                                                   quiet=True)
+        assert ok is True
+        assert mod.Communicate.call_count == 2
+
+    @pytest.mark.parametrize("err", [_Throttled(404), ValueError("bad voice")])
+    async def test_permanent_errors_are_not_retried(self, temp_dir, err):
+        mod = _edge_failing(err)
+        with patch.dict('sys.modules', {'edge_tts': mod}), \
+             patch('TTS_ka.fast_audio.asyncio.sleep', new=AsyncMock()) as msleep:
+            ok = await EdgeTTSGenerator().generate("hi", "en", os.path.join(temp_dir, "o.mp3"),
+                                                   quiet=True)
+        assert ok is False
+        msleep.assert_not_awaited()
+
+    async def test_no_audio_is_retried_only_once(self, temp_dir):
+        mod = _edge_failing(NoAudioReceived("x"), NoAudioReceived("x"), NoAudioReceived("x"))
+        with patch.dict('sys.modules', {'edge_tts': mod}), \
+             patch('TTS_ka.fast_audio.asyncio.sleep', new=AsyncMock()):
+            ok = await EdgeTTSGenerator().generate("hi", "en", os.path.join(temp_dir, "o.mp3"),
+                                                   quiet=True)
+        assert ok is False
+        assert mod.Communicate.call_count == 2
+
+    async def test_backoff_is_jittered_exponential_and_capped(self, temp_dir):
+        errs = [ConnectionResetError()] * (EdgeTTSGenerator._EDGE_RETRIES - 1)
+        mod = _edge_failing(*errs)
+        with patch.dict('sys.modules', {'edge_tts': mod}), \
+             patch('TTS_ka.fast_audio.random.uniform', return_value=1.5), \
+             patch.object(EdgeTTSGenerator, '_EDGE_RETRY_MAX_DELAY', 1.0), \
+             patch('TTS_ka.fast_audio.asyncio.sleep', new=AsyncMock()) as msleep:
+            await EdgeTTSGenerator().generate("hi", "en", os.path.join(temp_dir, "o.mp3"), quiet=True)
+        delays = [c.args[0] for c in msleep.await_args_list]
+        assert delays == [0.75, 1.5, 1.5]   # base 0.5, x2 per try, cap 1.0, x1.5 jitter
+
+    async def test_retry_after_header_wins_when_longer(self, temp_dir):
+        mod = _edge_failing(_Throttled(429, retry_after="7"))
+        with patch.dict('sys.modules', {'edge_tts': mod}), \
+             patch('TTS_ka.fast_audio.asyncio.sleep', new=AsyncMock()) as msleep:
+            await EdgeTTSGenerator().generate("hi", "en", os.path.join(temp_dir, "o.mp3"), quiet=True)
+        assert msleep.await_args.args[0] == 7.0
+
+    def test_upgrade_hint_only_for_rejections(self):
+        from TTS_ka.fast_audio import generation_failed
+        assert "pip install -U edge-tts" in str(generation_failed("x", Exception("403 Forbidden")))
+        assert "pip install" not in str(generation_failed("x", ConnectionResetError("reset")))
+
+
+# ---------------------------------------------------------------------------
+# Chunk cache integration
+# ---------------------------------------------------------------------------
+
+class TestCacheIntegration:
+    @pytest.fixture
+    def cache_on(self, tmp_path, monkeypatch):
+        from TTS_ka import chunk_cache
+        monkeypatch.setenv("TTS_KA_CACHE", "1")
+        monkeypatch.setenv("TTS_KA_CACHE_DIR", str(tmp_path / "cache"))
+        chunk_cache.configure()
+        return chunk_cache.get_cache()
+
+    def _edge_writing(self, payload=b"\xff\xf3audio"):
+        inst = MagicMock()
+
+        async def save(path):
+            with open(path, "wb") as f:
+                f.write(payload)
+        inst.save = save
+        mod = MagicMock()
+        mod.Communicate = MagicMock(return_value=inst)
+        return mod
+
+    async def test_second_identical_request_is_served_from_cache(self, temp_dir, cache_on):
+        mod = self._edge_writing()
+        a, b = os.path.join(temp_dir, "a.mp3"), os.path.join(temp_dir, "b.mp3")
+        with patch.dict('sys.modules', {'edge_tts': mod}):
+            assert await fast_generate_audio("Hello there", "en", a, quiet=True)
+            assert await fast_generate_audio("Hello there", "en", b, quiet=True)
+        assert mod.Communicate.call_count == 1
+        with open(b, "rb") as f:
+            assert f.read() == b"\xff\xf3audio"
+
+    async def test_voice_or_prosody_change_misses(self, temp_dir, cache_on):
+        from TTS_ka.prosody import ProsodyOpts
+        mod = self._edge_writing()
+        out = os.path.join(temp_dir, "o.mp3")
+        with patch.dict('sys.modules', {'edge_tts': mod}):
+            await fast_generate_audio("Hello", "en", out, quiet=True)
+            await fast_generate_audio("Hello", "en", out, quiet=True, voice="en-US-JennyNeural")
+            await fast_generate_audio("Hello", "en", out, quiet=True, prosody=ProsodyOpts(rate="+20%"))
+        assert mod.Communicate.call_count == 3
+
+    async def test_failure_is_not_cached(self, temp_dir, cache_on):
+        bad = _edge_failing(ValueError("boom"))
+        out = os.path.join(temp_dir, "o.mp3")
+        with patch.dict('sys.modules', {'edge_tts': bad}):
+            assert await fast_generate_audio("Hello", "en", out, quiet=True) is False
+        assert cache_on.usage() == (0, 0)
+
+    async def test_use_cache_false_bypasses(self, temp_dir, cache_on):
+        mod = self._edge_writing()
+        out = os.path.join(temp_dir, "o.mp3")
+        with patch.dict('sys.modules', {'edge_tts': mod}):
+            await fast_generate_audio("Hello", "en", out, quiet=True, use_cache=False)
+            await fast_generate_audio("Hello", "en", out, quiet=True, use_cache=False)
+        assert mod.Communicate.call_count == 2
+        assert cache_on.usage() == (0, 0)
+
+    async def test_subtitled_audio_caches_words_too(self, temp_dir, cache_on):
+        from TTS_ka.fast_audio import generate_audio_with_subs
+        calls = []
+
+        class FakeCommunicate:
+            def __init__(self, *a, **k):
+                calls.append(k)
+
+            async def stream(self):
+                yield {"type": "audio", "data": b"\xff\xf3A"}
+                yield {"type": "WordBoundary", "offset": 0, "duration": 10_000, "text": "Hi"}
+
+        with patch.dict('sys.modules', {'edge_tts': MagicMock(Communicate=FakeCommunicate)}):
+            first = await generate_audio_with_subs("Hi", "en", os.path.join(temp_dir, "a.mp3"))
+            second = await generate_audio_with_subs("Hi", "en", os.path.join(temp_dir, "b.mp3"))
+        assert len(calls) == 1
+        assert first == second

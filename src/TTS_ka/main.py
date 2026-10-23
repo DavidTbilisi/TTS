@@ -79,6 +79,7 @@ from .readers import READERS, read_file as _read_file, MissingExtraError
 from . import metadata as _metadata
 from . import subtitles as _subtitles
 from . import completion as _completion
+from . import chunk_cache as _chunk_cache
 
 
 def format_cli_version_info() -> str:
@@ -560,6 +561,17 @@ For comprehensive help with examples: %(prog)s --help-full
         help="In --live mode, flush a partial sentence after this many ms of stdin silence (default 800).",
     )
     parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Synthesize every chunk fresh instead of reusing cached audio "
+             "(env TTS_KA_CACHE=0, config \"cache\": false).",
+    )
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Delete all cached chunk audio, report how much was freed, and exit.",
+    )
+    parser.add_argument(
         "--study",
         action="store_true",
         help="Open the synchronized RSVP + audio study window for the input text "
@@ -588,6 +600,15 @@ For comprehensive help with examples: %(prog)s --help-full
         from .deps import run_dependency_check
 
         sys.exit(run_dependency_check())
+
+    if args.clear_cache:
+        cache = _chunk_cache.ChunkCache(_chunk_cache.default_dir(), 0)
+        files, size = cache.clear()
+        print(f"Cleared {files} cached file(s), {size / 1_048_576:.1f} MB from {cache.root}")
+        return
+
+    if args.no_cache:
+        _chunk_cache.configure(enabled=False)
 
     if args.help_full:
         show_simple_help()
@@ -772,6 +793,10 @@ For comprehensive help with examples: %(prog)s --help-full
 
     if parallel == 0:
         parallel = min(4, OPTIMAL_WORKERS)
+    elif parallel > OPTIMAL_WORKERS:
+        _cprint(f"  [dim]-j {parallel} capped at {OPTIMAL_WORKERS} "
+                "(more parallel requests only get throttled)[/dim]")
+        parallel = OPTIMAL_WORKERS
 
     prosody_opts = _prosody.build_opts(args.rate, args.pitch, args.volume)
     emit({"event": "start", "words": len(text.split()), "lang": args.lang})

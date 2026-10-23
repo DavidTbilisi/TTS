@@ -41,12 +41,6 @@ def _text_hash(text: str, voice: str, prosody: ProsodyOpts) -> str:
     return h.hexdigest()[:16]
 
 
-def _cache_dir() -> Path:
-    p = Path(tempfile.gettempdir()) / "tts_ka_study"
-    p.mkdir(parents=True, exist_ok=True)
-    return p
-
-
 class StudyPlayer:
     """Tk + pygame window that drives one synchronized study session."""
 
@@ -109,9 +103,8 @@ class StudyPlayer:
 
     def _prepare_audio(self) -> None:
         try:
-            cache_dir = _cache_dir()
-            digest = _text_hash(self.text, self.voice, self.prosody)
-            audio_path = cache_dir / f"{digest}.mp3"
+            # Repeat sessions are served by chunk_cache inside generate_audio_with_subs.
+            audio_path = Path(tempfile.mkdtemp(prefix="ttska-study-")) / "study.mp3"
             events = asyncio.run(
                 generate_audio_with_subs(
                     self.text, self.language, str(audio_path),

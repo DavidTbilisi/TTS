@@ -26,7 +26,7 @@ from .constants import (
 )
 
 # Optimal worker count
-OPTIMAL_WORKERS = min(MAX_PARALLEL_WORKERS, (os.cpu_count() or 1) * 4)
+OPTIMAL_WORKERS = MAX_PARALLEL_WORKERS
 
 
 # Per-run temp dirs holding the chunk part files.
@@ -187,7 +187,15 @@ async def ultra_fast_parallel_generation(
             chunk_idx, ok = await coro
             done_count += 1
             if not ok:
+                # Fail fast: the run can't succeed, so stop spending requests on
+                # it. Chunks that already finished are in the chunk cache, so a
+                # re-run resumes instead of starting over.
                 failed += 1
+                for t in tasks:
+                    if not t.done():
+                        t.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                break
             chunk_words = (
                 len(chunks[chunk_idx].split()) if 0 <= chunk_idx < len(chunks) else 0
             )

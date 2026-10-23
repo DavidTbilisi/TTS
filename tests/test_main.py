@@ -788,3 +788,33 @@ class TestStudyFlag:
         assert kwargs['voice'] == 'en-GB-SoniaNeural'
         assert kwargs['prosody'].rate == '+20%'
         assert kwargs['prosody'].pitch == '+5Hz'
+
+
+class TestCacheFlags:
+    def test_clear_cache_reports_and_exits(self, tmp_path, monkeypatch, capsys):
+        from TTS_ka import chunk_cache
+        monkeypatch.setenv("TTS_KA_CACHE_DIR", str(tmp_path))
+        cache = chunk_cache.ChunkCache(tmp_path, 10**9)
+        src = tmp_path / "src.mp3"
+        src.write_bytes(b"x" * 2048)
+        cache.store("a" * 64, str(src))
+        with patch('TTS_ka.main.fast_generate_audio', new=AsyncMock()) as mgen:
+            assert _run_main(['--clear-cache']) == 0
+        mgen.assert_not_called()
+        assert "Cleared 1 cached file(s)" in capsys.readouterr().out
+        assert cache.usage() == (0, 0)
+
+    def test_no_cache_disables_for_the_run(self, monkeypatch):
+        from TTS_ka import chunk_cache
+        monkeypatch.setenv("TTS_KA_CACHE", "1")
+        chunk_cache.configure()
+        with patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)), \
+             patch('TTS_ka.main.get_optimal_settings', return_value=_DIRECT):
+            assert _run_main(['hi', '--no-cache', '--no-play']) == 0
+        assert chunk_cache.get_cache() is None
+
+    def test_parallel_above_cap_is_clamped(self, capsys):
+        with patch('TTS_ka.main.smart_generate_long_text', new=AsyncMock()) as mgen:
+            assert _run_main(['word ' * 300, '-j', '32', '--no-play']) == 0
+        assert mgen.call_args.kwargs['parallel'] == 6
+        assert "capped at 6" in capsys.readouterr().err
