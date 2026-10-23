@@ -412,7 +412,9 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
         """Play *path* through a StreamingAudioPlayer; return seconds waited when *blocking*.
 
         Returns None (without playing) when no streaming-capable player is
-        installed, so the caller can fall back to ``play_audio``.
+        installed, so the caller can fall back to ``play_audio``. A blocking
+        call raises ``ToolError`` when the player reported that it could not
+        play the clip, rather than claiming it was played.
         """
         if PlayerDetector.find() is None:
             return None
@@ -433,6 +435,8 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
             return 0.0
         started = time.monotonic()
         await release()
+        if player.playback_error:
+            raise ToolError(f"playback failed: {player.playback_error}")
         return time.monotonic() - started
 
     @server.tool()

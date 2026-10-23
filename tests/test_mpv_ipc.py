@@ -29,11 +29,13 @@ class _FakeMpv:
 
     instances: list = []
 
-    def __init__(self, argv, **_kwargs):
+    def __init__(self, argv, **kwargs):
         self.argv = argv
+        self.kwargs = kwargs
         self.commands: list = []
         self.exited = threading.Event()
         self.answer = True           # False: swallow replies (models a hung mpv)
+        self.plays = True            # False: accept loadfile but never start (stuck mpv)
         self.next_entry = 1
         self._conn = None
         self._lock = threading.Lock()
@@ -105,6 +107,8 @@ class _FakeMpv:
                 self.emit({"event": "property-change", "id": cmd[1], "name": cmd[2], "data": True})
             elif cmd[0] == "loadfile":
                 self.emit({"event": "property-change", "id": 1, "name": "idle-active", "data": False})
+                if self.plays:
+                    self.emit({"event": "start-file", "playlist_entry_id": data["playlist_entry_id"]})
             elif cmd[0] == "quit":
                 self._exit()
                 return
@@ -148,6 +152,10 @@ class TestArgv:
         assert "--input-ipc-server=/tmp/x.sock" in argv
         assert "--playlist=-" not in argv
 
+    def test_loads_no_scripts(self):
+        """A script that never finishes loading (flatpak mpris without D-Bus) would stall mpv."""
+        assert "--load-scripts=no" in MpvIpc("mpv").argv("/tmp/x.sock")
+
     def test_never_matches_the_stdin_playlist_invocation(self):
         """User mpv wrappers key on --playlist=- / --keep-open for the GUI path."""
         argv = MpvIpc("mpv").argv("/tmp/x.sock")
@@ -164,6 +172,25 @@ class TestLifecycle:
         assert mpv.exited.is_set()
         assert not os.path.exists(sock_dir)
         ipc.close()  # idempotent
+
+    def test_mpv_gets_its_own_process_group(self, fake_mpv):
+        ipc, mpv = _started()
+        assert mpv.kwargs.get("start_new_session") is True
+        ipc.close()
+
+    def test_start_closes_mpv_that_connects_but_never_answers(self, fake_mpv):
+        class _Mute(_FakeMpv):
+            def __init__(self, argv, **kwargs):
+                super().__init__(argv, **kwargs)
+                self.answer = False
+
+        with patch("TTS_ka.mpv_ipc.subprocess.Popen", _Mute):
+            ipc = MpvIpc("mpv")
+            with pytest.raises(MpvIpcError, match="did not answer"):
+                ipc.start(connect_timeout=3)
+        mpv = _FakeMpv.instances[-1]
+        assert getattr(mpv, "killed", False)
+        assert ipc._dir is None
 
     def test_dead_process_fails_fast(self, monkeypatch):
         class _Dead:
@@ -280,6 +307,18 @@ class TestWaitDone:
         assert ipc.wait_done(should_continue=lambda: False) is False
         ipc.close()
 
+    def test_mpv_that_never_starts_playing_is_an_error(self, fake_mpv, monkeypatch):
+        """mpv accepts loadfile but plays nothing (stuck loading scripts): don't wait forever."""
+        monkeypatch.setattr(mpv_ipc, "START_TIMEOUT", 0.3)
+        ipc, mpv = _started()
+        mpv.plays = False
+        ipc.append("a.mp3")
+        t0 = time.monotonic()
+        with pytest.raises(MpvIpcError, match="did not start playing"):
+            ipc.wait_done(timeout=5)
+        assert time.monotonic() - t0 < 2
+        ipc.close()
+
     def test_error_entry_reports_and_counts_as_ended(self, fake_mpv):
         errors = []
         ipc, mpv = _started(on_error=errors.append)
@@ -288,6 +327,41 @@ class TestWaitDone:
         assert ipc.wait_done(timeout=2) is True
         assert errors and errors[0]["playlist_entry_id"] == 1
         ipc.close()
+
+
+class TestKillProcessGroup:
+    @pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX")
+    def test_kills_the_whole_group_not_just_the_pid_it_holds(self):
+        """Like flatpak's bwrap: the PID Popen holds is a wrapper; the real player is its child."""
+        proc = subprocess.Popen(["sh", "-c", "sleep 30 & echo $!; wait"], stdout=subprocess.PIPE,
+                                start_new_session=True, text=True)
+        child = int(proc.stdout.readline())
+        mpv_ipc.kill_process_group(proc)
+        proc.wait(timeout=5)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                os.kill(child, 0)
+            except ProcessLookupError:
+                break
+            with open(f"/proc/{child}/stat") as f:
+                if f.read().split()[2] == "Z":  # killed, waiting to be reaped
+                    break
+            time.sleep(0.05)
+        else:
+            os.kill(child, 9)
+            pytest.fail("child of the killed wrapper is still running")
+
+    def test_falls_back_to_kill_without_a_pid(self):
+        class _Proc:
+            killed = False
+
+            def kill(self):
+                self.killed = True
+
+        proc = _Proc()
+        mpv_ipc.kill_process_group(proc)
+        assert proc.killed
 
 
 @pytest.mark.integration

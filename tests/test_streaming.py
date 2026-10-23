@@ -343,6 +343,8 @@ class TestStreamingAudioPlayer:
         assert mock_popen.call_count == 1
         argv = mock_popen.call_args[0][0]
         assert "--playlist=-" in argv
+        # Own process group, so stop() reaches a flatpak mpv inside bwrap.
+        assert mock_popen.call_args.kwargs.get("start_new_session") is True
         written = b"".join(
             ca[0][0] for ca in mock_stdin.write.call_args_list
         )
@@ -1254,6 +1256,40 @@ class TestPlayMpvIpc:
         player, ipc, _ = self._run(temp_dir, wait_done=False)
         ipc.close.assert_called_once()
         assert player._released is False
+        assert player.playback_error is None
+
+    def test_stuck_mpv_is_recorded_as_a_playback_error(self, temp_dir):
+        from TTS_ka.mpv_ipc import MpvIpcError
+
+        player = StreamingAudioPlayer(show_gui=False)
+        player.is_playing = True
+        player.chunk_queue.put(_mp3(temp_dir, "0.mp3"))
+        player.chunk_queue.put(None)
+        with patch("TTS_ka.streaming_player.MpvIpc") as mcls:
+            mcls.return_value.wait_done.side_effect = MpvIpcError("mpv did not start playing within 10s")
+            assert player._play_mpv_ipc("mpv") is True
+        mcls.return_value.close.assert_called_once()
+        assert player.playback_error == "mpv did not start playing within 10s"
+        assert player._released is False
+
+    def test_unplayable_chunk_is_recorded_as_a_playback_error(self):
+        player = StreamingAudioPlayer(show_gui=False)
+        player._on_mpv_entry_error({"playlist_entry_id": 1, "file_error": "audio output initialization failed"})
+        player._on_mpv_entry_error({"playlist_entry_id": 2, "file_error": "later error"})
+        assert player.playback_error == "audio output initialization failed"
+
+
+class TestStdinPlaylistArgv:
+    @pytest.mark.parametrize("show_gui, loads_scripts", [(False, False), (True, True)])
+    def test_only_headless_mpv_skips_scripts(self, show_gui, loads_scripts):
+        """Headless needs no scripts (one that hangs stalls mpv); a window keeps the user's."""
+        player = StreamingAudioPlayer(show_gui=show_gui)
+        player.chunk_queue.put(None)
+        with patch("TTS_ka.streaming_player.subprocess.Popen") as mpopen:
+            mpopen.return_value.wait.return_value = 0
+            player._play_mpv_stdin_playlist("mpv")
+        argv = mpopen.call_args[0][0]
+        assert ("--load-scripts=no" not in argv) is loads_scripts
 
 
 class TestWaitUntilReleased:

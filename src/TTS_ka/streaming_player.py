@@ -31,6 +31,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import signal
 import sys
 import socket
 import subprocess
@@ -41,7 +42,7 @@ from queue import Empty, Queue
 from typing import Any, Dict, List, Optional, Set
 
 from .constants import PLAYBACK_JOIN_TIMEOUT
-from .mpv_ipc import MpvIpc, MpvIpcError, ipc_supported
+from .mpv_ipc import MpvIpc, MpvIpcError, ipc_supported, kill_process_group
 
 # Range for change_speed (mpv keeps pitch through its scaletempo filter).
 MIN_SPEED = 0.5
@@ -82,15 +83,16 @@ def _connect_vlc_rc(port: int) -> Optional[socket.socket]:
 
 
 def _terminate_process_quietly(proc: Optional[subprocess.Popen]) -> None:
-    """Terminate *proc*, killing it if it ignores SIGTERM for 2 s."""
+    """Terminate *proc* (its whole process group when it leads one), killing it if it
+    ignores SIGTERM for 2 s."""
     if proc is None:
         return
     try:
-        proc.terminate()
+        kill_process_group(proc, signal.SIGTERM)
         try:
             proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            kill_process_group(proc)
             proc.wait(timeout=2)
     except (OSError, subprocess.TimeoutExpired):
         pass
@@ -197,6 +199,9 @@ class StreamingAudioPlayer:
         # every chunk end), even if a GUI window is left open afterwards.
         self._released = False
         self._speed = 1.0
+        # First reason a chunk could not be played (mpv IPC only), for callers
+        # that report success, e.g. MCP ``speak``.
+        self.playback_error: Optional[str] = None
 
     # ── Public interface ──────────────────────────────────────────────────────
 
@@ -421,6 +426,7 @@ class StreamingAudioPlayer:
                 "--no-video",
                 "--really-quiet",
                 "--gapless-audio=yes",
+                "--load-scripts=no",    # see MpvIpc.argv
                 "--playlist=-",
             ]
         try:
@@ -429,6 +435,7 @@ class StreamingAudioPlayer:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                start_new_session=True,  # own process group: see kill_process_group
             )
         except OSError as e:
             print(f"⚠️  mpv --playlist=- failed to start: {e}")
@@ -708,16 +715,20 @@ class StreamingAudioPlayer:
                 done = ipc.wait_done(should_continue=lambda: self.is_playing)
         except MpvIpcError as exc:
             if not self._stopped:
+                if self.playback_error is None:
+                    self.playback_error = str(exc)
                 print(f"⚠️  mpv streaming error: {exc}", file=sys.stderr)
         finally:
             self._released = done
             ipc.close()
         return True
 
-    @staticmethod
-    def _on_mpv_entry_error(event: Dict) -> None:
+    def _on_mpv_entry_error(self, event: Dict) -> None:
+        reason = event.get("file_error", "error")
+        if self.playback_error is None:
+            self.playback_error = str(reason)
         print(f"⚠️  mpv could not play chunk (playlist entry "
-              f"{event.get('playlist_entry_id')}): {event.get('file_error', 'error')}",
+              f"{event.get('playlist_entry_id')}): {reason}",
               file=sys.stderr)
 
     def _unix_fallback(self) -> None:

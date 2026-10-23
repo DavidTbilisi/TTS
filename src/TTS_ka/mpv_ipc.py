@@ -16,7 +16,9 @@ Only headless playback uses this. A GUI mpv keeps the stdin playlist with
 is the invocation user wrappers around ``mpv`` already recognise.
 
 The socket lives in a private dir under ``tempfile.gettempdir()``: a flatpak
-mpv can create sockets in ``/tmp`` but not in ``XDG_RUNTIME_DIR``.
+mpv can create sockets in ``/tmp`` but not in ``XDG_RUNTIME_DIR``. A flatpak
+mpv also runs inside ``bwrap``, so the PID ``Popen`` holds is not mpv itself:
+mpv is started in its own session and stopped with ``kill_process_group``.
 
 Windows is not supported (mpv's named pipe needs overlapped I/O to read and
 write concurrently); the caller keeps using the stdin playlist there. Set
@@ -28,6 +30,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import tempfile
@@ -38,11 +41,38 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 CONNECT_TIMEOUT = 10.0  # flatpak cold starts can take a few seconds
 REPLY_TIMEOUT = 2.0
+# mpv answers IPC while it is still loading scripts, but plays nothing until they
+# are done; a script that never finishes (flatpak's mpris without a D-Bus session)
+# would otherwise leave wait_done waiting forever.
+START_TIMEOUT = 10.0
 _IDLE_PROPERTY_ID = 1
 
 
 class MpvIpcError(RuntimeError):
     """mpv could not be started, reached, or did not accept a command."""
+
+
+def kill_process_group(proc: Any, sig: int = signal.SIGKILL) -> None:
+    """Send *sig* to *proc*'s process group, so a flatpak mpv dies with its ``bwrap``.
+
+    *proc* must have been started with ``start_new_session=True`` (its PID is then
+    the group id). SIGKILL to the ``bwrap`` PID alone leaves ``mpv-bin`` running.
+    Falls back to signalling *proc* itself off POSIX or once the group is gone.
+    """
+    pid = getattr(proc, "pid", None)
+    if os.name == "posix" and isinstance(pid, int):
+        try:
+            os.killpg(pid, sig)
+            return
+        except (ProcessLookupError, PermissionError):
+            pass
+    try:
+        if sig == getattr(signal, "SIGKILL", None):
+            proc.kill()
+        else:
+            proc.terminate()
+    except OSError:
+        pass
 
 
 def ipc_supported() -> bool:
@@ -76,6 +106,8 @@ class MpvIpc:
         self._appended_anon = 0            # mpv < 0.33 reports no entry ids
         self._ended_anon = 0
         self._idle = False
+        self._first_append_at: Optional[float] = None
+        self._started = False              # mpv began playing an entry (start-file)
         self._stopped = False
         self._disconnected = False
         self._closed = False
@@ -90,6 +122,9 @@ class MpvIpc:
             "--audio-display=no",
             "--no-terminal",
             "--gapless-audio=yes",
+            # No user/system scripts: headless playback needs none, and one that hangs
+            # (flatpak's mpris without D-Bus) stops mpv before it ever plays.
+            "--load-scripts=no",
             f"--input-ipc-server={sock_path}",
         ]
 
@@ -105,6 +140,7 @@ class MpvIpc:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                start_new_session=True,  # own process group: see kill_process_group
             )
         except OSError as exc:
             self._cleanup_dir()
@@ -129,7 +165,11 @@ class MpvIpc:
 
         self._sock = sock
         threading.Thread(target=self._read_loop, daemon=True).start()
-        self.command("observe_property", _IDLE_PROPERTY_ID, "idle-active")
+        try:
+            self.command("observe_property", _IDLE_PROPERTY_ID, "idle-active")
+        except MpvIpcError:
+            self.close(quit=False)
+            raise
 
     def close(self, quit: bool = True) -> None:
         """Quit mpv (killing it if it lingers) and remove the socket dir. Idempotent."""
@@ -146,7 +186,7 @@ class MpvIpc:
             try:
                 proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
-                proc.kill()
+                kill_process_group(proc)
                 try:
                     proc.wait(timeout=2)
                 except subprocess.TimeoutExpired:
@@ -199,6 +239,8 @@ class MpvIpc:
         data = self.command("loadfile", os.path.abspath(path), "append-play")
         entry_id = data.get("playlist_entry_id") if isinstance(data, dict) else None
         with self._state:
+            if self._first_append_at is None:
+                self._first_append_at = time.monotonic()
             if entry_id is None:
                 self._appended_anon += 1
             else:
@@ -231,6 +273,8 @@ class MpvIpc:
 
         Returns True when playback is over (also when mpv exited or ``stop``
         was called), False on *timeout* or once *should_continue* turns false.
+        Raises ``MpvIpcError`` when mpv has not started any appended entry
+        within ``START_TIMEOUT`` (it accepts commands but is stuck).
         """
         deadline = None if timeout is None else time.monotonic() + timeout
         with self._state:
@@ -241,6 +285,9 @@ class MpvIpc:
                     return True
                 if not should_continue():
                     return False
+                if (not self._started and self._first_append_at is not None
+                        and time.monotonic() - self._first_append_at > START_TIMEOUT):
+                    raise MpvIpcError(f"mpv did not start playing within {START_TIMEOUT:.0f}s")
                 wait = 0.25
                 if deadline is not None:
                     remaining = deadline - time.monotonic()
@@ -285,6 +332,8 @@ class MpvIpc:
         event = msg.get("event")
         failed = False
         with self._state:
+            if event in ("start-file", "end-file"):
+                self._started = True
             if event == "end-file":
                 entry_id = msg.get("playlist_entry_id")
                 if entry_id is None:
