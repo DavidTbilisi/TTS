@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+import time
 import sys
 from unittest.mock import AsyncMock, patch
 
@@ -21,6 +22,8 @@ import pytest
 
 
 pytest.importorskip("mcp", reason="mcp extra not installed")
+
+from mcp.server.mcpserver.exceptions import ToolError  # noqa: E402
 
 from TTS_ka import mcp_server as _mcp  # noqa: E402
 from TTS_ka.mcp_server import _LiveSession, build_server  # noqa: E402
@@ -33,12 +36,18 @@ class _StubPlayer:
     launch a player and return while it is still playing.
     """
 
+    instances: list = []
+    controllable = True
+
     def __init__(self, show_gui=False):
         self.chunks = []           # (chunk_index, path) in add_chunk order
+        self.skipped = []          # chunk indices reported as never coming
+        self.controls = []         # pause / resume / skip_current calls
         self.process = None
         self.started = False
         self.finished = False
         self.stopped = False
+        type(self).instances.append(self)
 
     def start(self):
         self.started = True
@@ -46,19 +55,48 @@ class _StubPlayer:
     def add_chunk(self, path, chunk_index=None):
         self.chunks.append((chunk_index, path))
 
+    def skip_index(self, chunk_index):
+        self.skipped.append(chunk_index)
+
     def finish_generation(self):
         self.finished = True
 
     def wait_for_completion(self):
         pass
 
+    def wait_until_released(self, timeout=None):
+        if self.process is not None:
+            self.process.wait(timeout)
+        return True
+
     def stop(self):
         self.stopped = True
+
+    def _control(self, name):
+        self.controls.append(name)
+        return self.controllable
+
+    def pause(self):
+        return self._control("pause")
+
+    def resume(self):
+        return self._control("resume")
+
+    def skip_current(self):
+        return self._control("skip_current")
 
 
 @pytest.fixture(autouse=True)
 def _stub_player():
-    with patch("TTS_ka.mcp_server.StreamingAudioPlayer", _StubPlayer):
+    """Stub the player, and report no streaming player so ``speak`` uses ``play_audio``.
+
+    Tests of the streaming-player ``speak`` path patch ``PlayerDetector.find`` back on.
+    """
+    _StubPlayer.instances = []
+    _StubPlayer.controllable = True
+    with patch("TTS_ka.mcp_server.StreamingAudioPlayer", _StubPlayer), \
+         patch("TTS_ka.mcp_server.PlayerDetector.find", return_value=None), \
+         patch("TTS_ka.mcp_server.stop_all_streaming_players"):
         yield
 
 
@@ -172,16 +210,15 @@ class TestStreamFlow:
     async def test_append_unknown_session(self):
         sessions = {}
         server = build_server(sessions=sessions)
-        r = await _call(server, "stream_append",
-                        session_id="bogus", text="hi")
-        assert "unknown session_id" in r
+        with pytest.raises(ToolError, match="unknown session_id"):
+            await _call(server, "stream_append", session_id="bogus", text="hi")
 
     @pytest.mark.asyncio
     async def test_close_unknown_session(self):
         sessions = {}
         server = build_server(sessions=sessions)
-        r = await _call(server, "stream_close", session_id="bogus")
-        assert "unknown session_id" in r
+        with pytest.raises(ToolError, match="unknown session_id"):
+            await _call(server, "stream_close", session_id="bogus")
 
     @pytest.mark.asyncio
     async def test_max_concurrent_sessions(self):
@@ -196,8 +233,8 @@ class TestStreamFlow:
             with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=fake):
                 a = await _call(server, "stream_open")
                 b = await _call(server, "stream_open")
-                c = await _call(server, "stream_open")
-                assert "error" in c
+                with pytest.raises(ToolError, match="max 2 concurrent sessions"):
+                    await _call(server, "stream_open")
                 # Cleanup
                 await _call(server, "stream_close", session_id=a)
                 await _call(server, "stream_close", session_id=b)
@@ -239,9 +276,8 @@ class TestSpeakTool:
             raise RuntimeError("network down")
         with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=boom), \
              patch("TTS_ka.mcp_server.play_audio"):
-            r = await _call(server, "speak", text="hi", lang="en")
-        assert "error" in r
-        assert "network down" in r
+            with pytest.raises(ToolError, match="network down"):
+                await _call(server, "speak", text="hi", lang="en")
 
     @pytest.mark.asyncio
     async def test_speak_false_return_is_an_error_not_played(self):
@@ -249,8 +285,8 @@ class TestSpeakTool:
         server = build_server()
         with patch("TTS_ka.mcp_server.fast_generate_audio", new=AsyncMock(return_value=False)), \
              patch("TTS_ka.mcp_server.play_audio") as mplay:
-            r = await _call(server, "speak", text="hi", lang="en")
-        assert r.startswith("error: synthesis failed")
+            with pytest.raises(ToolError, match="synthesis failed"):
+                await _call(server, "speak", text="hi", lang="en")
         mplay.assert_not_called()
 
     @pytest.mark.asyncio
@@ -287,8 +323,8 @@ class TestSpeakTool:
 
         with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=fake), \
              patch("TTS_ka.mcp_server.play_audio", return_value=False):
-            r = await _call(server, "speak", text="Hi", lang="en")
-        assert "no audio player" in r
+            with pytest.raises(ToolError, match="no audio player"):
+                await _call(server, "speak", text="Hi", lang="en")
 
     @pytest.mark.asyncio
     async def test_speak_echoes_settings_when_queued(self):
@@ -345,8 +381,7 @@ class TestStopTool:
     @pytest.mark.asyncio
     async def test_stop_when_empty_returns_zero(self):
         server = build_server(sessions={})
-        with patch("TTS_ka.mcp_server.stop_active_streaming_player"):
-            r = await _call(server, "stop")
+        r = await _call(server, "stop")
         assert "stopped 0" in r
 
 
@@ -354,9 +389,8 @@ class TestSessionStatus:
     @pytest.mark.asyncio
     async def test_status_unknown_session(self):
         server = build_server(sessions={})
-        r = await _call(server, "session_status", session_id="bogus")
-        assert "error" in r
-        assert "unknown session_id" in r["error"]
+        with pytest.raises(ToolError, match="unknown session_id"):
+            await _call(server, "session_status", session_id="bogus")
 
     @pytest.mark.asyncio
     async def test_status_reports_progress(self):
@@ -699,8 +733,9 @@ class TestTmpDirCleanup:
         with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte), \
              patch("TTS_ka.mcp_server.play_audio", return_value=False):
             sid = await _call(server, "stream_open", lang="en")
-            r = await _call(server, "speak", text="Hello there", lang="en")
-        assert "no audio player" in r
+            with pytest.raises(ToolError, match="no audio player") as exc:
+                await _call(server, "speak", text="Hello there", lang="en")
+        r = str(exc.value)
         dirs = [sessions[sid].tmp_dir, os.path.dirname(r.split("saved ")[1].split()[0])]
         assert all(os.path.isdir(d) for d in dirs)
         _mcp._remove_all_tmp_dirs()
@@ -720,3 +755,221 @@ class TestTmpDirCleanup:
             with pytest.raises(KeyboardInterrupt):
                 _mcp.main()
         assert made and not os.path.exists(made[0])
+
+
+# ── Streaming robustness, controls, validation ───────────────────────────────
+
+
+async def _open(server, sessions, **kwargs):
+    sid = await _call(server, "stream_open", **kwargs)
+    return sid, sessions[sid]
+
+
+class TestStreamRobustness:
+    async def test_failed_sentence_is_skipped_so_later_ones_play(self):
+        sessions = {}
+        server = build_server(sessions=sessions)
+
+        async def gen(text, lang, output, *, voice=None, prosody=None):
+            if "broken" in text:
+                return False
+            with open(output, "wb") as f:
+                f.write(b"x")
+
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=gen):
+            sid, sess = await _open(server, sessions)
+            await _call(server, "stream_append", session_id=sid,
+                        text="First fine. This is broken. Third fine. ")
+            r = await _call(server, "stream_close", session_id=sid)
+        assert sess.player.skipped == [1]
+        assert sorted(i for i, _ in sess.player.chunks) == [0, 2]
+        assert r == "closed: spoke 2 chunk(s)"
+
+    async def test_sentence_ending_an_append_is_spoken_without_close(self):
+        sessions = {}
+        server = build_server(sessions=sessions)
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte):
+            sid, sess = await _open(server, sessions)
+            r = await _call(server, "stream_append", session_id=sid, text="Hello there.")
+            assert r == "queued 1 sentence(s)"
+            await asyncio.gather(*sess._tasks)
+            assert len(sess.player.chunks) == 1
+            await _call(server, "stream_close", session_id=sid)
+
+    async def test_trailing_fragment_flushes_after_idle(self, monkeypatch):
+        monkeypatch.setattr(_mcp, "MCP_IDLE_FLUSH_MS", 20)
+        sessions = {}
+        server = build_server(sessions=sessions)
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte):
+            sid, sess = await _open(server, sessions)
+            r = await _call(server, "stream_append", session_id=sid, text="and then we")
+            assert r == "queued 0 sentence(s)"
+            await asyncio.sleep(0.1)
+            await asyncio.gather(*sess._tasks)
+            assert len(sess.player.chunks) == 1     # spoken with no further append
+            assert sess.buf.buffer == ""
+            await _call(server, "stream_close", session_id=sid)
+
+    async def test_new_append_postpones_idle_flush(self, monkeypatch):
+        monkeypatch.setattr(_mcp, "MCP_IDLE_FLUSH_MS", 60)
+        sessions = {}
+        server = build_server(sessions=sessions)
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte):
+            sid, sess = await _open(server, sessions)
+            await _call(server, "stream_append", session_id=sid, text="and then")
+            await asyncio.sleep(0.03)
+            await _call(server, "stream_append", session_id=sid, text=" we left.")
+            await asyncio.sleep(0.1)
+            await asyncio.gather(*sess._tasks)
+            assert sess._queued == 1                # one sentence, not a fragment + rest
+            await _call(server, "stream_close", session_id=sid)
+
+
+class TestValidation:
+    @pytest.mark.parametrize("tool", ["stream_open", "speak"])
+    async def test_bad_lang_rejected_up_front(self, tool):
+        server = build_server(sessions={})
+        kwargs = {"text": "hi"} if tool == "speak" else {}
+        with patch("TTS_ka.mcp_server.fast_generate_audio", new=AsyncMock()) as gen:
+            with pytest.raises(ToolError, match="invalid lang 'xx'"):
+                await _call(server, tool, lang="xx", **kwargs)
+        gen.assert_not_called()
+
+    @pytest.mark.parametrize("tool", ["stream_open", "speak"])
+    async def test_unknown_voice_rejected_up_front(self, tool):
+        server = build_server(sessions={})
+        kwargs = {"text": "hi"} if tool == "speak" else {}
+        with pytest.raises(ToolError, match="unknown voice"):
+            await _call(server, tool, voice="xx-XX-NobodyNeural", **kwargs)
+
+
+class TestReaping:
+    def test_reap_idle_sessions_is_pure_bookkeeping(self):
+        fresh_s = type("S", (), {"last_activity": 1000.0})()
+        stale_s = type("S", (), {"last_activity": 1000.0 - _mcp.SESSION_IDLE_TIMEOUT_S - 1})()
+        sessions = {"a": fresh_s, "b": stale_s}
+        assert _mcp._reap_idle_sessions(sessions, now=1000.0) == [stale_s]
+        assert list(sessions) == ["a"]
+
+    async def test_stream_open_reaps_forgotten_sessions(self, monkeypatch):
+        sessions = {}
+        server = build_server(sessions=sessions)
+        monkeypatch.setattr(_mcp, "MAX_SESSIONS", 1)
+        _, old_sess = await _open(server, sessions)
+        old_sess.last_activity -= _mcp.SESSION_IDLE_TIMEOUT_S + 1
+        new = await _call(server, "stream_open")
+        assert list(sessions) == [new]
+        assert old_sess._closed and old_sess.player.finished
+        await _call(server, "stream_close", session_id=new)
+
+
+class TestStopAndControls:
+    async def test_stop_one_session_leaves_others(self):
+        sessions = {}
+        server = build_server(sessions=sessions)
+        a, sa = await _open(server, sessions)
+        b, sb = await _open(server, sessions)
+        r = await _call(server, "stop", session_id=a)
+        assert r == f"stopped session {a}"
+        assert list(sessions) == [b]
+        assert sa.player.stopped and not sb.player.stopped
+        assert not os.path.exists(sa.tmp_dir)
+        with pytest.raises(ToolError, match="unknown session_id"):
+            await _call(server, "stop", session_id=a)
+
+    async def test_stop_cancels_pending_synths(self):
+        sessions = {}
+        server = build_server(sessions=sessions)
+        started = asyncio.Event()
+
+        async def slow(text, lang, output, *, voice=None, prosody=None):
+            started.set()
+            await asyncio.sleep(3600)
+
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=slow):
+            sid, sess = await _open(server, sessions)
+            await _call(server, "stream_append", session_id=sid, text="Never finishes. ")
+            await started.wait()
+            await asyncio.wait_for(_call(server, "stop"), timeout=2)
+        assert all(t.done() for t in sess._tasks)
+
+    @pytest.mark.parametrize("tool,method,word", [
+        ("pause", "pause", "paused"),
+        ("resume", "resume", "resumed"),
+        ("skip", "skip_current", "skipped"),
+    ])
+    async def test_controls_route_to_one_or_all_players(self, tool, method, word):
+        sessions = {}
+        server = build_server(sessions=sessions)
+        a, sa = await _open(server, sessions)
+        b, sb = await _open(server, sessions)
+        assert await _call(server, tool, session_id=a) == f"{word} 1 stream(s)"
+        assert sa.player.controls == [method] and sb.player.controls == []
+        assert await _call(server, tool) == f"{word} 2 stream(s)"
+        assert sb.player.controls == [method]
+        await _call(server, "stop")
+
+    async def test_controls_unsupported_player_is_an_error(self):
+        sessions = {}
+        server = build_server(sessions=sessions)
+        await _open(server, sessions)
+        _StubPlayer.controllable = False
+        with pytest.raises(ToolError, match="needs mpv"):
+            await _call(server, "pause")
+        await _call(server, "stop")
+
+    async def test_controls_with_nothing_playing(self):
+        server = build_server(sessions={})
+        assert await _call(server, "pause") == "nothing is playing"
+
+
+class TestSpeakThroughStreamingPlayer:
+    """With mpv/VLC/ffplay installed, speak plays through a controllable player."""
+
+    @pytest.fixture(autouse=True)
+    def _player_found(self):
+        with patch("TTS_ka.mcp_server.PlayerDetector.find", return_value="mpv"):
+            yield
+
+    async def test_queued_clip_plays_and_dir_is_removed_when_released(self):
+        server = build_server(sessions={})
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte), \
+             patch("TTS_ka.mcp_server.play_audio") as mplay:
+            r = await _call(server, "speak", text="Hello there", lang="en")
+            player = _StubPlayer.instances[-1]
+            path = r.split()[1]
+            assert r.startswith("queued")
+            assert player.started and player.finished
+            assert player.chunks == [(0, path)]
+            await _drain_cleanup_tasks()
+        mplay.assert_not_called()
+        assert not os.path.exists(os.path.dirname(path))
+
+    async def test_blocking_waits_for_release(self):
+        server = build_server(sessions={})
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte), \
+             patch.object(_StubPlayer, "wait_until_released", return_value=True) as mwait:
+            r = await _call(server, "speak", text="Hello there", lang="en", blocking=True)
+        assert r.startswith("played in")
+        mwait.assert_called_once()
+        assert not [d for d in _mcp._tmp_dirs if "ttska-mcp-one-" in d]
+
+    async def test_clip_can_be_paused_while_playing(self):
+        server = build_server(sessions={})
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte), \
+             patch.object(_StubPlayer, "wait_until_released",
+                          side_effect=lambda timeout=None: time.sleep(0.2) or True):
+            await _call(server, "speak", text="Hello there", lang="en")
+            assert await _call(server, "pause") == "paused 1 stream(s)"
+            await _drain_cleanup_tasks()
+
+    async def test_interrupt_stops_current_audio_first(self):
+        sessions = {}
+        server = build_server(sessions=sessions)
+        sid, sess = await _open(server, sessions)
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte), \
+             patch("TTS_ka.mcp_server.stop_all_streaming_players") as mstop_all:
+            await _call(server, "speak", text="Urgent", lang="en", interrupt=True)
+            await _drain_cleanup_tasks()
+        mstop_all.assert_called_once()
+        assert sess.player.stopped and sessions == {}

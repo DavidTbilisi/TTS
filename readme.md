@@ -74,7 +74,7 @@ TTS_ka "Hello" -l en
 
 ### `--live`: pipe LLM output and speak as it lands
 
-Read stdin **incrementally**, accumulate into a sentence buffer, and synthesize each complete sentence as it arrives — no waiting for the whole response. Sentence boundaries are `[.!?]+` followed by whitespace, or a `\n\n` paragraph break, or an idle timeout if the stream pauses.
+Read stdin **incrementally** (raw blocks, not lines — a long line is spoken sentence by sentence), accumulate into a sentence buffer, and synthesize each complete sentence as it arrives — no waiting for the whole response. Sentence boundaries are `[.!?]+` followed by whitespace, or a `\n\n` paragraph break, or an idle timeout if the stream pauses. Abbreviations (`e.g.`, `Dr.`, `т.е.`), initials and `1.` list markers don't split; run-ons over 400 characters are cut at a comma. A sentence that fails to synthesize is skipped instead of holding back the rest, and Ctrl+C stops playback immediately.
 
 ```bash
 # Pipe any tool that writes to stdout
@@ -115,14 +115,17 @@ Tools exposed:
 
 | Tool | Purpose |
 |------|--------|
-| `speak(text, lang?, voice?, blocking?)` | One-shot: synthesize and play. `blocking=True` waits for the audio's full duration before returning so the agent can sequence speech; the return string echoes the resolved settings |
+| `speak(text, lang?, voice?, blocking?, interrupt?)` | One-shot: synthesize and play. `blocking=True` returns when playback has finished so the agent can sequence speech; `interrupt=True` stops whatever is playing first. The return string echoes the resolved settings |
 | `stream_open(lang?, voice?)` | Start a streaming session, returns `session_id` |
-| `stream_append(session_id, text)` | Push text; speaks each complete sentence |
+| `stream_append(session_id, text)` | Push text; speaks each complete sentence — including one that ends the appended text — and an unfinished tail after 500 ms of silence |
 | `stream_close(session_id)` | Drain remaining buffer, end the session |
-| `session_status(session_id)` | Inspect progress: total, pending synths, `synths_failed` + `last_error`, buffer preview |
+| `session_status(session_id)` | Inspect progress: total, pending synths, `synths_failed` + `last_error`, buffer preview, `controllable` |
 | `list_sessions()` | All active session IDs |
-| `stop()` | Abort all playback and tear down sessions |
+| `pause` / `resume` / `skip(session_id?)` | Control one session, or everything playing (needs mpv on Linux/macOS) |
+| `stop(session_id?)` | Tear down one session, or abort all playback and sessions |
 | `list_voices(lang?)` | Voice catalog as JSON |
+
+Errors (unknown `session_id`, invalid `lang`/`voice`, synthesis failure, no audio player) come back as MCP tool errors (`isError: true`), not as `"error: …"` strings. Sessions idle for 15 minutes are closed when the next session is opened or listed.
 
 Why streaming over single `speak` calls: the LLM can push tokens as it generates them. Each completed sentence is synthesized immediately, so the user hears audio with sub-second latency from the LLM's first word. `session_status` reports `synths_pending` (queue backed up) and `synths_failed` / `last_error` (a synthesis failed) so the agent can react.
 
@@ -217,7 +220,7 @@ python -m TTS_ka chapter.epub --lang en --stream --no-gui
 python -m TTS_ka text.txt --lang en --stream --player mpv
 ```
 
-On Windows with VLC, a single VLC window receives chunks over TCP remote-control as they finish (`TTS_KA_VLC_RC=0` disables this and falls back to one VLC process per chunk). On Linux / macOS, `mpv` receives chunks over a stdin playlist as they finish and `ffplay` plays them one by one; VLC and `mplayer` start once every chunk is ready.
+On Windows with VLC, a single VLC window receives chunks over TCP remote-control as they finish (`TTS_KA_VLC_RC=0` disables this and falls back to one VLC process per chunk). On Linux / macOS, headless `mpv` (MCP, `--no-gui`) is driven over its JSON IPC socket: it idles between chunks, so a slow chunk never ends playback early, and it can be paused, resumed and skipped. GUI `mpv` receives chunks over a stdin playlist (`--keep-open` bridges the gaps); `ffplay` plays them one by one; VLC and `mplayer` start once every chunk is ready.
 
 Ctrl+C cancels generation and terminates the active player without waiting for the playback-join timeout.
 
@@ -474,6 +477,7 @@ All keys are optional. Real, supported schema:
 |----------|--------|
 | `TTS_KA_CONFIG` | Alternate config file path |
 | `TTS_KA_VLC_RC` | `0` → disable VLC remote-control mode (one VLC per chunk instead) |
+| `TTS_KA_MPV_IPC` | `0` → don't drive headless mpv over JSON IPC (falls back to a stdin playlist; no pause/skip) |
 | `TTS_API_TOKEN` | Bearer token required by `tts-ka serve` |
 
 ---

@@ -1044,3 +1044,225 @@ class TestStreamingPerformance:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
+
+
+def _mp3(dirpath, name, data=b"x"):
+    path = os.path.join(dirpath, name)
+    with open(path, "wb") as f:
+        f.write(data)
+    return path
+
+
+def _drain(player):
+    out = []
+    while not player.chunk_queue.empty():
+        out.append(player.chunk_queue.get_nowait())
+    return out
+
+
+class TestChunkOrderingGaps:
+    """A chunk that never arrives must not silence everything after it."""
+
+    def test_skip_index_releases_later_chunks(self, temp_dir):
+        player = StreamingAudioPlayer()
+        c2 = _mp3(temp_dir, "c2.mp3")
+        c0 = _mp3(temp_dir, "c0.mp3")
+        player.add_chunk(c2, chunk_index=2)
+        player.add_chunk(c0, chunk_index=0)
+        assert _drain(player) == [c0]           # 1 not ready yet: 2 waits
+        player.skip_index(1)                     # sentence 1 failed to synthesize
+        assert _drain(player) == [c2]
+
+    def test_skip_before_neighbours_arrive(self, temp_dir):
+        player = StreamingAudioPlayer()
+        player.skip_index(0)
+        c1 = _mp3(temp_dir, "c1.mp3")
+        player.add_chunk(c1, chunk_index=1)
+        assert _drain(player) == [c1]
+
+    def test_empty_file_with_index_counts_as_skip(self, temp_dir):
+        player = StreamingAudioPlayer()
+        empty = _mp3(temp_dir, "e.mp3", b"")
+        c1 = _mp3(temp_dir, "c1.mp3")
+        player.add_chunk(c1, chunk_index=1)
+        player.add_chunk(empty, chunk_index=0)
+        assert _drain(player) == [c1]
+
+    def test_missing_part_file_inferred_index_skips(self, temp_dir):
+        player = StreamingAudioPlayer()
+        c1 = _mp3(temp_dir, ".part_0001.mp3")
+        player.add_chunk(c1)
+        player.add_chunk(os.path.join(temp_dir, ".part_0000.mp3"))  # never written
+        assert _drain(player) == [c1]
+
+
+class TestStop:
+    def test_stop_drains_queue_and_unblocks_worker(self, temp_dir):
+        player = StreamingAudioPlayer()
+        player.chunk_queue.put(_mp3(temp_dir, "a.mp3"))
+        player.add_chunk(_mp3(temp_dir, "late.mp3"), chunk_index=5)
+        player.stop()
+        assert _drain(player) == [None]
+        assert player._pending == {}
+        player.add_chunk(_mp3(temp_dir, "after.mp3"), chunk_index=0)
+        assert player.chunk_queue.empty()        # ignored after stop
+
+    def test_stop_kills_player_that_ignores_sigterm(self):
+        from TTS_ka.streaming_player import _terminate_process_quietly
+        proc = MagicMock()
+        proc.wait.side_effect = [subprocess.TimeoutExpired("mpv", 2), 0]
+        _terminate_process_quietly(proc)
+        proc.terminate.assert_called_once()
+        proc.kill.assert_called_once()
+
+    def test_stop_closes_ipc(self):
+        player = StreamingAudioPlayer()
+        ipc = MagicMock()
+        player._ipc = ipc
+        player.stop()
+        ipc.close.assert_called_once()
+
+    def test_ffplay_loop_stops_after_stop(self, temp_dir):
+        player = StreamingAudioPlayer()
+        for i in range(3):
+            player.chunk_queue.put(_mp3(temp_dir, f"{i}.mp3"))
+        player._stopped = True
+        with patch("subprocess.Popen") as mpopen:
+            player._play_ffplay("ffplay")
+        mpopen.assert_not_called()
+
+    def test_stop_all_streaming_players_stops_every_registered_player(self):
+        from TTS_ka import streaming_player as sp
+        a, b = MagicMock(), MagicMock()
+        sp.register_active_streaming_player(a)
+        sp.register_active_streaming_player(b)
+        try:
+            sp.stop_active_streaming_player()   # old name still works
+        finally:
+            sp.unregister_active_streaming_player(a)
+            sp.unregister_active_streaming_player(b)
+        a.stop.assert_called_once()
+        b.stop.assert_called_once()
+
+
+class TestControls:
+    def test_controls_report_unsupported_without_ipc(self):
+        player = StreamingAudioPlayer()
+        assert player.pause() is False
+        assert player.resume() is False
+        assert player.skip_current() is False
+        assert player.controllable is False
+
+    def test_controls_delegate_to_ipc(self):
+        player = StreamingAudioPlayer()
+        ipc = MagicMock()
+        player._ipc = ipc
+        assert player.controllable
+        assert player.pause() and player.resume() and player.skip_current()
+        ipc.pause.assert_called_once()
+        ipc.resume.assert_called_once()
+        ipc.skip.assert_called_once()
+
+    def test_ipc_error_reports_false(self):
+        from TTS_ka.mpv_ipc import MpvIpcError
+        player = StreamingAudioPlayer()
+        player._ipc = MagicMock(pause=MagicMock(side_effect=MpvIpcError("gone")))
+        assert player.pause() is False
+
+
+class TestPlayerSelection:
+    def test_preferred_player_is_honoured(self):
+        from TTS_ka.streaming_player import PlayerDetector
+        player = StreamingAudioPlayer(show_gui=False, preferred="ffplay")
+        player.chunk_queue.put(None)
+        with patch.object(PlayerDetector, "find", return_value="ffplay") as mfind:
+            player._playback_worker_unix()
+        mfind.assert_called_once_with(preferred="ffplay")
+
+    def test_mpv_uses_ipc_when_supported(self, monkeypatch):
+        monkeypatch.setenv("TTS_KA_MPV_IPC", "1")
+        from TTS_ka.streaming_player import PlayerDetector
+        player = StreamingAudioPlayer(show_gui=False)
+        with patch.object(PlayerDetector, "find", return_value="mpv"), \
+             patch.object(player, "_play_mpv_ipc", return_value=True) as mipc, \
+             patch.object(player, "_play_mpv_stdin_playlist") as mstdin:
+            player._playback_worker_unix()
+        mipc.assert_called_once_with("mpv")
+        mstdin.assert_not_called()
+
+    def test_gui_mpv_keeps_stdin_playlist(self, monkeypatch):
+        monkeypatch.setenv("TTS_KA_MPV_IPC", "1")
+        from TTS_ka.streaming_player import PlayerDetector
+        player = StreamingAudioPlayer(show_gui=True)
+        with patch.object(PlayerDetector, "find", return_value="mpv"), \
+             patch.object(player, "_play_mpv_ipc") as mipc, \
+             patch.object(player, "_play_mpv_stdin_playlist") as mstdin:
+            player._playback_worker_unix()
+        mipc.assert_not_called()
+        mstdin.assert_called_once_with("mpv")
+
+    def test_ipc_start_failure_falls_back_to_stdin_playlist(self, monkeypatch):
+        monkeypatch.setenv("TTS_KA_MPV_IPC", "1")
+        from TTS_ka.mpv_ipc import MpvIpcError
+        from TTS_ka.streaming_player import PlayerDetector
+        player = StreamingAudioPlayer(show_gui=False)
+        with patch.object(PlayerDetector, "find", return_value="mpv"), \
+             patch("TTS_ka.streaming_player.MpvIpc") as mcls, \
+             patch.object(player, "_play_mpv_stdin_playlist") as mstdin:
+            mcls.return_value.start.side_effect = MpvIpcError("no socket")
+            player._playback_worker_unix()
+        mstdin.assert_called_once_with("mpv")
+
+
+class TestPlayMpvIpc:
+    def _run(self, temp_dir, wait_done=True):
+        player = StreamingAudioPlayer(show_gui=False)
+        player.is_playing = True
+        paths = [_mp3(temp_dir, f"{i}.mp3") for i in range(2)]
+        for p in paths:
+            player.chunk_queue.put(p)
+        player.chunk_queue.put(None)
+        with patch("TTS_ka.streaming_player.MpvIpc") as mcls:
+            ipc = mcls.return_value
+            ipc.wait_done.return_value = wait_done
+            assert player._play_mpv_ipc("mpv") is True
+        return player, ipc, paths
+
+    def test_appends_in_order_waits_then_quits(self, temp_dir):
+        player, ipc, paths = self._run(temp_dir)
+        assert [c.args[0] for c in ipc.append.call_args_list] == paths
+        ipc.wait_done.assert_called_once()
+        ipc.close.assert_called_once()
+        assert player._released is True
+        assert player.wait_until_released(timeout=1) is True
+
+    def test_interrupted_wait_is_not_released(self, temp_dir):
+        player, ipc, _ = self._run(temp_dir, wait_done=False)
+        ipc.close.assert_called_once()
+        assert player._released is False
+
+
+class TestWaitUntilReleased:
+    def test_waits_for_launched_process(self):
+        player = StreamingAudioPlayer(show_gui=False)
+        proc = MagicMock()
+        proc.poll.return_value = None
+        player.process = proc
+        assert player.wait_until_released(timeout=1) is True
+        proc.wait.assert_called_once()
+
+    def test_timeout_returns_false(self):
+        player = StreamingAudioPlayer(show_gui=False)
+        proc = MagicMock()
+        proc.poll.return_value = None
+        proc.wait.side_effect = subprocess.TimeoutExpired("vlc", 0.1)
+        player.process = proc
+        assert player.wait_until_released(timeout=0.1) is False
+
+    def test_gui_process_left_open_is_not_released(self):
+        player = StreamingAudioPlayer(show_gui=True)
+        proc = MagicMock()
+        proc.poll.return_value = None
+        player.process = proc
+        assert player.wait_until_released(timeout=1) is False
+        proc.wait.assert_not_called()

@@ -6,9 +6,11 @@ SentenceBuffer is tested directly. live_loop is tested with injected fakes
 
 from __future__ import annotations
 
+import asyncio
+import os
 import time
 from typing import AsyncIterator, List, Optional
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -221,7 +223,7 @@ class TestLiveLoop:
     async def test_player_receives_chunk_indices(self, temp_dir):
         gen, _ = _async_audio_recorder()
         player = _fake_player()
-        reader = _reader_from(["A. ", "B. ", "C. ", None])
+        reader = _reader_from(["One. ", "Two. ", "Three. ", None])
         await live_loop(
             lang="en",
             input_reader=reader,
@@ -323,3 +325,111 @@ class TestLiveLoop:
         )
         player.add_chunk.assert_not_called()
         assert "Could not speak sentence 0: synthesis failed" in capsys.readouterr().err
+
+
+class TestSentenceBoundaries:
+    @pytest.mark.parametrize("text", [
+        "See e.g. the docs for more. ",
+        "Ask Dr. Jones about it. ",
+        "Written by J. R. R. Tolkien long ago. ",
+        "Это т.е. пример предложения. ",
+    ])
+    def test_abbreviations_and_initials_do_not_split(self, text):
+        assert SentenceBuffer().feed(text) == [text.strip()]
+
+    def test_line_leading_list_marker_does_not_split(self):
+        buf = SentenceBuffer()
+        assert buf.feed("1. Install mpv first. ") == ["1. Install mpv first."]
+
+    def test_number_ending_a_sentence_still_splits(self):
+        buf = SentenceBuffer()
+        assert buf.feed("The answer is 42. Next one. ") == ["The answer is 42.", "Next one."]
+
+    def test_pronoun_i_still_ends_a_sentence(self):
+        assert SentenceBuffer().feed("So did I. Then we left. ") == ["So did I.", "Then we left."]
+
+    def test_run_on_is_cut_at_a_comma(self):
+        from TTS_ka.live_stream import MAX_SENTENCE_CHARS
+        clause = "and then another clause follows, "
+        text = clause * (MAX_SENTENCE_CHARS // len(clause) + 2)
+        out = SentenceBuffer().feed(text)
+        assert out and all(len(s) <= MAX_SENTENCE_CHARS for s in out)
+        assert all(s.endswith(",") for s in out)
+
+    def test_run_on_inside_code_fence_is_not_cut(self):
+        from TTS_ka.live_stream import MAX_SENTENCE_CHARS
+        buf = SentenceBuffer()
+        assert buf.feed("```\n" + "x = 1 " * MAX_SENTENCE_CHARS) == []
+
+    def test_eager_end_flushes_terminal_punctuation(self):
+        buf = SentenceBuffer()
+        assert buf.feed("Hello there.") == []
+        buf2 = SentenceBuffer()
+        assert buf2.feed("Hello there.", eager_end=True) == ["Hello there."]
+
+    def test_eager_end_still_respects_abbreviations(self):
+        assert SentenceBuffer().feed("Ask Dr.", eager_end=True) == []
+
+
+class TestStdinPump:
+    async def test_split_multibyte_characters_are_decoded(self):
+        from TTS_ka.live_stream import _stdin_pump
+        rfd, wfd = os.pipe()
+        data = "გამარჯობა. Hi.\r\n".encode("utf-8")
+        queue: asyncio.Queue = asyncio.Queue()
+        await _stdin_pump(queue, fd=rfd)
+        os.write(wfd, data[:4])        # cuts the second Georgian letter in half
+        await asyncio.sleep(0.05)
+        os.write(wfd, data[4:])
+        os.close(wfd)
+        got = []
+        while True:
+            item = await asyncio.wait_for(queue.get(), timeout=2)
+            if item is None:
+                break
+            got.append(item)
+        os.close(rfd)
+        assert "".join(got) == "გამარჯობა. Hi.\n"
+        assert "�" not in "".join(got)
+        assert len(got) >= 2           # delivered before EOF, not as one line at the end
+
+
+class TestLiveLoopGapsAndCancel:
+    async def test_failed_and_empty_sentences_are_skipped_in_order(self, temp_dir):
+        player = _fake_player()
+
+        async def gen(text, lang, output_path, *, voice=None, prosody=None):
+            if "bad" in text:
+                return False
+            with open(output_path, "wb") as f:
+                f.write(b"x")
+
+        reader = _reader_from(["Good one. ", "This is bad. ", "Only symbols. ", "Last one. ", None])
+        sanitize = lambda t: "" if t.startswith("Only symbols") else t  # noqa: E731
+        with patch("TTS_ka.live_stream.replace_not_readable", side_effect=sanitize):
+            await live_loop(lang="en", input_reader=reader, audio_generator=gen,
+                            player=player, tmp_dir=temp_dir)
+        skipped = sorted(c.args[0] for c in player.skip_index.call_args_list)
+        added = sorted(c.kwargs["chunk_index"] for c in player.add_chunk.call_args_list)
+        assert skipped == [1, 2]
+        assert added == [0, 3]
+
+    async def test_cancel_stops_player_without_waiting(self, temp_dir):
+        player = _fake_player()
+
+        async def endless():
+            yield "First sentence. "
+            await asyncio.sleep(3600)
+            yield None
+
+        gen, _ = _async_audio_recorder()
+        task = asyncio.create_task(live_loop(lang="en", input_reader=endless(),
+                                             audio_generator=gen, player=player,
+                                             tmp_dir=temp_dir))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        player.stop.assert_called_once()
+        player.finish_generation.assert_not_called()
+        player.wait_until_released.assert_not_called()

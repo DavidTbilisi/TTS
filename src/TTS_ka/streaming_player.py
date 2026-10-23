@@ -12,9 +12,18 @@ VLC process controlled over TCP **oldrc** (``add`` / ``enqueue``); set
 
 1. Call ``start()`` before generation begins.
 2. Call ``add_chunk(path, chunk_index=…)`` as each part finishes (index keeps
-   playback order when generation finishes out-of-order).
+   playback order when generation finishes out-of-order), or
+   ``skip_index(i)`` for a chunk that will never come (empty or failed), so
+   later chunks are not held back waiting for it.
 3. Call ``finish_generation()`` when all chunks are queued.
-4. Call ``wait_for_completion()`` to block until the player thread exits.
+4. Call ``wait_until_released()`` before deleting the chunk files (or
+   ``wait_for_completion()`` to just join the playback thread).
+
+On POSIX, headless mpv is driven over JSON IPC (:mod:`mpv_ipc`): chunks are
+appended to an idle mpv as they arrive, which bridges synthesis gaps and
+enables ``pause`` / ``resume`` / ``skip_current``. GUI mpv, other players and
+Windows keep their previous mechanisms; those control methods then return
+``False``.
 """
 
 from __future__ import annotations
@@ -28,10 +37,11 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from queue import Queue
-from typing import Dict, List, Optional
+from queue import Empty, Queue
+from typing import Dict, List, Optional, Set
 
 from .constants import PLAYBACK_JOIN_TIMEOUT
+from .mpv_ipc import MpvIpc, MpvIpcError, ipc_supported
 
 # VLC legacy RC over TCP (stdin RC is unreliable on Windows — see VideoLAN issues).
 _RC_CONNECT_ATTEMPTS = 50
@@ -68,35 +78,47 @@ def _connect_vlc_rc(port: int) -> Optional[socket.socket]:
 
 
 def _terminate_process_quietly(proc: Optional[subprocess.Popen]) -> None:
+    """Terminate *proc*, killing it if it ignores SIGTERM for 2 s."""
     if proc is None:
         return
     try:
         proc.terminate()
-        proc.wait(timeout=5)
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=2)
     except (OSError, subprocess.TimeoutExpired):
         pass
 
 
-# Last started ``StreamingAudioPlayer`` (streaming mode) — stopped on Ctrl+C.
-_active_streaming_player: Optional["StreamingAudioPlayer"] = None
+# Every started ``StreamingAudioPlayer`` that is still playing — stopped on Ctrl+C.
+_active_streaming_players: Set["StreamingAudioPlayer"] = set()
+_active_lock = threading.Lock()
 
 
 def register_active_streaming_player(player: Optional["StreamingAudioPlayer"]) -> None:
-    global _active_streaming_player
-    _active_streaming_player = player
+    if player is None:
+        return
+    with _active_lock:
+        _active_streaming_players.add(player)
 
 
 def unregister_active_streaming_player(player: "StreamingAudioPlayer") -> None:
-    global _active_streaming_player
-    if _active_streaming_player is player:
-        _active_streaming_player = None
+    with _active_lock:
+        _active_streaming_players.discard(player)
 
 
-def stop_active_streaming_player() -> None:
-    """Terminate VLC / playback for the active streaming session (e.g. Ctrl+C)."""
-    p = _active_streaming_player
-    if p is not None:
+def stop_all_streaming_players() -> None:
+    """Terminate playback for every active streaming player (e.g. Ctrl+C, MCP ``stop``)."""
+    with _active_lock:
+        players = list(_active_streaming_players)
+    for p in players:
         p.stop()
+
+
+# Older name, kept for callers that predate multiple concurrent players.
+stop_active_streaming_player = stop_all_streaming_players
 
 
 # ── Player detection ──────────────────────────────────────────────────────────
@@ -153,16 +175,23 @@ class PlayerDetector:
 class StreamingAudioPlayer:
     """Plays audio chunks as they become available during generation."""
 
-    def __init__(self, show_gui: bool = True) -> None:
+    def __init__(self, show_gui: bool = True, preferred: Optional[str] = None) -> None:
         self.chunk_queue: Queue = Queue()
         self.playback_thread: Optional[threading.Thread] = None
         self.is_playing = False
         self.finished_generating = False
         self.process: Optional[subprocess.Popen] = None
         self.show_gui = show_gui
+        self.preferred = preferred
         self._pending: Dict[int, str] = {}
+        self._skipped: Set[int] = set()
         self._next_play_index: int = 0
         self._order_lock = threading.Lock()
+        self._ipc: Optional[MpvIpc] = None
+        self._stopped = False
+        # Set once the player no longer needs any chunk file (e.g. mpv IPC saw
+        # every chunk end), even if a GUI window is left open afterwards.
+        self._released = False
 
     # ── Public interface ──────────────────────────────────────────────────────
 
@@ -183,17 +212,46 @@ class StreamingAudioPlayer:
         and the basename matches ``.part_<n>.mp3``, *n* is used. Otherwise the
         path is queued immediately (legacy callers / tests).
         """
-        if not chunk_path or not os.path.exists(chunk_path) or os.path.getsize(chunk_path) <= 0:
+        if self._stopped:
             return
-        idx = chunk_index if chunk_index is not None else self._infer_chunk_index(chunk_path)
+        idx = chunk_index
+        if idx is None and chunk_path:
+            idx = self._infer_chunk_index(chunk_path)
+        if not chunk_path or not os.path.exists(chunk_path) or os.path.getsize(chunk_path) <= 0:
+            # Nothing to play, but later chunks must not wait for this one.
+            if idx is not None:
+                self.skip_index(idx)
+            return
         if idx is None:
             self.chunk_queue.put(chunk_path)
             return
         with self._order_lock:
             self._pending[idx] = chunk_path
-            while self._next_play_index in self._pending:
-                self.chunk_queue.put(self._pending.pop(self._next_play_index))
-                self._next_play_index += 1
+            self._advance_locked()
+
+    def skip_index(self, chunk_index: int) -> None:
+        """Mark chunk *chunk_index* as never coming (empty or failed synthesis).
+
+        Without this, every later chunk would be held back until
+        ``finish_generation()``, i.e. a single failed sentence would silence
+        the rest of a live stream.
+        """
+        with self._order_lock:
+            if chunk_index >= self._next_play_index:
+                self._skipped.add(chunk_index)
+            self._advance_locked()
+
+    def _advance_locked(self) -> None:
+        """Release every chunk that is next in order; caller holds ``_order_lock``."""
+        while True:
+            i = self._next_play_index
+            if i in self._pending:
+                self.chunk_queue.put(self._pending.pop(i))
+            elif i in self._skipped:
+                self._skipped.discard(i)
+            else:
+                return
+            self._next_play_index += 1
 
     def finish_generation(self) -> None:
         """Signal that no more chunks will be added."""
@@ -201,9 +259,8 @@ class StreamingAudioPlayer:
             return
         self.finished_generating = True
         with self._order_lock:
-            while self._next_play_index in self._pending:
-                self.chunk_queue.put(self._pending.pop(self._next_play_index))
-                self._next_play_index += 1
+            self._advance_locked()
+            self._skipped.clear()
             for k in sorted(self._pending.keys()):
                 self.chunk_queue.put(self._pending.pop(k))
             self._pending.clear()
@@ -228,15 +285,83 @@ class StreamingAudioPlayer:
         while self.playback_thread.is_alive() and time.monotonic() < deadline:
             self.playback_thread.join(timeout=0.25)
 
+    def wait_until_released(self, timeout: Optional[float] = None) -> bool:
+        """Block until the player no longer needs the chunk files, so they can be deleted.
+
+        Waits for the playback thread, then for a player process that was
+        launched and left running (VLC / mplayer / ffplay fallbacks). Returns
+        False on *timeout*, or straight away when a GUI player outlives
+        playback without telling us it is done (it may still open queued files).
+        """
+        deadline = None if timeout is None else time.monotonic() + timeout
+
+        def remaining() -> Optional[float]:
+            return None if deadline is None else max(0.0, deadline - time.monotonic())
+
+        thread = self.playback_thread
+        while thread is not None and thread.is_alive():
+            left = remaining()
+            if left == 0.0:
+                return False
+            thread.join(timeout=0.25 if left is None else min(0.25, left))
+        if self._released:
+            return True
+        proc = self.process
+        if proc is None or proc.poll() is not None:
+            return True
+        if self.show_gui:
+            return False
+        try:
+            proc.wait(timeout=remaining())
+            return True
+        except subprocess.TimeoutExpired:
+            return False
+
     def stop(self) -> None:
-        """Terminate the current player process."""
+        """Stop playback now: drop queued chunks and terminate the player."""
         self.is_playing = False
-        if self.process:
-            try:
-                self.process.terminate()
-                self.process.wait(timeout=5)
-            except OSError:
-                pass
+        self._stopped = True
+        with self._order_lock:
+            self._pending.clear()
+            self._skipped.clear()
+        try:
+            while True:
+                self.chunk_queue.get_nowait()
+        except Empty:
+            pass
+        self.chunk_queue.put(None)  # unblock the worker
+        ipc = self._ipc
+        if ipc is not None:
+            ipc.close()
+        else:
+            _terminate_process_quietly(self.process)
+
+    def pause(self) -> bool:
+        """Pause playback; False when the active player can't be controlled."""
+        return self._ipc_call("pause")
+
+    def resume(self) -> bool:
+        """Resume paused playback; False when the active player can't be controlled."""
+        return self._ipc_call("resume")
+
+    def skip_current(self) -> bool:
+        """Skip to the next queued chunk; False when the active player can't be controlled."""
+        return self._ipc_call("skip")
+
+    @property
+    def controllable(self) -> bool:
+        """True when pause / resume / skip_current are supported right now."""
+        return self._ipc is not None and not self._stopped
+
+    def _ipc_call(self, method: str) -> bool:
+        ipc = self._ipc
+        if ipc is None or self._stopped:
+            return False
+        try:
+            getattr(ipc, method)()
+            return True
+        except MpvIpcError:
+            return False
 
     # ── Internal worker ───────────────────────────────────────────────────────
 
@@ -510,13 +635,13 @@ class StreamingAudioPlayer:
             except Exception as e:
                 print(f"⚠️  Could not play chunk {chunk_index}: {e}")
             nxt = self.chunk_queue.get()
-            if nxt is None:
+            if nxt is None or self._stopped:
                 break
             chunk = nxt
 
     def _playback_worker_unix(self) -> None:
         """Multi-player Unix streaming playback."""
-        player = PlayerDetector.find()
+        player = PlayerDetector.find(preferred=self.preferred)
 
         if not player:
             self._unix_fallback()
@@ -525,13 +650,59 @@ class StreamingAudioPlayer:
         if "vlc" in player:
             self._play_vlc_unix(player)
         elif "mpv" in player:
-            self._play_mpv_stdin_playlist(player)
+            # GUI mpv bridges gaps itself via --keep-open and has its own controls.
+            use_ipc = not self.show_gui and ipc_supported()
+            if not (use_ipc and self._play_mpv_ipc(player)):
+                self._play_mpv_stdin_playlist(player)
         elif "ffplay" in player:
             self._play_ffplay(player)
         elif "mplayer" in player:
             self._play_mplayer(player)
         else:
             self._unix_fallback()
+
+    def _play_mpv_ipc(self, player: str) -> bool:
+        """Stream through one idle headless mpv driven over JSON IPC.
+
+        mpv is started before the first chunk is ready, so its start-up
+        overlaps synthesis. Returns False (nothing consumed from the queue)
+        when mpv can't be reached, so the caller can fall back.
+        """
+        ipc = MpvIpc(player, on_error=self._on_mpv_entry_error)
+        try:
+            ipc.start()
+        except MpvIpcError as exc:
+            print(f"⚠️  mpv IPC unavailable ({exc}); using stdin playlist", file=sys.stderr)
+            return False
+        self._ipc = ipc
+        self.process = ipc.process
+        if self._stopped:
+            ipc.close()
+            return True
+
+        print("[mpv] streaming (gapless, IPC) -- chunks fed as they arrive")
+        done = False
+        try:
+            while True:
+                chunk = self.chunk_queue.get()
+                if chunk is None or self._stopped:
+                    break
+                ipc.append(chunk)
+            if not self._stopped:
+                done = ipc.wait_done(should_continue=lambda: self.is_playing)
+        except MpvIpcError as exc:
+            if not self._stopped:
+                print(f"⚠️  mpv streaming error: {exc}", file=sys.stderr)
+        finally:
+            self._released = done
+            ipc.close()
+        return True
+
+    @staticmethod
+    def _on_mpv_entry_error(event: Dict) -> None:
+        print(f"⚠️  mpv could not play chunk (playlist entry "
+              f"{event.get('playlist_entry_id')}): {event.get('file_error', 'error')}",
+              file=sys.stderr)
 
     def _unix_fallback(self) -> None:
         """Drain queue, play only the first chunk with the system default."""
@@ -583,7 +754,7 @@ class StreamingAudioPlayer:
         chunk_idx = 0
         while True:
             chunk = self.chunk_queue.get()
-            if chunk is None:
+            if chunk is None or self._stopped:
                 break
             chunk_idx += 1
             if chunk_idx == 1:
