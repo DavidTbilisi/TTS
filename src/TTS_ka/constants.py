@@ -9,6 +9,11 @@ VOICE_MAP = {
     'en-US': 'en-US-SteffanNeural',
 }
 
+# ``--lang auto`` picks ka / ru / en per synthesized chunk from the text's
+# script (see lang_detect). Everything that accepts a language takes these.
+AUTO_LANG = 'auto'
+LANG_CHOICES = (*VOICE_MAP, AUTO_LANG)
+
 # Audio generation
 STREAMING_CHUNK_SECONDS = 15    # Default chunk size when streaming is enabled
 STREAMING_FIRST_CHUNK_SECONDS = 6  # Smaller first chunk when streaming → lower time-to-first-audio

@@ -7,9 +7,9 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
-from .constants import VOICE_MAP
+from .constants import LANG_CHOICES
 
-LANG_CODES = frozenset(VOICE_MAP)
+LANG_CODES = frozenset(LANG_CHOICES)
 
 
 def merge_hotkey_bindings(

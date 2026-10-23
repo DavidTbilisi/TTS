@@ -14,7 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict
 
-from .constants import STREAMING_CHUNK_SECONDS, VOICE_MAP
+from .constants import LANG_CHOICES, STREAMING_CHUNK_SECONDS
 from .fast_audio import (
     GenerationFailed,
     MergeFailed,
@@ -482,7 +482,7 @@ class TTSSpeakApp:
         ttk.Combobox(
             frm,
             textvariable=self.lang,
-            values=tuple(VOICE_MAP),
+            values=LANG_CHOICES,
             state="readonly",
             width=10,
         ).grid(row=0, column=1, sticky=tk.W, padx=(4, 0))
@@ -679,7 +679,7 @@ class TTSSpeakApp:
         ttk.Button(bf2, text="Save hotkeys + apply", command=self._on_hotkey_save_to_config).pack(side=tk.LEFT)
 
         help_txt = (
-            "Combo strings follow pynput (e.g. <ctrl>+<alt>+1). Languages: " + ", ".join(VOICE_MAP) + ". "
+            "Combo strings follow pynput (e.g. <ctrl>+<alt>+1). Languages: " + ", ".join(LANG_CHOICES) + ". "
             "In JSON you can set a combo to null to drop a default. Standalone listener: TTS_ka-hotkeys."
         )
         ttk.Label(frm, text=help_txt, wraplength=520, justify=tk.LEFT).grid(
@@ -760,7 +760,7 @@ class TTSSpeakApp:
             ttk.Combobox(
                 self._hk_rows_inner,
                 textvariable=lv,
-                values=tuple(VOICE_MAP),
+                values=LANG_CHOICES,
                 width=9,
                 state="readonly",
             ).grid(row=r, column=2, padx=4, pady=2)

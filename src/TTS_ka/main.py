@@ -63,7 +63,8 @@ from .ultra_fast import (
     smart_generate_long_text,
 )
 from .simple_help import show_simple_help, show_troubleshooting
-from .constants import STREAMING_CHUNK_SECONDS, VOICE_MAP
+from .constants import AUTO_LANG, LANG_CHOICES, STREAMING_CHUNK_SECONDS
+from .lang_detect import detect_lang
 from .user_config import (
     apply_env_from_config,
     argparse_defaults_from_config,
@@ -401,8 +402,9 @@ For comprehensive help with examples: %(prog)s --help-full
         "-l",
         "--lang",
         default=defs["lang"],
-        choices=list(VOICE_MAP),
-        help="Language: ka=Georgian female, ka-m=Georgian male, ru=Russian, en=English (UK), en-US=English (US)",
+        choices=list(LANG_CHOICES),
+        help="Language: ka=Georgian female, ka-m=Georgian male, ru=Russian, en=English (UK), "
+             "en-US=English (US), auto=detect ka/ru/en from the script of each chunk",
     )
     parser.add_argument(
         "-c",
@@ -679,7 +681,7 @@ For comprehensive help with examples: %(prog)s --help-full
             "--lang" in sys.argv[1:]
             or any(a.startswith("--lang=") for a in sys.argv[1:])
         )
-        if explicit_lang and args.lang != inferred_lang:
+        if explicit_lang and args.lang not in (inferred_lang, AUTO_LANG):
             print(
                 f"Error: --voice {args.voice!r} is {inferred_lang!r}, "
                 f"but --lang {args.lang!r} was given.",
@@ -801,8 +803,11 @@ For comprehensive help with examples: %(prog)s --help-full
 
         lang_names = {"ka": "Georgian", "ka-m": "Georgian (male)", "ru": "Russian",
                       "en": "English", "en-US": "English (US)"}
-        lang_name = lang_names.get(args.lang, "Unknown")
-        flag = LANG_FLAG.get(args.lang, "🔊")
+        shown_lang = detect_lang(text) if args.lang == AUTO_LANG else args.lang
+        lang_name = lang_names.get(shown_lang, "Unknown")
+        if args.lang == AUTO_LANG:
+            lang_name = f"Auto ({lang_name})"
+        flag = LANG_FLAG.get(shown_lang, "🔊")
         word_count = len(text.split())
         _cprint(
             f"\n  {flag}  [bold]{lang_name}[/bold]"

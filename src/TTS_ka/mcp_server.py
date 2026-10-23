@@ -450,7 +450,8 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
         has finished, so an agent can sequence speech without overlapping.
         With ``interrupt=True`` everything currently playing (other clips and
         streaming sessions) is stopped first. The return string echoes the
-        resolved settings.
+        resolved settings. ``lang='auto'`` picks ka / ru / en from the
+        script the text is written in.
 
         rate / pitch / volume are signed percentages or Hz (rate '+30%',
         pitch '+5Hz' or '-10%', volume '-25%'). Unspecified values fall
@@ -508,7 +509,8 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
         """Open a streaming session. Returns the session_id to use with stream_append/close.
 
         Prosody (rate / pitch / volume) is locked in at open time and applies
-        to every sentence in the session. Unspecified values fall back to
+        to every sentence in the session. With ``lang='auto'`` each sentence's
+        language (ka / ru / en) is detected from its script. Unspecified values fall back to
         the server-wide defaults from ``~/.tts_config.json``. Sessions idle
         for 15 minutes are closed the next time a session is opened or listed.
         """

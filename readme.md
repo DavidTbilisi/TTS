@@ -163,6 +163,13 @@ Built-in defaults via `--lang`:
 | `ru` | `ru-RU-SvetlanaNeural` | Russian, female |
 | `en` | `en-GB-SoniaNeural` | British English, female |
 | `en-US` | `en-US-SteffanNeural` | American English, male |
+| `auto` | per chunk | Picks `ka` / `ru` / `en` from the script (Georgian, Cyrillic, Latin) of each synthesized chunk — or, with `--live` and the MCP stream, each sentence — so mixed-language text switches voice |
+
+`auto` works anywhere a language is accepted (CLI, config `"lang"`, hotkeys, REST, MCP). It only tells scripts apart, so it always uses the default voice of each script (`ka`, not `ka-m`), and text with no letters at all is read as `en`.
+
+```bash
+echo "გამარჯობა მეგობარო. Hello there. Привет всем." | tts-ka --live --lang auto
+```
 
 Override per-call with `--voice`. When `--voice` is given, `--lang` is inferred from the voice locale — pass both only if you want the parser to validate they agree (it errors on mismatch):
 

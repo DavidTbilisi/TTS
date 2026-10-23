@@ -22,6 +22,7 @@ from tkinter import ttk
 from typing import Optional
 
 from .constants import VOICE_MAP
+from .lang_detect import resolve_lang
 from .fast_audio import generate_audio_with_subs
 from .prosody import ProsodyOpts
 from .quiz import QuizProvider, RuleBasedProvider
@@ -55,7 +56,7 @@ class StudyPlayer:
     ) -> None:
         self.text = text
         self.language = language
-        self.voice = voice or VOICE_MAP.get(language, "")
+        self.voice = voice or VOICE_MAP.get(resolve_lang(language, text), "")
         self.prosody = prosody or ProsodyOpts()
         self.chunk_size_words = chunk_size_words
         self.quiz_provider: QuizProvider = quiz_provider or RuleBasedProvider()

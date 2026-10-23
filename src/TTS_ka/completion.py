@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import List
 
 from . import voices as _voices
-from .constants import VOICE_MAP
+from .constants import LANG_CHOICES
 
 
 _LONG_FLAGS: List[str] = [
@@ -27,7 +27,7 @@ _SHORT_FLAGS: List[str] = ["-h", "-V", "-o", "-l", "-c", "-j", "-n", "-s", "-H"]
 # Both console-script spellings (see pyproject.toml [project.scripts]).
 _COMMANDS: List[str] = ["tts-ka", "TTS_ka"]
 
-_LANGS: List[str] = list(VOICE_MAP)
+_LANGS: List[str] = list(LANG_CHOICES)
 _PLAYERS: List[str] = ["vlc", "mpv", "ffplay", "mplayer"]
 
 

@@ -76,10 +76,10 @@ def validate_lang_voice(lang: str, voice: Optional[str]) -> Optional[str]:
     Shared by the REST and MCP servers so bad input fails up front instead of
     in every later synthesis call.
     """
-    from .constants import VOICE_MAP
+    from .constants import LANG_CHOICES
 
-    if lang not in VOICE_MAP:
-        return f"invalid lang {lang!r} (use one of: {', '.join(VOICE_MAP)})"
+    if lang not in LANG_CHOICES:
+        return f"invalid lang {lang!r} (use one of: {', '.join(LANG_CHOICES)})"
     if voice and get_voice(voice) is None:
         return f"unknown voice {voice!r} (see list_voices)"
     return None

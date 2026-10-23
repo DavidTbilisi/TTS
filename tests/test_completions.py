@@ -19,7 +19,7 @@ class TestBashCompletion:
 
     def test_lang_choices_present(self):
         out = completion.bash_completion()
-        assert 'compgen -W "ka ka-m ru en en-US"' in out
+        assert 'compgen -W "ka ka-m ru en en-US auto"' in out
 
     @pytest.mark.parametrize("shell", ["bash", "zsh", "fish"])
     def test_registers_both_command_spellings(self, shell):
@@ -70,7 +70,7 @@ class TestFishCompletion:
 
     def test_lang_choices_present(self):
         out = completion.fish_completion()
-        assert "-xa 'ka ka-m ru en en-US'" in out
+        assert "-xa 'ka ka-m ru en en-US auto'" in out
 
     def test_voice_ids_present(self):
         out = completion.fish_completion()

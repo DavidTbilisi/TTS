@@ -50,6 +50,7 @@ except ImportError:
 
 from . import chunk_cache
 from .constants import VOICE_MAP
+from .lang_detect import resolve_lang
 from .not_reading import replace_not_readable
 from .prosody import ProsodyOpts
 from .subtitles import WordEvent
@@ -178,7 +179,8 @@ class EdgeTTSGenerator:
                        prosody: Optional[ProsodyOpts] = None,
                        use_cache: bool = True) -> bool:
         global _last_error
-        resolved_voice = voice or VOICE_MAP.get(language)
+        clean_text = replace_not_readable(text)
+        resolved_voice = voice or VOICE_MAP.get(resolve_lang(language, clean_text))
         if not resolved_voice:
             _last_error = ValueError(
                 f"language {language!r} not supported (use: {', '.join(VOICE_MAP)})"
@@ -187,7 +189,6 @@ class EdgeTTSGenerator:
                 print(f"❌ Language '{language}' not supported. Use: {', '.join(VOICE_MAP)}")
             return False
 
-        clean_text = replace_not_readable(text)
         cache = chunk_cache.get_cache() if use_cache else None
         key = chunk_cache.cache_key(clean_text, resolved_voice, prosody) if cache else ""
         if cache is not None and cache.fetch(key, output_path):
@@ -409,11 +410,11 @@ async def generate_audio_with_subs(text: str, language: str, output_path: str,
             "core dependency). Install it with: pip install edge-tts"
         )
 
-    resolved_voice = voice or VOICE_MAP.get(language)
+    clean_text = replace_not_readable(text)
+    resolved_voice = voice or VOICE_MAP.get(resolve_lang(language, clean_text))
     if not resolved_voice:
         raise ValueError(f"Language {language!r} is not supported")
 
-    clean_text = replace_not_readable(text)
     cache = chunk_cache.get_cache()
     key = chunk_cache.cache_key(clean_text, resolved_voice, prosody) if cache else ""
     if cache is not None:
