@@ -160,19 +160,24 @@ class TestUltraFastParallelGeneration:
         finally:
             os.chdir(cwd)
 
-    async def test_first_chunk_uses_output_path_when_streaming(self, tmp_path):
+    async def test_parts_live_in_work_dir_never_output_path(self, tmp_path):
         chunks = ["chunk one", "chunk two"]
         output_path = str(tmp_path / "out.mp3")
+        work_dir = tmp_path / "run"
+        work_dir.mkdir()
         mock_player = MagicMock()
         mock_player.add_chunk = MagicMock()
 
         with patch('TTS_ka.ultra_fast.fast_generate_audio', new=AsyncMock(return_value=True)), \
              patch('TTS_ka.ultra_fast.create_progress_display', return_value=MagicMock()):
             parts = await ultra_fast_parallel_generation(
-                chunks, "en", parallel=2, streaming_player=mock_player, output_path=output_path
+                chunks, "en", parallel=2, streaming_player=mock_player,
+                output_path=output_path, work_dir=str(work_dir),
             )
 
-        assert parts[0] == output_path
+        assert parts == [str(work_dir / ".part_0000.mp3"), str(work_dir / ".part_0001.mp3")]
+        assert output_path not in parts
+        mock_player.add_chunk.assert_any_call(parts[0], 0)
 
     async def test_exception_in_worker_reported(self, tmp_path, capsys):
         chunks = ["bad chunk"]
@@ -456,3 +461,76 @@ class TestPlayerDetectorPreferred:
         with patch.object(PlayerDetector, '_locate', side_effect=locate):
             result = PlayerDetector.find(preferred="mpv")
         assert result == "/usr/bin/mpv"
+
+
+class TestRunDirs:
+    @staticmethod
+    async def _fake_generate(text, lang, output, quiet=False, **kwargs):
+        with open(output, "wb") as f:
+            f.write(b"\xff\xf3" + text.encode())
+        return True
+
+    async def test_parts_stay_out_of_cwd_and_run_dir_is_removed(self, tmp_path, monkeypatch):
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        monkeypatch.chdir(cwd)
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        out = cwd / "out.mp3"
+        with patch('TTS_ka.ultra_fast._make_run_dir', return_value=str(run_dir)), \
+             patch('TTS_ka.ultra_fast.fast_generate_audio', new=self._fake_generate):
+            await smart_generate_long_text("word " * 300, "en", chunk_seconds=20,
+                                           parallel=2, output_path=str(out))
+        assert out.read_bytes().startswith(b"\xff\xf3word")
+        assert not run_dir.exists()
+        assert [p.name for p in cwd.iterdir()] == ["out.mp3"]
+
+    async def test_merge_failure_raises_and_removes_run_dir(self, tmp_path):
+        from TTS_ka.fast_audio import MergeFailed
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        out = tmp_path / "out.mp3"
+        player = MagicMock()
+        with patch('TTS_ka.ultra_fast._make_run_dir', return_value=str(run_dir)), \
+             patch('TTS_ka.ultra_fast.fast_generate_audio', new=self._fake_generate), \
+             patch('TTS_ka.ultra_fast.fast_merge_audio_files', side_effect=MergeFailed("boom")), \
+             patch('TTS_ka.streaming_player.PlayerDetector.find', return_value="mpv"), \
+             patch('TTS_ka.ultra_fast.StreamingAudioPlayer', return_value=player), \
+             patch('TTS_ka.ultra_fast.stop_active_streaming_player') as mstop:
+            with pytest.raises(MergeFailed):
+                await smart_generate_long_text("word " * 300, "en", chunk_seconds=20,
+                                               parallel=2, output_path=str(out),
+                                               enable_streaming=True, show_gui=False)
+        assert not out.exists()
+        assert not run_dir.exists()
+        mstop.assert_called_once()
+
+    async def test_keep_parts_keeps_run_dir(self, tmp_path):
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        with patch('TTS_ka.ultra_fast._make_run_dir', return_value=str(run_dir)), \
+             patch('TTS_ka.ultra_fast.fast_generate_audio', new=self._fake_generate):
+            await smart_generate_long_text("word " * 300, "en", chunk_seconds=20, parallel=2,
+                                           output_path=str(tmp_path / "out.mp3"), keep_parts=True)
+        assert sorted(p.name for p in run_dir.iterdir())[0] == ".part_0000.mp3"
+
+    async def test_empty_after_sanitizing_raises_empty_input_error(self, tmp_path):
+        from TTS_ka.ultra_fast import EmptyInputError
+        with pytest.raises(EmptyInputError):
+            await smart_generate_long_text("   ", "en", output_path=str(tmp_path / "o.mp3"))
+
+    def test_sweep_removes_only_stale_run_dirs(self, tmp_path):
+        from TTS_ka.ultra_fast import RUN_DIR_PREFIX, _sweep_stale_run_dirs
+        stale = tmp_path / f"{RUN_DIR_PREFIX}old"
+        fresh = tmp_path / f"{RUN_DIR_PREFIX}new"
+        other = tmp_path / "unrelated-old"
+        for d in (stale, fresh, other):
+            d.mkdir()
+            (d / ".part_0000.mp3").write_bytes(b"x")
+        old = time.time() - 13 * 3600
+        os.utime(stale, (old, old))
+        os.utime(other, (old, old))
+        with patch('TTS_ka.ultra_fast.tempfile.gettempdir', return_value=str(tmp_path)):
+            _sweep_stale_run_dirs()
+        assert not stale.exists()
+        assert fresh.exists() and other.exists()

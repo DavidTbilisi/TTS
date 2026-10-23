@@ -17,6 +17,7 @@ from typing import Any, Dict
 from .constants import STREAMING_CHUNK_SECONDS, VOICE_MAP
 from .fast_audio import (
     GenerationFailed,
+    MergeFailed,
     discard_empty_output,
     fast_generate_audio,
     generation_failed,
@@ -24,6 +25,7 @@ from .fast_audio import (
 )
 from .ultra_fast import (
     OPTIMAL_WORKERS,
+    EmptyInputError,
     GenerationCancelled,
     _await_with_cancel,
     get_optimal_settings,
@@ -209,7 +211,8 @@ def _run_async_speak(
     defs: Dict[str, Any],
     cancel_event: threading.Event | None = None,
     progress_callback: Any | None = None,  # Callable[[int, int], None] from worker thread
-) -> None:
+) -> bool:
+    """Generate (and maybe play) *text*; False when playback was wanted but no player opened it."""
     args_ns = SimpleNamespace(
         no_play=no_play,
         stream=stream,
@@ -233,7 +236,7 @@ def _run_async_speak(
     if parallel == 0:
         parallel = min(4, OPTIMAL_WORKERS)
 
-    async def run_generation() -> None:
+    async def run_generation() -> bool:
         if chunk_seconds > 0 or len(text.split()) > 200 or stream_f:
             await smart_generate_long_text(
                 text,
@@ -258,9 +261,10 @@ def _run_async_speak(
                 progress_callback(1, 1)
 
         if not no_play_f and not stream_f and os.path.isfile(output_path):
-            play_audio(output_path)
+            return play_audio(output_path)
+        return True
 
-    asyncio.run(run_generation())
+    return asyncio.run(run_generation())
 
 
 class TTSSpeakApp:
@@ -448,11 +452,12 @@ class TTSSpeakApp:
             try:
                 with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
                     tmp_path = tmp.name
-                asyncio.run(
-                    fast_generate_audio(phrase, voice.lang, tmp_path, voice=voice.id)
+                ok = asyncio.run(
+                    fast_generate_audio(phrase, voice.lang, tmp_path, quiet=True, voice=voice.id)
                 )
-                played = play_audio(tmp_path)
-                if not played:
+                if not ok:
+                    err = str(generation_failed("Voice preview failed"))
+                elif not play_audio(tmp_path):
                     err = f"Saved {tmp_path}, but no player opened it."
             except BaseException as exc:  # noqa: BLE001
                 err = str(exc)
@@ -1254,8 +1259,9 @@ class TTSSpeakApp:
 
         def work() -> None:
             err: str | None = None
+            played = True
             try:
-                _run_async_speak(
+                played = _run_async_speak(
                     raw,
                     lang,
                     out,
@@ -1272,8 +1278,10 @@ class TTSSpeakApp:
                     err = "Streaming stopped: install VLC for GUI streaming, or turn off \"VLC window\"."
             except GenerationCancelled:
                 err = "Cancelled."
-            except GenerationFailed as exc:
+            except (GenerationFailed, MergeFailed) as exc:
                 err = str(exc)
+            except EmptyInputError:
+                err = "Nothing to read: the text is empty or only symbols, URLs or code."
             except KeyboardInterrupt:
                 err = "Cancelled."
             except BaseException:
@@ -1289,6 +1297,8 @@ class TTSSpeakApp:
                 if err:
                     self.status.set("Error - see dialog.")
                     messagebox.showerror("TTS_ka", err[:4000])
+                elif not played:
+                    self.status.set(f"Done. Saved {out}, but no audio player opened it.")
                 else:
                     self.status.set(f"Done. Output: {out}")
 

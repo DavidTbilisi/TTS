@@ -1,14 +1,17 @@
 """Ultra-fast parallel processing with optimized concurrency."""
 
 import asyncio
+import glob
 import os
+import shutil
 import sys
+import tempfile
 import threading
+import time
 from typing import Callable, List, Optional
 from concurrent.futures import ThreadPoolExecutor
 
 from .fast_audio import (
-    GenerationFailed,
     discard_empty_output,
     fast_generate_audio,
     fast_merge_audio_files,
@@ -26,8 +29,38 @@ from .constants import (
 OPTIMAL_WORKERS = min(MAX_PARALLEL_WORKERS, (os.cpu_count() or 1) * 4)
 
 
+# Per-run temp dirs holding the chunk part files.
+RUN_DIR_PREFIX = "tts-ka-run-"
+# Run dirs older than this are leftovers (crash, GUI streaming) and get swept.
+STALE_RUN_DIR_SECONDS = 12 * 3600
+
+
 class GenerationCancelled(Exception):
     """Raised when the user cancels generation (e.g. GUI Stop)."""
+
+
+class EmptyInputError(ValueError):
+    """Nothing speakable is left after sanitizing the input."""
+
+
+def _make_run_dir() -> str:
+    """Create a private temp dir for one run's part files."""
+    return tempfile.mkdtemp(prefix=RUN_DIR_PREFIX)
+
+
+def _sweep_stale_run_dirs(max_age: float = STALE_RUN_DIR_SECONDS) -> None:
+    """Remove run dirs left behind by earlier runs.
+
+    Only dirs older than *max_age* go: a recent one may belong to a run that
+    is still generating or playing in another process.
+    """
+    cutoff = time.time() - max_age
+    for path in glob.glob(os.path.join(tempfile.gettempdir(), RUN_DIR_PREFIX + "*")):
+        try:
+            if os.path.getmtime(path) < cutoff:
+                shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            pass
 
 
 async def _await_with_cancel(awaitable, cancel_event: Optional[threading.Event]):
@@ -58,16 +91,16 @@ async def _await_with_cancel(awaitable, cancel_event: Optional[threading.Event])
 
 
 def _interrupt_streaming_cleanup(
-    streaming_player: Optional[StreamingAudioPlayer], parts: List[str]
+    streaming_player: Optional[StreamingAudioPlayer], work_dir: str
 ) -> None:
-    """Finish playback queue, stop media, and remove partial part files."""
+    """Finish playback queue, stop media, and remove the run's part files."""
     if streaming_player:
         try:
             streaming_player.finish_generation()
         except Exception:
             pass
         stop_active_streaming_player()
-    ultra_fast_cleanup_parts(parts or [], keep_parts=False)
+    shutil.rmtree(work_dir, ignore_errors=True)
 
 
 async def ultra_fast_parallel_generation(
@@ -81,28 +114,24 @@ async def ultra_fast_parallel_generation(
     prosody=None,
     cancel_event: Optional[threading.Event] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
+    work_dir: Optional[str] = None,
 ) -> List[str]:
-    """Ultra-fast parallel generation with optional cancel, progress, voice, and prosody."""
-    parts = []
-    
-    # Pre-allocate part files - if streaming, first chunk becomes output file
-    for i in range(len(chunks)):
-        if i == 0 and streaming_player:
-            # First chunk becomes the final output file for immediate playback
-            part_name = output_path
-        else:
-            part_name = f".part_{i}.mp3"
-            # Safe file removal - handle locked files gracefully
-            if os.path.exists(part_name):
-                try:
-                    os.remove(part_name)
-                except (PermissionError, OSError):
-                    # File might be locked by media player - try alternative name
-                    import time
-                    timestamp = int(time.time() * 1000)
-                    part_name = f".part_{i}_{timestamp}.mp3"
-        parts.append(part_name)
-    
+    """Ultra-fast parallel generation with optional cancel, progress, voice, and prosody.
+
+    Parts are written as ``.part_<i>.mp3`` inside *work_dir* (a fresh run dir
+    when omitted) and returned in chunk order; they never alias *output_path*,
+    which is kept only for signature compatibility. The caller merges them
+    and removes *work_dir*.
+    """
+    owns_dir = work_dir is None
+    run_dir = work_dir or _make_run_dir()
+    parts = [os.path.join(run_dir, f".part_{i:04d}.mp3") for i in range(len(chunks))]
+
+    def discard_parts() -> None:
+        ultra_fast_cleanup_parts(parts, keep_parts=False)
+        if owns_dir:
+            shutil.rmtree(run_dir, ignore_errors=True)
+
     # Optimize concurrency based on system
     max_workers = min(parallel, OPTIMAL_WORKERS, len(chunks))
     
@@ -133,7 +162,7 @@ async def ultra_fast_parallel_generation(
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        ultra_fast_cleanup_parts(parts, keep_parts=False)
+        discard_parts()
         raise GenerationCancelled()
 
     progress = None
@@ -153,7 +182,7 @@ async def ultra_fast_parallel_generation(
                 await asyncio.gather(*tasks, return_exceptions=True)
                 if progress:
                     progress.finish(success=False)
-                ultra_fast_cleanup_parts(parts, keep_parts=False)
+                discard_parts()
                 raise GenerationCancelled()
             chunk_idx, ok = await coro
             done_count += 1
@@ -169,7 +198,7 @@ async def ultra_fast_parallel_generation(
 
         if failed:
             # A missing chunk means missing text, so never merge a partial result.
-            ultra_fast_cleanup_parts(parts, keep_parts=False)
+            discard_parts()
             raise generation_failed(
                 f"{failed} of {len(chunks)} chunks failed to synthesize",
                 worker_errors[-1] if worker_errors else None,
@@ -253,19 +282,12 @@ async def smart_generate_long_text(
     """Smart generation with dynamic optimization, optional voice/prosody, cancel, and progress."""
     text = replace_not_readable(text)
     if not text.strip():
-        raise ValueError("No readable text after filtering — input empty or only symbols/URLs/code.")
+        raise EmptyInputError("No readable text after filtering — input empty or only symbols/URLs/code.")
 
     from .chunking import split_text_into_chunks
-    import time
-    import glob
-    
-    # Clean up any leftover part files from previous runs/crashes
-    for old_part in glob.glob('.part_*.mp3'):
-        try:
-            os.remove(old_part)
-        except OSError:
-            pass
-    
+
+    _sweep_stale_run_dirs()
+
     start = time.perf_counter()
     
     # Dynamic chunk sizing based on text length
@@ -293,7 +315,7 @@ async def smart_generate_long_text(
         text, approx_seconds=chunk_seconds, first_chunk_seconds=first_chunk_seconds
     )
     if not chunks:
-        raise ValueError("No text chunks to process — input text may be empty or whitespace-only")
+        raise EmptyInputError("No text chunks to process — input text may be empty or whitespace-only")
 
     if len(chunks) == 1 and not enable_streaming:
         # Still short enough for direct generation (unless streaming is requested)
@@ -332,7 +354,7 @@ async def smart_generate_long_text(
             _cprint("  [green]🔊[/green]  [bold]Streaming enabled[/bold]  [dim]· audio starts immediately[/dim]")
     
     # Generate chunks in parallel
-    parts: List[str] = []
+    work_dir = _make_run_dir()
     try:
         parts = await ultra_fast_parallel_generation(
             chunks,
@@ -344,68 +366,37 @@ async def smart_generate_long_text(
             prosody=prosody,
             cancel_event=cancel_event,
             progress_callback=progress_callback,
+            work_dir=work_dir,
         )
 
         if streaming_player:
             streaming_player.finish_generation()
 
-        # For streaming: ensure final complete audio is in output_path
-        if streaming_player:
-            if len(parts) > 1:
-                remaining_parts = [p for p in parts[1:] if os.path.exists(p)]
-                if remaining_parts:
-                    await asyncio.sleep(0.3)
-
-                    backup_path = output_path + ".backup"
-                    try:
-                        import shutil
-
-                        shutil.copy2(output_path, backup_path)
-
-                        all_parts = [backup_path] + remaining_parts
-                        fast_merge_audio_files(all_parts, output_path)
-
-                        if os.path.exists(backup_path):
-                            os.remove(backup_path)
-
-                    except Exception as e:
-                        _cprint(f"  [yellow]⚠[/yellow]  Merge warning: [dim]{e}[/dim]")
-                        if os.path.exists(backup_path):
-                            try:
-                                shutil.move(backup_path, output_path)
-                            except OSError as restore_err:
-                                _cprint(f"  [yellow]⚠[/yellow]  Could not restore backup: [dim]{restore_err}[/dim]")
-        else:
-            fast_merge_audio_files(parts, output_path)
+        # The player reads the parts, never output_path, so merging while it
+        # plays is safe. A merge failure propagates: never ship a partial file.
+        fast_merge_audio_files(parts, output_path)
 
         if streaming_player:
             _cprint("  [dim]⏸  Waiting for playback to finish…[/dim]")
             streaming_player.wait_for_completion()
             await asyncio.sleep(0.2)
+    except BaseException:
+        _interrupt_streaming_cleanup(streaming_player, work_dir)
+        raise
 
-        # Temp-file cleanup.
-        # Non-streaming / headless streaming: merge is done and mpv has exited — safe to delete.
-        # GUI streaming (show_gui=True): mpv queues chunk paths lazily; it opens each file just
-        # before playing, so deleting files that are queued-but-not-yet-opened breaks playback.
-        # Skip cleanup now — orphaned .part_*.mp3 files are swept at the next-run startup.
-        if not (streaming_player and getattr(streaming_player, 'show_gui', False)):
-            cleanup_parts = [p for p in parts if p != output_path]
-            ultra_fast_cleanup_parts(cleanup_parts, keep_parts)
+    # GUI streaming: mpv opens queued parts lazily and outlives this call, so
+    # deleting now would cut playback short; _sweep_stale_run_dirs removes it later.
+    gui_streaming = bool(streaming_player and getattr(streaming_player, 'show_gui', False))
+    if keep_parts:
+        _cprint(f"  [dim]Part files kept in {work_dir}[/dim]")
+    elif not gui_streaming:
+        shutil.rmtree(work_dir, ignore_errors=True)
 
-        elapsed = time.perf_counter() - start
-        _cprint(
-            f"  [bold green]✓[/bold green]  [bold]Completed in {elapsed:.2f}s[/bold]"
-            f"  [dim]({len(chunks)} chunks, {parallel} workers)[/dim]"
-        )
-    except (GenerationCancelled, GenerationFailed):
-        _interrupt_streaming_cleanup(streaming_player, parts)
-        raise
-    except KeyboardInterrupt:
-        _interrupt_streaming_cleanup(streaming_player, parts)
-        raise
-    except Exception:
-        ultra_fast_cleanup_parts(parts, keep_parts=False)
-        raise
+    elapsed = time.perf_counter() - start
+    _cprint(
+        f"  [bold green]✓[/bold green]  [bold]Completed in {elapsed:.2f}s[/bold]"
+        f"  [dim]({len(chunks)} chunks, {parallel} workers)[/dim]"
+    )
 
 
 def get_optimal_settings(text: str) -> dict:

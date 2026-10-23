@@ -18,6 +18,14 @@ def _popen_argv_head(argv):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_tempdir(tmp_path, monkeypatch):
+    """Point ``tempfile`` at a per-test dir so run dirs and temp MP3s never pile up in /tmp."""
+    scratch = tmp_path / "_tmp"
+    scratch.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+
+
+@pytest.fixture(autouse=True)
 def _silence_windows_real_media_players():
     """Do not spawn VLC / media players for fake ``*.mp3`` paths during tests (Windows).
 

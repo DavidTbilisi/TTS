@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import os
 from pathlib import Path
+import pytest
 from unittest.mock import patch, MagicMock
 
 
@@ -121,8 +122,8 @@ class TestFFmpegMergerSafety:
         # ffmpeg's concat-demuxer escape for `'` is `'\''`
         assert "O'\\''Brien" in captured["content"]
 
-    def test_ffmpeg_missing_falls_back_to_copy(self, tmp_path):
-        """If ffmpeg is not installed, the first part is copied as a fallback."""
+    def test_ffmpeg_missing_raises(self, tmp_path):
+        """If ffmpeg is not installed the merge fails rather than shipping part 1 alone."""
         from TTS_ka import fast_audio
         part1 = tmp_path / "a.mp3"
         part2 = tmp_path / "b.mp3"
@@ -131,8 +132,9 @@ class TestFFmpegMergerSafety:
         out = tmp_path / "out.mp3"
         merger = fast_audio.FFmpegMerger()
         with patch.object(fast_audio.subprocess, "run", side_effect=FileNotFoundError):
-            merger.merge([str(part1), str(part2)], str(out))
-        assert out.read_bytes() == b"PART1"
+            with pytest.raises(fast_audio.MergeFailed, match="not installed"):
+                merger.merge([str(part1), str(part2)], str(out))
+        assert not out.exists()
 
 
 class TestStreamingPlayerUnixFallbackSafety:
