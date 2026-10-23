@@ -5,7 +5,6 @@ import os
 
 import pytest
 
-from TTS_ka import session_log
 from TTS_ka.session_log import SessionRecord, append, default_log_path, read_all
 
 

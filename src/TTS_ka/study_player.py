@@ -14,13 +14,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
 import tempfile
 import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
-from typing import Callable, Optional
+from typing import Optional
 
 from .fast_audio import generate_audio_with_subs
 from .prosody import ProsodyOpts
@@ -119,7 +118,9 @@ class StudyPlayer:
                 )
             )
         except Exception as exc:  # narrow surface, surfaced to UI
-            self.root.after(0, lambda: self.status_var.set(f"Generation failed: {exc}"))
+            # Bind the message now: Python unbinds `exc` when the except block ends.
+            msg = f"Generation failed: {exc}"
+            self.root.after(0, lambda: self.status_var.set(msg))
             return
 
         self.audio_path = audio_path
