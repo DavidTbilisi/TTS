@@ -121,7 +121,7 @@ def test_run_dependency_check_success(mock_collect) -> None:
     mock_collect.return_value = [
         DepRow("edge-tts", True, "ok"),
         DepRow("pydub", True, "ok"),
-        DepRow("httpx", True, "ok"),
+        DepRow("rich", True, "ok"),
         DepRow("soundfile", False, "optional"),
         DepRow("clipboard", False, "optional"),
         DepRow("ffmpeg", True, "ok"),
@@ -135,7 +135,7 @@ def test_run_dependency_check_missing_ffmpeg(mock_collect) -> None:
     mock_collect.return_value = [
         DepRow("edge-tts", True, "ok"),
         DepRow("pydub", True, "ok"),
-        DepRow("httpx", True, "ok"),
+        DepRow("rich", True, "ok"),
         DepRow("soundfile", False, "optional"),
         DepRow("clipboard", False, "optional"),
         DepRow("ffmpeg", False, "missing"),
@@ -149,7 +149,7 @@ def test_run_dependency_check_missing_edge(mock_collect) -> None:
     mock_collect.return_value = [
         DepRow("edge-tts", False, "ImportError"),
         DepRow("pydub", True, "ok"),
-        DepRow("httpx", True, "ok"),
+        DepRow("rich", True, "ok"),
         DepRow("soundfile", False, "optional"),
         DepRow("clipboard", False, "optional"),
         DepRow("ffmpeg", True, "ok"),

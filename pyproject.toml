@@ -1,6 +1,6 @@
 [build-system]
 # setuptools>=77: PEP 639 SPDX `license` + `license-files` (replaces deprecated license table)
-requires = ["setuptools>=77.0.0", "wheel"]
+requires = ["setuptools>=77.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -97,11 +97,7 @@ test = [
     "httpx>=0.27.0",  # fastapi.testclient (server tests)
 ]
 dev = [
-    "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=4.0.0",
-    "pytest-mock>=3.10.0",
-    "coverage[toml]>=7.0.0",
+    "TTS_ka[test]",
     "black>=23.0.0",
     "flake8>=6.0.0",
     "mypy>=1.0.0",
@@ -129,6 +125,7 @@ exclude_lines = [
 ]
 show_missing = true
 precision = 2
+fail_under = 70
 
 [tool.coverage.html]
 directory = "htmlcov"
@@ -146,7 +143,6 @@ addopts = [
     "--cov-report=html:htmlcov",
     "--cov-report=term-missing",
     "--cov-report=xml",
-    "--cov-fail-under=70",
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",

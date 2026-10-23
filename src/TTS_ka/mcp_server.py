@@ -6,6 +6,8 @@ Tools:
 - ``stream_open(lang?, voice?)`` → session_id — start an incremental session.
 - ``stream_append(session_id, text)`` — push text; speaks complete sentences.
 - ``stream_close(session_id)`` — drain remaining buffer and stop accepting input.
+- ``session_status(session_id)`` — progress, pending/failed synths, buffer preview.
+- ``list_sessions()`` — IDs of all active streaming sessions.
 - ``stop()`` — terminate all active playback and sessions.
 - ``list_voices(lang?)`` — return the voice catalog.
 

@@ -1,29 +1,33 @@
-/venv
-*.mp3
-sub.vtt
-test.txt
+# Virtualenvs
+/venv/
+.venv/
+
+# Build / packaging
 dist/
 build/
 *.egg
-read_my.ahk
+*.egg-info/
+*.whl
+
+# Python caches
 __pycache__/
-*.pyc
-*.pyo
-test_*.txt
-.part_*.mp3
+*.py[co]
 .pytest_cache/
-.tts_fast_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Coverage
 htmlcov/
 .coverage
 coverage.xml
 *.cover
+
+# Generated audio and scratch files
+*.mp3
+/test_*.txt
+.tts_fast_cache/
+
+# Editors / tools
 .idea/
 .vscode/
 .claude/
-src/TTS_ka/__pycache__/
-src/TTS_ka.egg-info/
-tests/__pycache__/
-.streaming_playlist.m3u
-.ff_concat.txt
-test_results.txt
-excalidraw.log
