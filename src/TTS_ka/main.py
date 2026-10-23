@@ -75,7 +75,7 @@ from .user_config import (
 )
 from . import voices as _voices
 from . import prosody as _prosody
-from .readers import READERS, read_file as _read_file, MissingExtraError
+from .readers import READERS, read_file as _read_file, MissingExtraError, PageRangeError
 from . import metadata as _metadata
 from . import subtitles as _subtitles
 from . import completion as _completion
@@ -282,8 +282,12 @@ def resolve_positional_text_source(text: str) -> str:
     return "clipboard"
 
 
-def get_input_text(text_input: str) -> str:
-    """Process text input — handle clipboard, file paths, or direct text."""
+def get_input_text(text_input: str, pages: Optional[str] = None) -> str:
+    """Process text input — handle clipboard, file paths, or direct text.
+
+    *pages* selects PDF pages (``--pages``); the caller has already checked
+    that the input is a file.
+    """
     if text_input == "clipboard":
         text = _read_clipboard().replace("\r\n", "\n")
         if not text.strip():
@@ -293,9 +297,12 @@ def get_input_text(text_input: str) -> str:
 
     if os.path.exists(text_input) and os.path.isfile(text_input):
         try:
-            return _read_file(text_input)
+            return _read_file(text_input, pages=pages)
         except MissingExtraError as exc:
             print(f"Error: {exc}", file=sys.stderr)
+            raise SystemExit(2)
+        except PageRangeError as exc:
+            print(f"Error: --pages: {exc}", file=sys.stderr)
             raise SystemExit(2)
 
     return text_input
@@ -417,6 +424,12 @@ For comprehensive help with examples: %(prog)s --help-full
         default=defs["output"],
         metavar="PATH",
         help="Output MP3 file path (default: data.mp3)",
+    )
+    parser.add_argument(
+        "--pages",
+        default=None,
+        metavar="SPEC",
+        help="PDF input: read only these pages (1-based), e.g. 20-24, 1-3,7, 10-",
     )
     parser.add_argument(
         "-n",
@@ -728,8 +741,13 @@ For comprehensive help with examples: %(prog)s --help-full
         )
         raise SystemExit(2)
 
+    if args.pages is not None and (from_stdin or not os.path.isfile(args.text)):
+        emit({"event": "error", "message": "--pages needs a PDF file"})
+        print("Error: --pages needs a PDF file argument", file=sys.stderr)
+        raise SystemExit(2)
+
     text = (args.text if args.text and "\n" in args.text and not os.path.exists(args.text)
-            else get_input_text(resolve_positional_text_source(args.text)))
+            else get_input_text(resolve_positional_text_source(args.text), pages=args.pages))
     if not text or not text.strip():
         if args.json:
             emit({"event": "error", "message": "empty input"})

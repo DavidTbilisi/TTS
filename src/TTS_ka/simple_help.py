@@ -45,6 +45,7 @@ def show_simple_help():
 
     print("OUTPUT:")
     print("  -o PATH / --output     Output MP3 (default: data.mp3); --force to overwrite")
+    print("  --pages 20-24          PDF input: read only these pages (also 1-3,7 or 10-)")
     print("  --srt / --vtt          Also write subtitles next to the MP3")
     print("  --title --author --album --cover IMG --chapters JSON   ID3 tags ([metadata] extra)")
     print("  --json                 Machine-readable result on stdout")
