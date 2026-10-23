@@ -7,6 +7,10 @@ to verify the wiring, session lifecycle, and stdout safety.
 
 from __future__ import annotations
 
+import asyncio
+import os
+import subprocess
+import sys
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -14,7 +18,15 @@ import pytest
 
 pytest.importorskip("mcp", reason="mcp extra not installed")
 
+from TTS_ka import mcp_server as _mcp  # noqa: E402
 from TTS_ka.mcp_server import _LiveSession, build_server  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _sweep_tmp_dirs():
+    """Remove temp dirs left behind when a test's loop cancels cleanup tasks."""
+    yield
+    _mcp._remove_all_tmp_dirs()
 
 
 # ── _LiveSession ──────────────────────────────────────────────────────────────
@@ -554,3 +566,135 @@ class TestListVoices:
         items = result["result"] if isinstance(result, dict) and "result" in result else result
         # Unknown lang falls through to all_voices, not an empty list.
         assert items
+
+
+# ── Temp-dir cleanup ──────────────────────────────────────────────────────────
+
+
+async def _write_one_byte(text, lang, output, *, voice=None, prosody=None):
+    with open(output, "wb") as f:
+        f.write(b"x")
+
+
+async def _drain_cleanup_tasks():
+    await asyncio.gather(*list(_mcp._cleanup_tasks))
+
+
+class _FakePlayer:
+    """StreamingAudioPlayer stand-in: no thread, optional real player process."""
+
+    process = None
+
+    def __init__(self, show_gui=False):
+        self.chunks = []
+
+    def start(self):
+        pass
+
+    def add_chunk(self, path, chunk_index=None):
+        self.chunks.append(path)
+
+    def finish_generation(self):
+        pass
+
+    def wait_for_completion(self):
+        pass
+
+    def stop(self):
+        pass
+
+
+class TestTmpDirCleanup:
+    @pytest.mark.asyncio
+    async def test_stream_close_removes_dir_after_playback(self):
+        sessions = {}
+        server = build_server(sessions=sessions)
+        with patch("TTS_ka.mcp_server.StreamingAudioPlayer", _FakePlayer), \
+             patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte):
+            sid = await _call(server, "stream_open", lang="en")
+            tmp_dir = sessions[sid].tmp_dir
+            await _call(server, "stream_append", session_id=sid, text="One. Two. ")
+            await _call(server, "stream_close", session_id=sid)
+            await _drain_cleanup_tasks()
+        assert not os.path.exists(tmp_dir)
+        assert tmp_dir not in _mcp._tmp_dirs
+
+    @pytest.mark.asyncio
+    async def test_stream_close_waits_for_launched_player_process(self):
+        """VLC / mplayer return right after launch: wait for the process too."""
+        sessions = {}
+        server = build_server(sessions=sessions)
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(0.3)"])
+        try:
+            with patch("TTS_ka.mcp_server.StreamingAudioPlayer", _FakePlayer), \
+                 patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte):
+                sid = await _call(server, "stream_open", lang="en")
+                sess = sessions[sid]
+                sess.player.process = proc
+                await _call(server, "stream_append", session_id=sid, text="One. ")
+                await _call(server, "stream_close", session_id=sid)
+                assert os.path.isdir(sess.tmp_dir)  # player still running
+                await _drain_cleanup_tasks()
+            assert proc.returncode is not None
+            assert not os.path.exists(sess.tmp_dir)
+        finally:
+            proc.kill()
+            proc.wait()
+
+    @pytest.mark.asyncio
+    async def test_queued_speak_removed_after_clip_duration(self):
+        server = build_server()
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte), \
+             patch("TTS_ka.mcp_server.play_audio", return_value=True), \
+             patch("TTS_ka.mcp_server._audio_duration_seconds", return_value=0.05), \
+             patch.object(_mcp, "PLAYBACK_GRACE_SECONDS", 0.0):
+            r = await _call(server, "speak", text="Hello there", lang="en")
+            path = r.split()[1]
+            assert r.startswith("queued") and os.path.exists(path)
+            await _drain_cleanup_tasks()
+        assert not os.path.exists(os.path.dirname(path))
+
+    @pytest.mark.asyncio
+    async def test_blocking_speak_unknown_duration_defers_removal(self):
+        """No duration → don't delete under a player that may still be reading."""
+        server = build_server()
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte), \
+             patch("TTS_ka.mcp_server.play_audio", return_value=True), \
+             patch("TTS_ka.mcp_server._audio_duration_seconds", return_value=None), \
+             patch.object(_mcp, "UNKNOWN_DURATION_KEEP_SECONDS", 0.01):
+            r = await _call(server, "speak", text="Hello there", lang="en", blocking=True)
+            assert r.startswith("played [")
+            (tmp_dir,) = [d for d in _mcp._tmp_dirs if "ttska-mcp-one-" in d]
+            assert os.path.isdir(tmp_dir)
+            await _drain_cleanup_tasks()
+        assert not os.path.exists(tmp_dir)
+
+    @pytest.mark.asyncio
+    async def test_sweep_removes_unclosed_session_and_no_player_clip(self):
+        sessions = {}
+        server = build_server(sessions=sessions)
+        with patch("TTS_ka.mcp_server.StreamingAudioPlayer", _FakePlayer), \
+             patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte), \
+             patch("TTS_ka.mcp_server.play_audio", return_value=False):
+            sid = await _call(server, "stream_open", lang="en")
+            r = await _call(server, "speak", text="Hello there", lang="en")
+        assert "no audio player" in r
+        dirs = [sessions[sid].tmp_dir, os.path.dirname(r.split("saved ")[1].split()[0])]
+        assert all(os.path.isdir(d) for d in dirs)
+        _mcp._remove_all_tmp_dirs()
+        assert not any(os.path.exists(d) for d in dirs)
+        assert not _mcp._tmp_dirs
+
+    def test_main_sweeps_tmp_dirs_on_exit(self):
+        made = []
+
+        class _Server:
+            def run(self, transport):
+                made.append(_mcp._make_tmp_dir("ttska-mcp-"))
+                raise KeyboardInterrupt
+
+        with patch("TTS_ka.mcp_server.build_server", return_value=_Server()), \
+             patch.object(sys.stdout, "reconfigure", create=True):
+            with pytest.raises(KeyboardInterrupt):
+                _mcp.main()
+        assert made and not os.path.exists(made[0])

@@ -23,10 +23,11 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import uuid
-from typing import Dict, List, Optional
+from typing import Coroutine, Dict, List, Optional, Set
 
 from .fast_audio import fast_generate_audio, generation_failed, play_audio
 from .live_stream import DEFAULT_IDLE_FLUSH_MS, SentenceBuffer
@@ -35,10 +36,63 @@ from .prosody import ProsodyOpts, parse_pitch, parse_rate, parse_volume
 from .streaming_player import StreamingAudioPlayer, stop_active_streaming_player
 from .user_config import argparse_defaults_from_config, load_user_config
 from . import voices as _voices
+from .constants import PLAYBACK_JOIN_TIMEOUT
 
 
 MAX_SESSIONS = 8
 MAX_CONCURRENT_PER_SESSION = 4
+# Extra seconds a one-shot clip's files are kept past its measured duration
+# (covers player start-up), and how long to keep them when ffprobe can't
+# measure the duration at all.
+PLAYBACK_GRACE_SECONDS = 5.0
+UNKNOWN_DURATION_KEEP_SECONDS = float(PLAYBACK_JOIN_TIMEOUT)
+
+
+# ── Temp-dir lifecycle ────────────────────────────────────────────────────────
+#
+# Synthesized MP3s live in per-call / per-session temp dirs. They can't be
+# removed when a tool returns, because the player may still be reading them,
+# so each dir is removed once its playback is over. Every dir is also recorded
+# here so main() can sweep whatever is left (unclosed sessions, the no-player
+# path, cleanup tasks cancelled at shutdown) when the server exits.
+
+_tmp_dirs: Set[str] = set()
+_cleanup_tasks: Set["asyncio.Task[None]"] = set()  # strong refs for create_task
+
+
+def _make_tmp_dir(prefix: str) -> str:
+    path = tempfile.mkdtemp(prefix=prefix)
+    _tmp_dirs.add(path)
+    return path
+
+
+def _remove_tmp_dir(path: str) -> None:
+    shutil.rmtree(path, ignore_errors=True)
+    _tmp_dirs.discard(path)
+
+
+def _remove_all_tmp_dirs() -> None:
+    """Remove every temp dir this process created that is still on disk."""
+    for path in list(_tmp_dirs):
+        _remove_tmp_dir(path)
+
+
+def _spawn_cleanup(coro: Coroutine[None, None, None]) -> None:
+    task = asyncio.create_task(coro)
+    _cleanup_tasks.add(task)
+    task.add_done_callback(_cleanup_tasks.discard)
+
+
+async def _remove_after_clip(tmp_dir: str, path: str) -> None:
+    """Remove a one-shot clip's dir once it has had time to finish playing.
+
+    ``play_audio`` launches a detached player and keeps no handle to it, so
+    the clip's measured duration is the only end-of-playback signal.
+    """
+    dur = await asyncio.to_thread(_audio_duration_seconds, path)
+    keep = dur + PLAYBACK_GRACE_SECONDS if dur else UNKNOWN_DURATION_KEEP_SECONDS
+    await asyncio.sleep(keep)
+    _remove_tmp_dir(tmp_dir)
 
 
 def _audio_duration_seconds(path: str) -> Optional[float]:
@@ -78,7 +132,7 @@ class _LiveSession:
         self.buf = SentenceBuffer(idle_flush_ms=DEFAULT_IDLE_FLUSH_MS)
         self.player = StreamingAudioPlayer(show_gui=False)
         self.player.start()
-        self.tmp_dir = tempfile.mkdtemp(prefix="ttska-mcp-")
+        self.tmp_dir = _make_tmp_dir("ttska-mcp-")
         self._idx = 0      # output-file counter (incremented inside _speak)
         self._queued = 0   # sentences ever scheduled — visible in status
         self._failed = 0   # synth tasks that raised — visible in status
@@ -159,7 +213,24 @@ class _LiveSession:
             self.player.finish_generation()
         except Exception:
             pass
+        _spawn_cleanup(self._remove_tmp_after_playback())
         return self._queued
+
+    async def _remove_tmp_after_playback(self) -> None:
+        """Remove the session's MP3s once the player is done with them.
+
+        The playback thread exits when the queue drains, but VLC / mplayer
+        (and the Unix fallback) only *launch* a process and return, so also
+        wait for ``player.process`` before deleting.
+        """
+        await asyncio.to_thread(self.player.wait_for_completion)
+        proc = self.player.process
+        if proc is not None and proc.poll() is None:
+            try:
+                await asyncio.to_thread(proc.wait, PLAYBACK_JOIN_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                pass
+        _remove_tmp_dir(self.tmp_dir)
 
     def hard_stop(self) -> None:
         """Synchronous teardown — kills the player and removes the tmp dir."""
@@ -172,7 +243,7 @@ class _LiveSession:
             self.player.finish_generation()
         except Exception:
             pass
-        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+        _remove_tmp_dir(self.tmp_dir)
 
 
 # ── Server factory ────────────────────────────────────────────────────────────
@@ -258,7 +329,7 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
             return "skipped: empty"
         prosody = _resolve_prosody(rate, pitch, volume, default_prosody)
         echo = _describe_settings(lang, voice, prosody)
-        tmp_dir = tempfile.mkdtemp(prefix="ttska-mcp-one-")
+        tmp_dir = _make_tmp_dir("ttska-mcp-one-")
         path = os.path.join(tmp_dir, "out.mp3")
         try:
             ok = await fast_generate_audio(cleaned, lang, path,
@@ -266,10 +337,11 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
             if ok is False:
                 raise generation_failed("synthesis failed")
         except Exception as exc:  # noqa: BLE001
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+            _remove_tmp_dir(tmp_dir)
             return f"error: {exc}"
         played = play_audio(path)
         if not played:
+            # Kept so the agent/user can open it; swept when the server exits.
             return f"error: no audio player available; saved {path} [{echo}]"
         if blocking:
             # Truly wait for playback: sleep for the audio's measured duration
@@ -277,9 +349,12 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
             dur = await asyncio.to_thread(_audio_duration_seconds, path)
             if dur:
                 await asyncio.sleep(dur + 0.3)
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            played_for = f" in {dur:.1f}s" if dur else ""
-            return f"played{played_for} [{echo}]"
+                _remove_tmp_dir(tmp_dir)
+                return f"played in {dur:.1f}s [{echo}]"
+            # Unknown length: the player may still be reading the file.
+            _spawn_cleanup(_remove_after_clip(tmp_dir, path))
+            return f"played [{echo}]"
+        _spawn_cleanup(_remove_after_clip(tmp_dir, path))
         return f"queued {path} [{echo}]"
 
     @server.tool()
@@ -401,7 +476,10 @@ def main() -> None:
     the wire. Line buffering flushes each print while fd 1 is still diverted.
     """
     sys.stdout.reconfigure(line_buffering=True)
-    build_server().run("stdio")
+    try:
+        build_server().run("stdio")
+    finally:
+        _remove_all_tmp_dirs()
 
 
 if __name__ == "__main__":
