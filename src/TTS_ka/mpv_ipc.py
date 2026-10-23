@@ -210,6 +210,10 @@ class MpvIpc:
     def resume(self) -> None:
         self.command("set_property", "pause", False)
 
+    def set_speed(self, speed: float) -> None:
+        """Set the playback speed multiplier; it carries over to later chunks."""
+        self.command("set_property", "speed", speed)
+
     def skip(self) -> None:
         """Jump to the next queued chunk (or go idle if this was the last)."""
         self.command("playlist-next", "force")

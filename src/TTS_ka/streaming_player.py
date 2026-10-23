@@ -38,10 +38,14 @@ import threading
 import time
 from pathlib import Path
 from queue import Empty, Queue
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from .constants import PLAYBACK_JOIN_TIMEOUT
 from .mpv_ipc import MpvIpc, MpvIpcError, ipc_supported
+
+# Range for change_speed (mpv keeps pitch through its scaletempo filter).
+MIN_SPEED = 0.5
+MAX_SPEED = 2.5
 
 # VLC legacy RC over TCP (stdin RC is unreliable on Windows — see VideoLAN issues).
 _RC_CONNECT_ATTEMPTS = 50
@@ -192,6 +196,7 @@ class StreamingAudioPlayer:
         # Set once the player no longer needs any chunk file (e.g. mpv IPC saw
         # every chunk end), even if a GUI window is left open afterwards.
         self._released = False
+        self._speed = 1.0
 
     # ── Public interface ──────────────────────────────────────────────────────
 
@@ -348,17 +353,28 @@ class StreamingAudioPlayer:
         """Skip to the next queued chunk; False when the active player can't be controlled."""
         return self._ipc_call("skip")
 
+    def change_speed(self, delta: float) -> Optional[float]:
+        """Nudge playback speed by *delta*, clamped to MIN_SPEED..MAX_SPEED.
+
+        Returns the new speed, or None when the active player can't be controlled.
+        """
+        speed = round(min(max(self._speed + delta, MIN_SPEED), MAX_SPEED), 2)
+        if not self._ipc_call("set_speed", speed):
+            return None
+        self._speed = speed
+        return speed
+
     @property
     def controllable(self) -> bool:
         """True when pause / resume / skip_current are supported right now."""
         return self._ipc is not None and not self._stopped
 
-    def _ipc_call(self, method: str) -> bool:
+    def _ipc_call(self, method: str, *args: Any) -> bool:
         ipc = self._ipc
         if ipc is None or self._stopped:
             return False
         try:
-            getattr(ipc, method)()
+            getattr(ipc, method)(*args)
             return True
         except MpvIpcError:
             return False

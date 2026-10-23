@@ -234,6 +234,19 @@ On Windows with VLC, a single VLC window receives chunks over TCP remote-control
 
 Ctrl+C cancels generation and terminates the active player without waiting for the playback-join timeout.
 
+### Keyboard controls
+
+With headless `mpv` (Linux / macOS, `--stream --no-gui` or `--live`), single keys control playback while it streams:
+
+| Key | Action |
+|-----|--------|
+| `space` / `p` | Pause / resume |
+| `n` | Skip to the next chunk |
+| `+` / `-` | Speed up / slow down by 0.1× (0.5×–2.5×, pitch preserved) |
+| `q` | Quit (same as Ctrl+C) |
+
+Keys are read from the terminal, not stdin, so they work with piped input (`… | tts-ka --live`). They are off when there is no terminal (hotkeys, GUI), in a background job, in `--live` when you type the text into the terminal yourself, and with `--no-keys`.
+
 ---
 
 ## Metadata, chapters, and subtitles
@@ -390,6 +403,7 @@ tts-ka-hotkeys    # background hotkey listener (Windows, [hotkeys] extra)
 | `-s`, `--stream` | Play chunks as they finish |
 | `--no-gui` | With `--stream`, run VLC headless |
 | `--player NAME` | Preferred streaming player (vlc, mpv, ffplay, mplayer) |
+| `--no-keys` | Don't read playback keys (space, n, +/-, q) from the terminal while streaming |
 | `--no-turbo`, `--legacy` | Disable auto-optimization |
 
 ### Prosody

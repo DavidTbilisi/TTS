@@ -472,6 +472,12 @@ For comprehensive help with examples: %(prog)s --help-full
              "Falls back to auto-detection if not found.",
     )
     parser.add_argument(
+        "--no-keys",
+        action="store_true",
+        help="Don't read playback keys (space pause, n next, +/- speed, q quit) "
+             "from the terminal while streaming",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Overwrite output file if it already exists",
@@ -706,6 +712,8 @@ For comprehensive help with examples: %(prog)s --help-full
                 prosody=prosody_opts,
                 idle_flush_ms=args.live_idle_ms,
                 show_player_gui=show_player,
+                # A terminal on stdin is where the text is typed; keys would steal it.
+                key_controls=not args.no_keys and not sys.stdin.isatty(),
             ))
         except KeyboardInterrupt:
             stop_active_streaming_player()
@@ -849,6 +857,7 @@ For comprehensive help with examples: %(prog)s --help-full
                     preferred_player=args.player,
                     voice=args.voice,
                     prosody=prosody_opts,
+                    key_controls=not args.no_keys,
                 )
             else:
                 start = time.perf_counter()
