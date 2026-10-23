@@ -202,9 +202,10 @@ def format_dep_report(rows: Optional[List[DepRow]] = None) -> str:
             flag = "opt"
         else:
             flag = "!!"
-        lines.append(f"  [{flag}]  {r.name.ljust(w)}  {r.detail}")
+        tag = f"[{flag}]".ljust(5)  # "[OK]" / "[opt]" / "[!!]" share one column
+        lines.append(f"  {tag}  {r.name.ljust(w)}  {r.detail}")
         if not r.ok and r.fix:
-            lines.append(f"  {' ' * (len(flag) + 4)}{' ' * w}  fix: {r.fix}")
+            lines.append(f"  {' ' * 7}{' ' * w}  fix: {r.fix}")
     lines.append("")
     lines.append("ffmpeg: required for long/chunked output and reliable MP3 handling.")
     lines.append("streaming player: needed only for --stream (live playback while generating).")

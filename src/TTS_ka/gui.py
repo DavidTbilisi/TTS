@@ -11,7 +11,6 @@ import threading
 import traceback
 import webbrowser
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Dict
 
 from .constants import STREAMING_CHUNK_SECONDS, VOICE_MAP
@@ -37,7 +36,6 @@ from .user_config import (
     argparse_defaults_from_config,
     default_config_path,
     load_user_config,
-    resolved_playback_flags,
     write_user_config,
 )
 
@@ -119,6 +117,8 @@ def hotkeys_dict_from_combo_lang_pairs(pairs: list[tuple[str, str]]) -> Dict[str
     return out
 
 
+GUI_THEME_ENV = "TTS_KA_GUI_THEME"
+
 _UNICODE_FONT_PRIORITY = (
     # Mkhedruli first: some Segoe / Tk pairings show ``?`` for Georgian in ``Text`` widgets.
     "sylfaen",
@@ -163,10 +163,10 @@ def apply_unicode_ui_fonts(root: Any, size: int = 10) -> tuple[str, int] | None:
     if not picked:
         return None
     family, _ = picked
+    # Not TkFixedFont: it must stay monospace so the dependency report lines up.
     for name in (
         "TkDefaultFont",
         "TkTextFont",
-        "TkFixedFont",
         "TkHeadingFont",
         "TkMenuFont",
         "TkTooltipFont",
@@ -175,6 +175,10 @@ def apply_unicode_ui_fonts(root: Any, size: int = 10) -> tuple[str, int] | None:
             tkfont.nametofont(name).configure(family=family, size=size)
         except TclError:
             pass
+    # sv-ttk hard-codes Segoe UI Variable; keep its sizes but use a font with Georgian glyphs.
+    for name in tkfont.names(root):
+        if name.startswith("SunValley"):
+            tkfont.nametofont(name).configure(family=family)
     style = ttk.Style(root)
     ft = (family, size)
     for elem in (
@@ -189,6 +193,65 @@ def apply_unicode_ui_fonts(root: Any, size: int = 10) -> tuple[str, int] | None:
         except TclError:
             pass
     return (family, size)
+
+
+def configure_heading_styles(root: Any, ui_font: tuple[str, int] | None) -> None:
+    """``Title.TLabel`` / ``Heading.TLabel``: bold, larger variants of the UI font."""
+    import tkinter.font as tkfont
+    from tkinter import ttk
+
+    if ui_font:
+        family, size = ui_font
+    else:
+        base = tkfont.nametofont("TkDefaultFont").actual()
+        family, size = base["family"], abs(int(base["size"])) or 10
+    style = ttk.Style(root)
+    style.configure("Title.TLabel", font=(family, size + 6, "bold"))
+    style.configure("Heading.TLabel", font=(family, size + 1, "bold"))
+
+
+def apply_gui_theme(root: Any) -> str | None:
+    """Use the sv-ttk (Sun Valley) theme when installed; return ``"light"`` / ``"dark"``.
+
+    ``TTS_KA_GUI_THEME``: ``light``, ``dark``, ``system`` (default: follow the OS via
+    darkdetect) or ``classic`` (keep Tk's own theme). None when the theme isn't applied.
+    """
+    from tkinter import TclError
+
+    want = os.environ.get(GUI_THEME_ENV, "").strip().lower() or "system"
+    if want == "classic":
+        return None
+    try:
+        import sv_ttk
+    except ImportError:
+        return None
+    if want not in ("light", "dark"):
+        want = "light"
+        try:
+            import darkdetect  # type: ignore[import-untyped]
+
+            if (darkdetect.theme() or "").lower() == "dark":
+                want = "dark"
+        except Exception:  # missing, or no way to ask this desktop: stay light
+            pass
+    try:
+        sv_ttk.set_theme(want, root)
+    except TclError:
+        return None
+    return want
+
+
+def _scrolled_text(parent: Any, **kw: Any) -> Any:
+    """``ScrolledText`` with a ttk scrollbar, so it follows the theme like every other widget."""
+    from tkinter import scrolledtext, ttk
+
+    st = scrolledtext.ScrolledText(parent, **kw)
+    st.vbar.destroy()
+    st.vbar = ttk.Scrollbar(st.frame, command=st.yview)
+    # ``str(st)`` is the outer frame's path; ``st._w`` is the Text packed inside it.
+    st.vbar.pack(side="right", fill="y", before=st._w)  # type: ignore[attr-defined]
+    st.configure(yscrollcommand=st.vbar.set)
+    return st
 
 
 def _enable_input_methods(root: Any) -> None:
@@ -212,17 +275,14 @@ def _run_async_speak(
     cancel_event: threading.Event | None = None,
     progress_callback: Any | None = None,  # Callable[[int, int], None] from worker thread
 ) -> bool:
-    """Generate (and maybe play) *text*; False when playback was wanted but no player opened it."""
-    args_ns = SimpleNamespace(
-        no_play=no_play,
-        stream=stream,
-        no_turbo=False,
-        no_gui=not vlc_gui if stream else False,
-    )
-    flags = resolved_playback_flags(args_ns, defs)
-    no_play_f = flags["no_play"]
-    stream_f = flags["stream"]
-    show_player = flags["show_player"]
+    """Generate (and maybe play) *text*; False when playback was wanted but no player opened it.
+
+    *stream* / *vlc_gui* / *no_play* are the Speak-tab checkboxes. They start from the config
+    and are final: ``resolved_playback_flags`` would let a config ``true`` beat an unchecked box.
+    """
+    no_play_f = no_play
+    stream_f = stream
+    show_player = vlc_gui  # only read by the streaming player
 
     chunk_seconds = defs.get("chunk_seconds", 0) or 0
     parallel = defs.get("parallel", 0) or 0
@@ -281,10 +341,13 @@ class TTSSpeakApp:
         self._tk = tk
         self.root = tk.Tk()
         self.root.title("TTS_ka")
-        self.root.minsize(520, 420)
+        self.root.minsize(680, 460)  # Speak tab: options row fits on one line
         self.defs = dict(defs)
         _enable_input_methods(self.root)
+        # Theme first: it creates the SunValley fonts that the font pass re-targets.
+        self._theme = apply_gui_theme(self.root)
         self._ui_font = apply_unicode_ui_fonts(self.root)
+        configure_heading_styles(self.root, self._ui_font)
 
         cfg_path = (config_explicit or "").strip() or str(default_config_path())
         self.config_path_var = tk.StringVar(value=cfg_path)
@@ -341,13 +404,13 @@ class TTSSpeakApp:
     def _build_setup_tab(self, frm: Any) -> None:
         """Guided first screen: verify setup, pick + preview a voice, then speak."""
         import tkinter as tk
-        from tkinter import ttk, scrolledtext
+        from tkinter import ttk
 
         from . import voices as _voices
 
         frm.columnconfigure(0, weight=1)
 
-        ttk.Label(frm, text="Welcome to TTS_ka").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(frm, text="Welcome to TTS_ka", style="Title.TLabel").grid(row=0, column=0, sticky=tk.W)
         ttk.Label(
             frm,
             text="Three quick steps to get going.",
@@ -356,8 +419,8 @@ class TTSSpeakApp:
         ).grid(row=1, column=0, sticky=tk.W, pady=(2, 10))
 
         # --- Step 1: verify setup -------------------------------------------
-        ttk.Label(frm, text="1.  Verify your setup").grid(row=2, column=0, sticky=tk.W)
-        self._setup_report = scrolledtext.ScrolledText(frm, height=9, wrap=tk.WORD)
+        ttk.Label(frm, text="1.  Verify your setup", style="Heading.TLabel").grid(row=2, column=0, sticky=tk.W)
+        self._setup_report = _scrolled_text(frm, height=9, wrap=tk.WORD)
         self._setup_report.grid(row=3, column=0, sticky=(tk.E, tk.W), pady=(4, 0))
         self._setup_report.insert("1.0", "Checking dependencies…")
         self._setup_report.configure(state=tk.DISABLED)
@@ -370,7 +433,7 @@ class TTSSpeakApp:
         )
 
         # --- Step 2: pick + preview a voice ---------------------------------
-        ttk.Label(frm, text="2.  Pick a voice and preview it").grid(row=6, column=0, sticky=tk.W)
+        ttk.Label(frm, text="2.  Pick a voice and preview it", style="Heading.TLabel").grid(row=6, column=0, sticky=tk.W)
         self._setup_voices = _voices.all_voices()
         names = [f"{v.display_name} — {v.locale} ({v.gender})" for v in self._setup_voices]
         row7 = ttk.Frame(frm)
@@ -395,7 +458,7 @@ class TTSSpeakApp:
         )
 
         # --- Step 3: start speaking -----------------------------------------
-        ttk.Label(frm, text="3.  Start speaking").grid(row=10, column=0, sticky=tk.W)
+        ttk.Label(frm, text="3.  Start speaking", style="Heading.TLabel").grid(row=10, column=0, sticky=tk.W)
         ttk.Button(
             frm, text="Go to Speak tab →",
             command=lambda: self._nb.select(self._tab_speak),
@@ -475,57 +538,41 @@ class TTSSpeakApp:
 
     def _build_speak_tab(self, frm: Any) -> None:
         import tkinter as tk
-        from tkinter import ttk, scrolledtext
+        from tkinter import ttk
 
-        ttk.Label(frm, text="Language").grid(row=0, column=0, sticky=tk.W)
+        frm.columnconfigure(0, weight=1)
+
+        top = ttk.Frame(frm)
+        top.grid(row=0, column=0, sticky=tk.EW)
+        ttk.Label(top, text="Language").pack(side=tk.LEFT)
         self.lang = tk.StringVar(value=self.defs.get("lang", "en"))
         ttk.Combobox(
-            frm,
+            top,
             textvariable=self.lang,
             values=tuple(VOICE_MAP),
             state="readonly",
-            width=10,
-        ).grid(row=0, column=1, sticky=tk.W, padx=(4, 0))
-
-        self.stream = tk.BooleanVar(value=bool(self.defs.get("stream")))
-        ttk.Checkbutton(frm, text="Stream while generating (--stream)", variable=self.stream).grid(
-            row=1, column=0, columnspan=2, sticky=tk.W, pady=(6, 0)
-        )
-
-        self.vlc_gui = tk.BooleanVar(value=not bool(self.defs.get("no_gui")))
-        ttk.Checkbutton(
-            frm,
-            text="VLC window for streaming (off = headless / --no-gui)",
-            variable=self.vlc_gui,
-        ).grid(row=2, column=0, columnspan=2, sticky=tk.W)
-
-        self.no_play = tk.BooleanVar(value=bool(self.defs.get("no_play")))
-        ttk.Checkbutton(frm, text="Generate only (no play at end)", variable=self.no_play).grid(
-            row=3, column=0, columnspan=2, sticky=tk.W
-        )
-
-        ttk.Label(frm, text="Text source").grid(row=4, column=0, sticky=tk.W, pady=(10, 0))
+            width=8,
+        ).pack(side=tk.LEFT, padx=(8, 0))
         self.source_mode = tk.StringVar(value="text")
-        rf = ttk.Frame(frm)
-        rf.grid(row=5, column=0, columnspan=2, sticky=tk.W)
-        ttk.Radiobutton(rf, text="Type or paste in box", variable=self.source_mode, value="text").pack(
-            side=tk.LEFT, padx=(0, 12)
+        ttk.Radiobutton(top, text="Read a text file", variable=self.source_mode, value="file").pack(side=tk.RIGHT)
+        ttk.Radiobutton(top, text="Type or paste", variable=self.source_mode, value="text").pack(
+            side=tk.RIGHT, padx=(0, 12)
         )
-        ttk.Radiobutton(rf, text="Read UTF-8 file", variable=self.source_mode, value="file").pack(side=tk.LEFT)
 
-        ttk.Label(frm, text="Document path").grid(row=6, column=0, sticky=tk.W, pady=(6, 0))
+        # Only shown while "Read a text file" is selected.
+        self._file_row = ttk.Frame(frm)
+        self._file_row.columnconfigure(0, weight=1)
         self.document_path_var = tk.StringVar(value="")
-        ttk.Entry(frm, textvariable=self.document_path_var, width=52).grid(
-            row=6, column=1, sticky=(tk.E, tk.W), padx=(4, 4), pady=(6, 0)
+        ttk.Entry(self._file_row, textvariable=self.document_path_var).grid(row=0, column=0, sticky=tk.EW)
+        ttk.Button(self._file_row, text="Browse…", command=self._on_browse_document).grid(
+            row=0, column=1, padx=(6, 0)
         )
-        ttk.Button(frm, text="Browse...", command=self._on_browse_document).grid(
-            row=6, column=2, sticky=tk.W, pady=(6, 0)
+        ttk.Button(self._file_row, text="Load into editor", command=self._on_load_file_into_editor).grid(
+            row=0, column=2, padx=(6, 0)
         )
-        ttk.Button(frm, text="Load file into editor", command=self._on_load_file_into_editor).grid(
-            row=7, column=1, sticky=tk.W, pady=(4, 0)
-        )
+        self._file_row.grid(row=1, column=0, sticky=tk.EW, pady=(8, 0))
+        self.source_mode.trace_add("write", lambda *_: self._sync_source_mode())
 
-        ttk.Label(frm, text="Text").grid(row=8, column=0, sticky=(tk.N, tk.W), pady=(8, 0))
         text_kw: Dict[str, Any] = {"height": 10, "wrap": tk.WORD}
         self._text_font_obj = None
         if self._ui_font:
@@ -537,27 +584,46 @@ class TTSSpeakApp:
                 size=self._ui_font[1],
             )
             text_kw["font"] = self._text_font_obj
-        self.text = scrolledtext.ScrolledText(frm, **text_kw)
-        self.text.grid(row=9, column=0, columnspan=3, sticky=(tk.N, tk.S, tk.E, tk.W), pady=(4, 0))
-        frm.rowconfigure(9, weight=1)
-        frm.columnconfigure(1, weight=1)
+        self.text = _scrolled_text(frm, **text_kw)
+        self.text.grid(row=2, column=0, sticky=(tk.N, tk.S, tk.E, tk.W), pady=(8, 0))
+        frm.rowconfigure(2, weight=1)
+
+        opts = ttk.Frame(frm)
+        opts.grid(row=3, column=0, sticky=tk.W, pady=(8, 0))
+        self.stream = tk.BooleanVar(value=bool(self.defs.get("stream")))
+        ttk.Checkbutton(opts, text="Play while generating", variable=self.stream).pack(side=tk.LEFT)
+        self.vlc_gui = tk.BooleanVar(value=not bool(self.defs.get("no_gui")))
+        # _run_async_speak only reads it when streaming.
+        self._player_window_cb = ttk.Checkbutton(opts, text="Show player window", variable=self.vlc_gui)
+        self._player_window_cb.pack(side=tk.LEFT, padx=(16, 0))
+        self.no_play = tk.BooleanVar(value=bool(self.defs.get("no_play")))
+        ttk.Checkbutton(opts, text="Save only, don't play", variable=self.no_play).pack(side=tk.LEFT, padx=(16, 0))
+        self.stream.trace_add("write", lambda *_: self._sync_player_window_option())
 
         btn_row = ttk.Frame(frm)
-        btn_row.grid(row=10, column=0, columnspan=3, sticky=tk.EW, pady=(8, 0))
-        self.speak_btn = ttk.Button(btn_row, text="Speak", command=self._on_speak)
+        btn_row.grid(row=4, column=0, sticky=tk.EW, pady=(12, 0))
+        self.speak_btn = ttk.Button(btn_row, text="Speak", style="Accent.TButton", width=10, command=self._on_speak)
         self.speak_btn.pack(side=tk.LEFT, padx=(0, 6))
         self.stop_speak_btn = ttk.Button(btn_row, text="Stop", command=self._on_stop_speak, state=tk.DISABLED)
-        self.stop_speak_btn.pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_row, text="Check deps", command=self._on_check_deps).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_row, text="Quit", command=self._on_quit).pack(side=tk.RIGHT)
+        self.stop_speak_btn.pack(side=tk.LEFT)
 
         self.speak_progress = ttk.Progressbar(frm, mode="determinate", maximum=1, value=0)
-        self.speak_progress.grid(row=11, column=0, columnspan=3, sticky=(tk.E, tk.W), pady=(4, 0))
+        self.speak_progress.grid(row=5, column=0, sticky=tk.EW, pady=(10, 0))
 
         self.status = tk.StringVar(value="Ready.")
-        ttk.Label(frm, textvariable=self.status, foreground="#333").grid(
-            row=12, column=0, columnspan=3, sticky=tk.W, pady=(6, 0)
-        )
+        ttk.Label(frm, textvariable=self.status).grid(row=6, column=0, sticky=tk.W, pady=(6, 0))
+
+        self._sync_source_mode()
+        self._sync_player_window_option()
+
+    def _sync_source_mode(self) -> None:
+        if self.source_mode.get() == "file":
+            self._file_row.grid()
+        else:
+            self._file_row.grid_remove()
+
+    def _sync_player_window_option(self) -> None:
+        self._player_window_cb.state(["!disabled"] if self.stream.get() else ["disabled"])
 
     def _build_config_tab(self, frm: Any) -> None:
         import tkinter as tk
@@ -619,7 +685,7 @@ class TTSSpeakApp:
         import tkinter as tk
         from tkinter import ttk
 
-        ttk.Label(frm, text="Global clipboard hotkeys (Windows, pynput)").grid(row=0, column=0, columnspan=4, sticky=tk.W)
+        ttk.Label(frm, text="Global clipboard hotkeys (Windows, pynput)", style="Heading.TLabel").grid(row=0, column=0, columnspan=4, sticky=tk.W)
 
         if sys.platform != "win32":
             ttk.Label(
@@ -998,7 +1064,7 @@ class TTSSpeakApp:
         except importlib.metadata.PackageNotFoundError:
             dist_ver = pkg_version
 
-        ttk.Label(frm, text="TTS_ka").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(frm, text="TTS_ka", style="Title.TLabel").grid(row=0, column=0, sticky=tk.W)
         ttk.Label(frm, text=f"Version {dist_ver}").grid(row=1, column=0, sticky=tk.W, pady=(2, 0))
         ttk.Label(
             frm,
@@ -1015,7 +1081,7 @@ class TTSSpeakApp:
 
         ttk.Separator(frm, orient=tk.HORIZONTAL).grid(row=4, column=0, sticky=(tk.E, tk.W), pady=16)
 
-        ttk.Label(frm, text="Optional Python packages (pip)").grid(row=5, column=0, sticky=tk.W)
+        ttk.Label(frm, text="Optional Python packages (pip)", style="Heading.TLabel").grid(row=5, column=0, sticky=tk.W)
         ttk.Label(
             frm,
             text="Uses the same Python environment as this app. You may need to close and reopen the GUI "
@@ -1198,21 +1264,6 @@ class TTSSpeakApp:
         apply_env_from_config(payload)
         self.defs = argparse_defaults_from_config(payload)
         messagebox.showinfo("TTS_ka", f"Saved:\n{p}")
-
-    def _on_check_deps(self) -> None:
-        from tkinter import scrolledtext, ttk
-
-        from .deps import collect_dep_rows, format_dep_report
-
-        report = format_dep_report(collect_dep_rows())
-        top = self._tk.Toplevel(self.root)
-        top.title("TTS_ka - dependency check")
-        top.minsize(480, 360)
-        txt = scrolledtext.ScrolledText(top, wrap=self._tk.WORD)
-        txt.pack(fill=self._tk.BOTH, expand=True, padx=8, pady=8)
-        txt.insert("1.0", report)
-        txt.configure(state=self._tk.DISABLED)
-        ttk.Button(top, text="Close", command=top.destroy).pack(pady=(0, 8))
 
     def _resolve_speak_text(self) -> str | None:
         from tkinter import messagebox

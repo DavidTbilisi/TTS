@@ -66,7 +66,7 @@ Environment variables (see `readme.md`):
 | `live_stream.py` | `--live` mode: read stdin incrementally, speak each sentence as it lands (for piping LLM output) |
 | `mcp_server.py` | MCP server (`tts-ka-mcp`): `speak`, `stream_open` / `stream_append` / `stream_close`, `session_status`, `list_sessions`, `pause` / `resume` / `skip`, `stop`, `list_voices` over stdio |
 | `server.py` | `tts-ka serve` FastAPI REST server (`/voices`, `/synthesize`; `[server]` extra) |
-| `gui.py` | tkinter GUI (`tts-ka-gui`): Setup / Speak / Config / Hotkeys / Windows shell (Windows only) / About tabs |
+| `gui.py` | tkinter GUI (`tts-ka-gui`): Setup / Speak / Config / Hotkeys / Windows shell (Windows only) / About tabs. `[gui]` extra → sv-ttk theme (`apply_gui_theme`, `TTS_KA_GUI_THEME=light\|dark\|system\|classic`); `apply_unicode_ui_fonts` re-targets the SunValley fonts to a Georgian-capable family and leaves `TkFixedFont` monospace |
 | `chunking.py` | WPM-based text splitting |
 | `not_reading.py` | Text sanitization before generation |
 | `readers/` | File → text by extension (txt/md/html/pdf/epub/docx; heavy deps via `[readers]`). `read_file(path, pages=)` / `--pages 20-24,30-`: 1-based PDF page selection (`pdf.parse_page_spec`); out-of-range, malformed or non-PDF raises `PageRangeError` → exit 2. PDFs go through poppler `pdftotext` when installed (pages split on `\f`, count from `pdfinfo`), else `pypdf`: `pypdf` turns soft hyphens into spaces ("dif fer ent"), `pdftotext` keeps U+00AD plus a stray space after the next glyph, which `_repair_soft_hyphens` rejoins (not after a hyphen/dash: `big-O`, `rm -f`) |
