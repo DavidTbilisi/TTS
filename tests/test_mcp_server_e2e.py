@@ -122,6 +122,38 @@ async def test_e2e_unknown_session_errors(server_env):
     await asyncio.wait_for(_exercise_unknown_session(server_env), timeout=HARD_TIMEOUT)
 
 
+def _ttska_tmp_dirs():
+    import glob
+    import tempfile
+    return set(glob.glob(os.path.join(tempfile.gettempdir(), "ttska-mcp-*")))
+
+
+async def _exercise_unclosed_session(server_env):
+    from mcp import ClientSession
+    from mcp.client.stdio import StdioServerParameters, stdio_client
+
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "TTS_ka.mcp_server"],
+        env=server_env,
+        cwd=str(REPO_ROOT),
+    )
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            # Never closed: the server must still remove its temp dir on exit.
+            r = await session.call_tool("stream_open", {"lang": "en"})
+            assert _unwrap(r)
+
+
+@pytest.mark.slow
+@pytest.mark.asyncio
+async def test_e2e_exit_removes_temp_dirs(server_env):
+    before = _ttska_tmp_dirs()
+    await asyncio.wait_for(_exercise_unclosed_session(server_env), timeout=HARD_TIMEOUT)
+    assert _ttska_tmp_dirs() - before == set()
+
+
 # Server whose extra `noisy` tool prints from Python and from a child process.
 _NOISY_SERVER = """
 import subprocess, sys
