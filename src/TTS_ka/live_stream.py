@@ -26,7 +26,7 @@ import threading
 import time
 from typing import AsyncIterator, Callable, List, Optional, Tuple
 
-from .fast_audio import cleanup_http, fast_generate_audio
+from .fast_audio import fast_generate_audio
 from .not_reading import replace_not_readable
 from .streaming_player import StreamingAudioPlayer
 
@@ -293,10 +293,6 @@ async def live_loop(
                 player.wait_for_completion()
             except Exception:
                 pass
-        try:
-            await cleanup_http()
-        except Exception:
-            pass
         if owns_tmp:
             try:
                 import shutil

@@ -16,7 +16,6 @@ def _stub_main(argv, stdin_text=None, isatty=True):
          patch("sys.stdin", stdin_obj), \
          patch("TTS_ka.main.fast_generate_audio",
                new=AsyncMock(return_value=True)) as mfa, \
-         patch("TTS_ka.main.cleanup_http", new=AsyncMock()), \
          patch("TTS_ka.main.get_optimal_settings",
                return_value={"method": "direct", "chunk_seconds": 0, "parallel": 1}):
         from TTS_ka.main import main
@@ -48,8 +47,7 @@ class TestStdinInput:
         with patch("sys.argv", ["TTS_ka"]), \
              patch("sys.stdin", new=MagicMock(isatty=lambda: True)), \
              patch("TTS_ka.main.fast_generate_audio",
-                   new=AsyncMock(return_value=True)) as mfa, \
-             patch("TTS_ka.main.cleanup_http", new=AsyncMock()):
+                   new=AsyncMock(return_value=True)) as mfa:
             from TTS_ka.main import main
             main()
         mfa.assert_not_called()
@@ -67,7 +65,6 @@ class TestJSONMode:
              patch("sys.stdin", stdin_obj), \
              patch("TTS_ka.main.fast_generate_audio",
                    new=AsyncMock(return_value=True)), \
-             patch("TTS_ka.main.cleanup_http", new=AsyncMock()), \
              patch("TTS_ka.main.get_optimal_settings",
                    return_value={"method": "direct", "chunk_seconds": 0, "parallel": 1}):
             from TTS_ka.main import main
@@ -124,8 +121,7 @@ class TestJSONMode:
              patch("sys.stdout", buf), \
              patch("sys.stdin", new=MagicMock(isatty=lambda: True)), \
              patch("TTS_ka.main.fast_generate_audio",
-                   new=AsyncMock(return_value=True)), \
-             patch("TTS_ka.main.cleanup_http", new=AsyncMock()):
+                   new=AsyncMock(return_value=True)):
             from TTS_ka.main import main
             main()
         events = [json.loads(line) for line in buf.getvalue().splitlines() if line.strip()]

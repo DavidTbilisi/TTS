@@ -1,7 +1,7 @@
-"""Parse, validate, and serialize SSML prosody attributes (rate/pitch/volume).
+"""Parse and validate prosody options (rate/pitch/volume).
 
 The CLI surface accepts free-form strings like ``+30%``, ``-2Hz``, etc.; this
-module converts them into edge-tts / Azure-compatible values, clamping
+module converts them into edge-tts-compatible values, clamping
 out-of-range inputs with a stderr warning. Invalid inputs raise SystemExit(2).
 """
 
@@ -110,7 +110,3 @@ def build_opts(rate: Optional[str], pitch: Optional[str],
         volume=parse_volume(volume),
     )
 
-
-def to_ssml_attrs(opts: ProsodyOpts) -> str:
-    """Render a ProsodyOpts as the attributes of an SSML <prosody> tag."""
-    return f"rate='{opts.rate}' pitch='{opts.pitch}' volume='{opts.volume}'"

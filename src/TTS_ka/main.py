@@ -49,7 +49,6 @@ def _print_welcome() -> None:
 from .fast_audio import (
     fast_generate_audio,
     play_audio,
-    cleanup_http,
     generate_audio_with_subs,
 )
 from .streaming_player import stop_active_streaming_player
@@ -138,13 +137,7 @@ def _make_emitter(enabled: bool, stream) -> Callable[[Dict[str, Any]], None]:
 
 async def _run_preview(text: str, voice_id: str, output_path: str) -> None:
     """Generate a short sample with *voice_id* into *output_path*."""
-    try:
-        await fast_generate_audio(text, "en", output_path, voice=voice_id)
-    finally:
-        try:
-            await cleanup_http()
-        except Exception:
-            pass
+    await fast_generate_audio(text, "en", output_path, voice=voice_id)
 
 
 def _resolve_output_path(raw: Optional[str], force: bool = False,
@@ -783,11 +776,6 @@ For comprehensive help with examples: %(prog)s --help-full
         except Exception as exc:
             emit({"event": "error", "message": str(exc)})
             raise
-        finally:
-            try:
-                await cleanup_http()
-            except Exception:
-                pass
 
     try:
         asyncio.run(run_generation())

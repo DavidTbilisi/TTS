@@ -72,10 +72,9 @@ def show_simple_help():
     print("  Override:      environment variable TTS_KA_CONFIG=/path/to/file.json")
     print("  CLI:           tts-ka --config /path/to/file.json ...")
     print("  Keys: lang, output, chunk_seconds, parallel, no_play, stream, no_turbo,")
-    print("        no_gui, rate, pitch, volume, skip_http, verbose, vlc_rc, hotkeys")
+    print("        no_gui, rate, pitch, volume, vlc_rc, hotkeys")
     print("        (see extras/tts_config.example.json)")
-    print("  CLI flags always override file defaults; env vars override file for skip_http,")
-    print("        verbose, and vlc_rc when the variable is already set.")
+    print("  CLI flags always override file defaults; TTS_KA_VLC_RC overrides vlc_rc.")
     print()
 
     print("COMMON WORKFLOWS:")

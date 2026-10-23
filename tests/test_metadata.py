@@ -174,7 +174,6 @@ class TestCLIIntegration:
         with patch("sys.argv", ["TTS_ka", "hi", "--lang", "en", "--no-play"]), \
              patch("TTS_ka.main.fast_generate_audio",
                    new=AsyncMock(return_value=True)), \
-             patch("TTS_ka.main.cleanup_http", new=AsyncMock()), \
              patch("TTS_ka.main.get_optimal_settings",
                    return_value={"method": "direct", "chunk_seconds": 0, "parallel": 1}), \
              patch("TTS_ka.main._metadata.apply") as mapply:
@@ -188,7 +187,6 @@ class TestCLIIntegration:
                                 "--title", "My Book"]), \
              patch("TTS_ka.main.fast_generate_audio",
                    new=AsyncMock(return_value=True)), \
-             patch("TTS_ka.main.cleanup_http", new=AsyncMock()), \
              patch("TTS_ka.main.get_optimal_settings",
                    return_value={"method": "direct", "chunk_seconds": 0, "parallel": 1}), \
              patch("TTS_ka.main._metadata.apply") as mapply:
@@ -207,7 +205,6 @@ class TestCLIIntegration:
                                 "--chapters", str(ch_file)]), \
              patch("TTS_ka.main.fast_generate_audio",
                    new=AsyncMock(return_value=True)), \
-             patch("TTS_ka.main.cleanup_http", new=AsyncMock()), \
              patch("TTS_ka.main.get_optimal_settings",
                    return_value={"method": "direct", "chunk_seconds": 0, "parallel": 1}), \
              patch("TTS_ka.main._metadata.apply") as mapply:

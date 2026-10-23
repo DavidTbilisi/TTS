@@ -9,21 +9,6 @@ VOICE_MAP = {
     'en-US': 'en-US-SteffanNeural',
 }
 
-# BCP-47 tag for SSML root (matches voice locale for more natural prosody)
-SSML_LANG_MAP = {
-    'ka': 'ka-GE',
-    'ka-m': 'ka-GE',
-    'ru': 'ru-RU',
-    'en': 'en-GB',
-    'en-US': 'en-US',
-}
-
-# HTTP client configuration
-HTTP_TIMEOUT_TOTAL = 30.0
-HTTP_TIMEOUT_CONNECT = 10.0
-HTTP_MAX_KEEPALIVE = 20
-HTTP_MAX_CONNECTIONS = 100
-
 # Audio generation
 STREAMING_CHUNK_SECONDS = 15    # Default chunk size when streaming is enabled
 STREAMING_FIRST_CHUNK_SECONDS = 6  # Smaller first chunk when streaming → lower time-to-first-audio

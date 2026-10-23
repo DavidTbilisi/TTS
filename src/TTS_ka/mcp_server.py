@@ -26,7 +26,7 @@ import tempfile
 import uuid
 from typing import Dict, List, Optional
 
-from .fast_audio import cleanup_http, fast_generate_audio, play_audio
+from .fast_audio import fast_generate_audio, play_audio
 from .live_stream import DEFAULT_IDLE_FLUSH_MS, SentenceBuffer
 from .not_reading import replace_not_readable
 from .prosody import ProsodyOpts, parse_pitch, parse_rate, parse_volume
@@ -360,10 +360,6 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
         for sess in list(sessions.values()):
             sess.hard_stop()
         sessions.clear()
-        try:
-            await cleanup_http()
-        except Exception:
-            pass
         return f"stopped {n} session(s)"
 
     @server.tool()
@@ -398,7 +394,7 @@ async def _run_with_preserved_stdout(server) -> None:
          goes out the original stdout the client is reading.
 
     Any ``print()`` from imported modules (``StreamingAudioPlayer`` warnings,
-    HTTP-fallback notices, etc.) lands on the user's stderr — never on the
+    edge-tts retry hints, etc.) lands on the user's stderr — never on the
     protocol stream.
     """
     from io import TextIOWrapper

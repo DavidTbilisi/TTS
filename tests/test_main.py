@@ -140,7 +140,6 @@ class TestMain:
         """Short text goes through fast_generate_audio; --no-play skips playback."""
         with patch('sys.argv', ['TTS_ka', 'Hello', '--lang', 'en', '--no-play']):
             with patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)) as mfa, \
-                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
                  patch('TTS_ka.main.get_optimal_settings', return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
                 from TTS_ka.main import main
                 main()
@@ -150,7 +149,6 @@ class TestMain:
         """--turbo is accepted (no-op; kept for scripts and older docs)."""
         with patch('sys.argv', ['TTS_ka', 'Hello', '--lang', 'en', '--no-play', '--turbo']):
             with patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)) as mfa, \
-                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
                  patch('TTS_ka.main.get_optimal_settings', return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
                 from TTS_ka.main import main
                 main()
@@ -160,7 +158,6 @@ class TestMain:
         """--stream routes through smart_generate_long_text with enable_streaming=True."""
         with patch('sys.argv', ['TTS_ka', 'Hello world', '--lang', 'en', '--stream', '--no-play']):
             with patch('TTS_ka.main.smart_generate_long_text', new=AsyncMock()) as msl, \
-                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
                  patch('TTS_ka.main.get_optimal_settings', return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
                 from TTS_ka.main import main
                 main()
@@ -176,8 +173,7 @@ class TestMain:
         """--chunk-seconds / --parallel reach smart_generate_long_text unchanged."""
         long_text = "Test text. " * 150
         with patch('sys.argv', ['TTS_ka', long_text, '--lang', 'en', '--stream', flag, value, '--no-play']):
-            with patch('TTS_ka.main.smart_generate_long_text', new=AsyncMock()) as msl, \
-                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()):
+            with patch('TTS_ka.main.smart_generate_long_text', new=AsyncMock()) as msl:
                 from TTS_ka.main import main
                 main()
         _, kwargs = msl.call_args
@@ -195,7 +191,6 @@ class TestMain:
         with patch('sys.argv', ['TTS_ka', 'hi', '--lang', 'en', '--no-play']):
             with patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)), \
                  patch('TTS_ka.main.play_audio') as mpa, \
-                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
                  patch('TTS_ka.main.get_optimal_settings', return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
                 from TTS_ka.main import main
                 main()
@@ -220,7 +215,6 @@ class TestMain:
         """Parser accepts ka, ru, en."""
         with patch('sys.argv', ['TTS_ka', 'test', '--lang', lang, '--no-play']):
             with patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)), \
-                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
                  patch('TTS_ka.main.get_optimal_settings', return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
                 from TTS_ka.main import main
                 main()  # must not raise SystemExit
@@ -237,7 +231,6 @@ class TestMain:
         with patch('sys.argv', ['TTS_ka', 'clipboard', '--lang', 'en', '--no-play']):
             with patch('TTS_ka.main._read_clipboard', return_value='pasted text'), \
                  patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)), \
-                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
                  patch('TTS_ka.main.get_optimal_settings', return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
                 from TTS_ka.main import main
                 main()
@@ -247,7 +240,6 @@ class TestMain:
         with patch('sys.argv', ['TTS_ka', 'cb', '-l', 'en', '-n']):
             with patch('TTS_ka.main._read_clipboard', return_value='short'), \
                  patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)), \
-                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
                  patch('TTS_ka.main.get_optimal_settings', return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
                 from TTS_ka.main import main
                 main()
@@ -256,7 +248,6 @@ class TestMain:
         """-s enables streaming like --stream."""
         with patch('sys.argv', ['TTS_ka', 'word ' * 50, '-l', 'en', '-s', '-n']):
             with patch('TTS_ka.main.smart_generate_long_text', new=AsyncMock()) as msg, \
-                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
                  patch('TTS_ka.main.get_optimal_settings', return_value={'method': 'chunked', 'chunk_seconds': 30, 'parallel': 4}):
                 from TTS_ka.main import main
                 main()
@@ -268,7 +259,6 @@ class TestMain:
         f.write_text("file text", encoding="utf-8")
         with patch('sys.argv', ['TTS_ka', str(f), '--lang', 'en', '--no-play']):
             with patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)), \
-                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
                  patch('TTS_ka.main.get_optimal_settings', return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
                 from TTS_ka.main import main
                 main()
@@ -282,7 +272,7 @@ class TestMain:
         ):
             with patch(
                 "TTS_ka.main.fast_generate_audio", new=AsyncMock(return_value=True)
-            ) as mfa, patch("TTS_ka.main.cleanup_http", new=AsyncMock()), patch(
+            ) as mfa, patch(
                 "TTS_ka.main.get_optimal_settings",
                 return_value={"method": "direct", "chunk_seconds": 0, "parallel": 1},
             ):
@@ -295,8 +285,7 @@ class TestMain:
     def test_no_turbo_skips_optimization(self, capsys):
         """--no-turbo skips the optimization block."""
         with patch('sys.argv', ['TTS_ka', 'hello', '--lang', 'en', '--no-play', '--no-turbo']):
-            with patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)), \
-                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()):
+            with patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)):
                 from TTS_ka.main import main
                 main()
         assert "OPTIMIZED MODE" not in capsys.readouterr().out
@@ -304,8 +293,7 @@ class TestMain:
     def test_legacy_alias_skips_optimization(self, capsys):
         """--legacy is an alias for --no-turbo."""
         with patch('sys.argv', ['TTS_ka', 'hello', '-l', 'en', '-n', '--legacy']):
-            with patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)), \
-                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()):
+            with patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)):
                 from TTS_ka.main import main
                 main()
         assert "OPTIMIZED MODE" not in capsys.readouterr().out
@@ -317,7 +305,7 @@ class TestMain:
         with patch("sys.argv", ["TTS_ka", "--config", str(cfg), "hi", "-n"]):
             with patch(
                 "TTS_ka.main.fast_generate_audio", new=AsyncMock(return_value=True)
-            ) as mfa, patch("TTS_ka.main.cleanup_http", new=AsyncMock()), patch(
+            ) as mfa, patch(
                 "TTS_ka.main.get_optimal_settings",
                 return_value={"method": "direct", "chunk_seconds": 0, "parallel": 1},
             ):
@@ -565,7 +553,6 @@ class TestOutputFlag:
                                 '--output', str(target)]):
             with patch('TTS_ka.main.fast_generate_audio',
                        new=AsyncMock(return_value=True)) as mfa, \
-                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
                  patch('TTS_ka.main.get_optimal_settings',
                        return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
                 from TTS_ka.main import main
@@ -579,7 +566,6 @@ class TestOutputFlag:
         with patch('sys.argv', ['TTS_ka', 'hello', '--lang', 'en', '--no-play']):
             with patch('TTS_ka.main.fast_generate_audio',
                        new=AsyncMock(return_value=True)) as mfa, \
-                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
                  patch('TTS_ka.main.get_optimal_settings',
                        return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
                 from TTS_ka.main import main
@@ -596,7 +582,6 @@ class TestOutputFlag:
                                 '--output', str(nested)]):
             with patch('TTS_ka.main.fast_generate_audio',
                        new=AsyncMock(return_value=True)), \
-                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
                  patch('TTS_ka.main.get_optimal_settings',
                        return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
                 from TTS_ka.main import main
@@ -611,7 +596,6 @@ class TestOutputFlag:
                                 '--output', str(existing)]):
             with patch('TTS_ka.main.fast_generate_audio',
                        new=AsyncMock(return_value=True)), \
-                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
                  patch('TTS_ka.main.get_optimal_settings',
                        return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
                 with pytest.raises(SystemExit) as exc:
@@ -632,7 +616,6 @@ class TestOutputFlag:
                                 '--output', str(existing), '--force']):
             with patch('TTS_ka.main.fast_generate_audio',
                        new=AsyncMock(return_value=True)) as mfa, \
-                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
                  patch('TTS_ka.main.get_optimal_settings',
                        return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
                 from TTS_ka.main import main
@@ -648,7 +631,6 @@ class TestOutputFlag:
                                 '--output', str(target_noext)]):
             with patch('TTS_ka.main.fast_generate_audio',
                        new=AsyncMock(return_value=True)) as mfa, \
-                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
                  patch('TTS_ka.main.get_optimal_settings',
                        return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
                 from TTS_ka.main import main
@@ -663,7 +645,6 @@ class TestOutputFlag:
                                 '-o', str(target)]):
             with patch('TTS_ka.main.fast_generate_audio',
                        new=AsyncMock(return_value=True)) as mfa, \
-                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()), \
                  patch('TTS_ka.main.get_optimal_settings',
                        return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
                 from TTS_ka.main import main

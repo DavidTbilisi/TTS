@@ -148,7 +148,6 @@ def collect_dep_rows() -> List[DepRow]:
     rows: List[DepRow] = []
     rows.append(_check_module("edge-tts", "edge_tts"))
     rows.append(_check_module("pydub", "pydub"))
-    rows.append(_check_module("httpx", "httpx"))
     rows.append(check_soundfile())
     rows.append(check_ffmpeg())
     rows.append(check_streaming_player())
