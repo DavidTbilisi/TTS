@@ -795,12 +795,12 @@ class TestStreamingIntegrationWithMainSystem:
         
         with patch('TTS_ka.ultra_fast.fast_generate_audio') as mock_direct:
             with patch('TTS_ka.ultra_fast.ultra_fast_parallel_generation') as mock_parallel:
-                # Mock parallel generation to create output file
+                # Mock parallel generation to write one part into the run dir
                 async def mock_parallel_gen(*args, **kwargs):
-                    output = kwargs.get('output_path', args[4] if len(args) > 4 else 'data.mp3')
-                    with open(output, 'wb') as f:
+                    part = os.path.join(kwargs['work_dir'], '.part_0000.mp3')
+                    with open(part, 'wb') as f:
                         f.write(b'streaming audio')
-                    return [output]
+                    return [part]
                 
                 mock_parallel.side_effect = mock_parallel_gen
                 
@@ -822,35 +822,35 @@ class TestStreamingIntegrationWithMainSystem:
                 assert os.path.exists(output_path)
     
     @pytest.mark.asyncio
-    async def test_single_chunk_streaming_no_merge(self, temp_dir):
-        """Test that single chunk streaming doesn't attempt merge."""
+    async def test_single_chunk_streaming_copies_part_to_output(self, temp_dir):
+        """A single streamed chunk lands in output_path and its run dir is removed."""
         from TTS_ka.ultra_fast import smart_generate_long_text
-        
+
         output_path = os.path.join(temp_dir, "single_chunk_test.mp3")
-        
-        with patch('TTS_ka.ultra_fast.ultra_fast_parallel_generation') as mock_parallel:
-            with patch('TTS_ka.fast_audio.fast_merge_audio_files') as mock_merge:
-                # Mock single chunk generation
-                async def single_chunk_gen(*args, **kwargs):
-                    output = kwargs.get('output_path', 'data.mp3')
-                    with open(output, 'wb') as f:
-                        f.write(b'single chunk audio')
-                    return [output]  # Only one part
-                
-                mock_parallel.side_effect = single_chunk_gen
-                
-                await smart_generate_long_text(
-                    text="Single chunk text",
-                    language="en",
-                    chunk_seconds=15,
-                    parallel=1,
-                    output_path=output_path,
-                    enable_streaming=True,
-                    show_gui=False,
-                )
-                
-                # Should not attempt to merge single chunk
-                mock_merge.assert_not_called()
+        seen = {}
+
+        async def single_chunk_gen(*args, **kwargs):
+            seen['work_dir'] = kwargs['work_dir']
+            part = os.path.join(kwargs['work_dir'], '.part_0000.mp3')
+            with open(part, 'wb') as f:
+                f.write(b'single chunk audio')
+            return [part]
+
+        with patch('TTS_ka.ultra_fast.ultra_fast_parallel_generation',
+                   side_effect=single_chunk_gen):
+            await smart_generate_long_text(
+                text="Single chunk text",
+                language="en",
+                chunk_seconds=15,
+                parallel=1,
+                output_path=output_path,
+                enable_streaming=True,
+                show_gui=False,
+            )
+
+        with open(output_path, 'rb') as f:
+            assert f.read() == b'single chunk audio'
+        assert not os.path.exists(seen['work_dir'])
     
     @pytest.mark.asyncio
     async def test_multi_chunk_streaming_with_merge(self, temp_dir):
@@ -864,19 +864,13 @@ class TestStreamingIntegrationWithMainSystem:
              patch('TTS_ka.ultra_fast.fast_merge_audio_files') as mock_merge, \
              patch.object(PlayerDetector, 'find', return_value=None):
 
-            # Mock multi-chunk generation — use absolute paths so exists() checks pass
+            # Mock multi-chunk generation writing parts into the run dir
             async def multi_chunk_gen(*args, **kwargs):
-                actual_output = kwargs.get("output_path")
-                if actual_output is None and len(args) >= 5:
-                    actual_output = args[4]
-                actual_output = actual_output or output_path
-                with open(actual_output, 'wb') as f:
-                    f.write(b'first chunk')
-                parts = [actual_output]
-                for i in range(2):
-                    part_path = os.path.join(temp_dir, f"part_{i+1}.mp3")
+                parts = []
+                for i in range(3):
+                    part_path = os.path.join(kwargs['work_dir'], f".part_{i:04d}.mp3")
                     with open(part_path, 'wb') as f:
-                        f.write(f'chunk {i+1}'.encode())
+                        f.write(f'chunk {i}'.encode())
                     parts.append(part_path)
                 return parts
 

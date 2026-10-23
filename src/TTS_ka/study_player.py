@@ -21,6 +21,7 @@ from pathlib import Path
 from tkinter import ttk
 from typing import Optional
 
+from .constants import VOICE_MAP
 from .fast_audio import generate_audio_with_subs
 from .prosody import ProsodyOpts
 from .quiz import QuizProvider, RuleBasedProvider
@@ -32,13 +33,11 @@ POLL_INTERVAL_MS = 33  # ~30 Hz; smooth without flooding the event loop
 PERIPHERAL_SPAN = 3
 
 
-def _text_hash(text: str, voice: str, rate: str) -> str:
+def _text_hash(text: str, voice: str, prosody: ProsodyOpts) -> str:
     h = hashlib.sha256()
-    h.update(text.encode("utf-8"))
-    h.update(b"\x00")
-    h.update(voice.encode("utf-8"))
-    h.update(b"\x00")
-    h.update(rate.encode("utf-8"))
+    for part in (text, voice, prosody.rate, prosody.pitch, prosody.volume):
+        h.update(part.encode("utf-8"))
+        h.update(b"\x00")
     return h.hexdigest()[:16]
 
 
@@ -55,13 +54,15 @@ class StudyPlayer:
         self,
         text: str,
         language: str = "en",
-        rate: str = "+0%",
+        voice: Optional[str] = None,
+        prosody: Optional[ProsodyOpts] = None,
         chunk_size_words: int = 200,
         quiz_provider: Optional[QuizProvider] = None,
     ) -> None:
         self.text = text
         self.language = language
-        self.rate = rate
+        self.voice = voice or VOICE_MAP.get(language, "")
+        self.prosody = prosody or ProsodyOpts()
         self.chunk_size_words = chunk_size_words
         self.quiz_provider: QuizProvider = quiz_provider or RuleBasedProvider()
 
@@ -109,12 +110,12 @@ class StudyPlayer:
     def _prepare_audio(self) -> None:
         try:
             cache_dir = _cache_dir()
-            digest = _text_hash(self.text, self.language, self.rate)
+            digest = _text_hash(self.text, self.voice, self.prosody)
             audio_path = cache_dir / f"{digest}.mp3"
-            prosody = ProsodyOpts(rate=self.rate)
             events = asyncio.run(
                 generate_audio_with_subs(
-                    self.text, self.language, str(audio_path), prosody=prosody
+                    self.text, self.language, str(audio_path),
+                    voice=self.voice, prosody=self.prosody,
                 )
             )
         except Exception as exc:  # narrow surface, surfaced to UI
@@ -214,8 +215,8 @@ class StudyPlayer:
         pos_ms = max(0, self._play_started_pos_ms + (rel_ms if rel_ms >= 0 else 0))
         chunks_done = self.session.chunk_index_at(pos_ms) + 1
         record = session_log.SessionRecord.now(
-            text_hash=_text_hash(self.text, self.language, self.rate),
-            voice=self.language,
+            text_hash=_text_hash(self.text, self.voice, self.prosody),
+            voice=self.voice,
             word_count=len(self.session.events),
             duration_ms=self.session.total_duration_ms,
             chunks_done=chunks_done,
@@ -227,7 +228,8 @@ class StudyPlayer:
 def launch(
     text: str,
     language: str = "en",
-    rate: str = "+0%",
+    voice: Optional[str] = None,
+    prosody: Optional[ProsodyOpts] = None,
     chunk_size_words: int = 200,
     quiz_provider: Optional[QuizProvider] = None,
 ) -> None:
@@ -235,7 +237,8 @@ def launch(
     StudyPlayer(
         text=text,
         language=language,
-        rate=rate,
+        voice=voice,
+        prosody=prosody,
         chunk_size_words=chunk_size_words,
         quiz_provider=quiz_provider,
     ).launch()

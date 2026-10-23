@@ -28,7 +28,7 @@ class TestGetInputText:
         with patch('TTS_ka.main._read_clipboard', return_value="   "):
             result = get_input_text("clipboard")
         assert result == ""
-        assert "No text" in capsys.readouterr().out
+        assert "No text" in capsys.readouterr().err
 
     def test_clipboard_strips_crlf(self):
         with patch('TTS_ka.main._read_clipboard', return_value="line1\r\nline2"):
@@ -108,8 +108,9 @@ class TestMain:
         assert "TTS_ka" in capsys.readouterr().out
 
     def test_no_text_shows_help(self, capsys):
-        """main() with no text argument prints the friendly welcome and returns."""
-        with patch('sys.argv', ['TTS_ka']):
+        """main() with no text argument on a terminal prints the friendly welcome and returns."""
+        with patch('sys.argv', ['TTS_ka']), \
+             patch('sys.stdin', new=MagicMock(isatty=lambda: True)):
             from TTS_ka.main import main
             main()
         out = capsys.readouterr().out
@@ -230,7 +231,7 @@ class TestMain:
         mpa.assert_not_called()
 
     def test_keyboard_interrupt_handled(self, capsys):
-        """KeyboardInterrupt during asyncio.run is caught gracefully."""
+        """KeyboardInterrupt during asyncio.run is reported and exits 130 (SIGINT convention)."""
         def interrupt_before_run(coro):
             if hasattr(coro, "close"):
                 coro.close()
@@ -239,7 +240,9 @@ class TestMain:
         with patch('sys.argv', ['TTS_ka', 'hi', '--lang', 'en', '--no-play']):
             with patch('asyncio.run', side_effect=interrupt_before_run):
                 from TTS_ka.main import main
-                main()
+                with pytest.raises(SystemExit) as exc:
+                    main()
+        assert exc.value.code == 130
         captured = capsys.readouterr()
         assert "cancelled" in (captured.out + captured.err).lower()
 
@@ -684,3 +687,104 @@ class TestOutputFlag:
                 main()
         args, _ = mfa.call_args
         assert args[2] == str(target)
+
+
+_DIRECT = {'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}
+_TTY = MagicMock(isatty=lambda: True)
+
+
+def _run_main(argv, stdin=_TTY):
+    """Run main() with *argv*; return its SystemExit code (0 when it returns)."""
+    from TTS_ka.main import main
+    with patch('sys.argv', ['TTS_ka', *argv]), patch('sys.stdin', new=stdin):
+        try:
+            main()
+        except SystemExit as exc:
+            return exc.code
+    return 0
+
+
+class TestExitCodes:
+    """Errors go to stderr with a non-zero exit, so scripts and hotkeys can tell."""
+
+    def test_missing_file_is_an_error_not_spoken(self, capsys):
+        with patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)) as mgen:
+            code = _run_main(['chaptr1.pdf', '--no-play'])
+        assert code == 2
+        assert "file not found: chaptr1.pdf" in capsys.readouterr().err
+        mgen.assert_not_called()
+
+    @pytest.mark.parametrize("text", ["hello", "e.g.", "3.14", "node.js", "and/or", "hello world.txt"])
+    def test_plain_words_are_not_mistaken_for_missing_files(self, text):
+        from TTS_ka.main import _looks_like_missing_file
+        assert _looks_like_missing_file(text) is False
+
+    @pytest.mark.parametrize("text", ["notes.txt", "book.EPUB", "docs/intro.rst", "out/clip.wav"])
+    def test_path_like_tokens_are_missing_files(self, text):
+        from TTS_ka.main import _looks_like_missing_file
+        assert _looks_like_missing_file(text) is True
+
+    def test_piped_filename_is_spoken_not_checked(self):
+        stdin = MagicMock(isatty=lambda: False, read=lambda: "notes.txt")
+        with patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)) as mgen, \
+             patch('TTS_ka.main.get_optimal_settings', return_value=_DIRECT):
+            assert _run_main(['--no-play'], stdin=stdin) == 0
+        assert mgen.call_args.args[0] == "notes.txt"
+
+    def test_empty_piped_stdin_exits_2(self, capsys):
+        stdin = MagicMock(isatty=lambda: False, read=lambda: "  \n")
+        assert _run_main([], stdin=stdin) == 2
+        captured = capsys.readouterr()
+        assert "No text provided on stdin" in captured.err
+        assert "--help-full" not in captured.out  # no welcome banner for a script
+
+    def test_empty_clipboard_exits_2(self, capsys):
+        with patch('TTS_ka.main._read_clipboard', return_value=""):
+            assert _run_main(['cb', '--no-play']) == 2
+        assert "No text provided" in capsys.readouterr().err
+
+    def test_preview_failure_exits_1(self, capsys):
+        with patch('TTS_ka.main._run_preview', new=AsyncMock(return_value=False)), \
+             patch('TTS_ka.main.play_audio') as mplay:
+            assert _run_main(['--preview-voice', 'en-GB-SoniaNeural']) == 1
+        mplay.assert_not_called()
+        assert "Voice preview failed" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("exc_name", ["MergeFailed", "EmptyInputError"])
+    def test_merge_and_empty_input_failures_exit_1(self, exc_name, capsys):
+        from TTS_ka import fast_audio, ultra_fast
+        exc_type = getattr(fast_audio, exc_name, None) or getattr(ultra_fast, exc_name)
+        with patch('TTS_ka.main.smart_generate_long_text',
+                   new=AsyncMock(side_effect=exc_type("went wrong"))):
+            assert _run_main(['word ' * 300, '--lang', 'en', '--no-play']) == 1
+        assert "went wrong" in capsys.readouterr().err
+
+    def test_subtitle_failure_exits_1_without_traceback(self, capsys):
+        from TTS_ka.fast_audio import GenerationFailed
+        with patch('TTS_ka.main.generate_audio_with_subs',
+                   new=AsyncMock(side_effect=GenerationFailed("Subtitled audio generation failed: x"))), \
+             patch('TTS_ka.main.get_optimal_settings', return_value=_DIRECT):
+            assert _run_main(['hi', '--srt', '--no-play']) == 1
+        assert "Subtitled audio generation failed" in capsys.readouterr().err
+
+
+class TestStudyFlag:
+    def _launch(self, argv):
+        fake = MagicMock()
+        with patch.dict(sys.modules, {'TTS_ka.study_player': fake}):
+            assert _run_main(['some study text', '--study', *argv]) == 0
+        return fake.launch.call_args.kwargs
+
+    def test_default_prosody_is_neutral(self):
+        """Without --rate, study mode must not hand rate=None to edge-tts."""
+        from TTS_ka.prosody import ProsodyOpts
+        kwargs = self._launch(['--lang', 'en'])
+        assert kwargs['prosody'] == ProsodyOpts()
+        assert kwargs['voice'] is None
+        assert 'rate' not in kwargs
+
+    def test_voice_and_prosody_pass_through(self):
+        kwargs = self._launch(['--voice', 'en-GB-SoniaNeural', '--rate', '+20%', '--pitch', '+5Hz'])
+        assert kwargs['voice'] == 'en-GB-SoniaNeural'
+        assert kwargs['prosody'].rate == '+20%'
+        assert kwargs['prosody'].pitch == '+5Hz'

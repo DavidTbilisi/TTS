@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
@@ -123,6 +124,8 @@ class TestJSONMode:
              patch("TTS_ka.main.fast_generate_audio",
                    new=AsyncMock(return_value=True)):
             from TTS_ka.main import main
-            main()
+            with pytest.raises(SystemExit) as exc:
+                main()
+        assert exc.value.code == 2
         events = [json.loads(line) for line in buf.getvalue().splitlines() if line.strip()]
         assert any(e.get("event") == "error" for e in events)

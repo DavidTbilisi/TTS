@@ -5,13 +5,17 @@ Design
 ``EdgeTTSGenerator`` synthesises one chunk with the ``edge-tts`` library,
 retrying transient 403/429 responses with backoff.
 
-``AudioMerger`` (Protocol) abstracts the three merge back-ends:
+``AudioMerger`` (Protocol) abstracts the merge back-ends:
 
-* ``SoundFileMerger`` — soundfile + numpy (lowest latency).
+* ``ConcatMp3Merger`` — byte concatenation; lossless, no deps. edge-tts emits
+  headerless CBR MP3, so this is the only merger used for ``.mp3`` output.
+* ``SoundFileMerger`` — soundfile + numpy (decodes and re-encodes).
 * ``PydubMerger``     — PyDub (reliable pure-Python MP3 handling).
 * ``FFmpegMerger``    — subprocess ffmpeg (always available when installed).
 
-``fast_merge_audio_files`` tries them in that order until one succeeds.
+For other outputs ``fast_merge_audio_files`` tries the last three in order.
+Every merger raises ``MergeFailed`` rather than dropping a part: a merged file
+with a hole in it is worse than an error.
 
 The module-level ``fast_generate_audio`` / ``fast_merge_audio_files`` /
 ``play_audio`` functions are the public API used by the rest of the package.
@@ -25,7 +29,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from typing import List, Optional, Protocol
+from contextlib import contextmanager
+from typing import Awaitable, Callable, Iterator, List, Optional, Protocol
 
 try:
     import soundfile as sf
@@ -84,6 +89,23 @@ def generation_failed(summary: str, err: Optional[BaseException] = None) -> Gene
     return GenerationFailed(msg)
 
 
+async def _retry_edge(attempt: Callable[[], Awaitable[None]], retries: int,
+                      base_delay: float) -> None:
+    """Await *attempt()* up to *retries* times, backing off on transient edge-tts errors.
+
+    Re-raises the last error when it is not transient or retries run out.
+    """
+    for n in range(retries):
+        try:
+            await attempt()
+            return
+        except Exception as e:
+            if n < retries - 1 and _edge_tts_transient(e):
+                await asyncio.sleep(base_delay * (2**n))
+                continue
+            raise
+
+
 def discard_empty_output(path: str) -> None:
     """Remove *path* if a failed synthesis left it behind as a 0-byte file."""
     try:
@@ -120,25 +142,18 @@ class EdgeTTSGenerator:
             edge_kwargs["pitch"] = prosody.pitch
             edge_kwargs["volume"] = prosody.volume
 
-        last_err: Optional[BaseException] = None
-        for attempt in range(self._EDGE_RETRIES):
-            try:
-                communicate = Communicate(clean_text, resolved_voice, **edge_kwargs)
-                await communicate.save(output_path)
-                if not quiet:
-                    print(f"Generated: {os.path.abspath(output_path)}")
-                return True
-            except Exception as e:
-                last_err = e
-                if (
-                    attempt < self._EDGE_RETRIES - 1
-                    and _edge_tts_transient(e)
-                ):
-                    await asyncio.sleep(
-                        self._EDGE_RETRY_BASE_DELAY * (2**attempt)
-                    )
-                    continue
-                break
+        async def attempt() -> None:
+            communicate = Communicate(clean_text, resolved_voice, **edge_kwargs)
+            await communicate.save(output_path)
+
+        try:
+            await _retry_edge(attempt, self._EDGE_RETRIES, self._EDGE_RETRY_BASE_DELAY)
+        except Exception as e:
+            last_err: Optional[BaseException] = e
+        else:
+            if not quiet:
+                print(f"Generated: {os.path.abspath(output_path)}")
+            return True
         _last_error = last_err
         if not quiet:
             print(f"Error generating audio: {last_err}")
@@ -152,6 +167,72 @@ class EdgeTTSGenerator:
 
 # ── AudioMerger implementations ───────────────────────────────────────────────
 
+class MergeFailed(RuntimeError):
+    """Parts could not be merged into one output without losing audio."""
+
+
+def _id3v2_size(head: bytes) -> int:
+    """Byte length of the ID3v2 tag that *head* (the first 10 bytes) starts with, else 0."""
+    if len(head) < 10 or head[:3] != b"ID3":
+        return 0
+    size = 0
+    for b in head[6:10]:  # syncsafe: 7 bits per byte
+        size = (size << 7) | (b & 0x7F)
+    footer = 10 if head[5] & 0x10 else 0
+    return 10 + size + footer
+
+
+def _looks_like_mp3(path: str) -> bool:
+    """True when *path* starts with an ID3 tag or an MPEG audio frame sync."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(3)
+    except OSError:
+        return False
+    return head == b"ID3" or (len(head) >= 2 and head[0] == 0xFF and head[1] & 0xE0 == 0xE0)
+
+
+def _require_parts(parts: List[str], merger: str) -> None:
+    """Raise ``MergeFailed`` naming the first part that is missing or empty."""
+    for part in parts:
+        if not os.path.isfile(part) or os.path.getsize(part) == 0:
+            raise MergeFailed(f"{merger}: missing or empty part {part}")
+
+
+@contextmanager
+def _atomic_output(output_path: str) -> Iterator[str]:
+    """Yield a temp path beside *output_path* that replaces it only if the block succeeds."""
+    fd, tmp = tempfile.mkstemp(
+        prefix=".tts_ka_merge_",
+        suffix=os.path.splitext(output_path)[1],
+        dir=os.path.dirname(os.path.abspath(output_path)),
+    )
+    os.close(fd)
+    try:
+        yield tmp
+        os.replace(tmp, output_path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+class ConcatMp3Merger:
+    """Joins MP3 parts byte-for-byte (lossless), keeping only the first part's ID3 tag."""
+
+    def merge(self, parts: List[str], output_path: str) -> None:
+        _require_parts(parts, "ConcatMp3Merger")
+        with _atomic_output(output_path) as tmp:
+            with open(tmp, "wb") as out:
+                for i, part in enumerate(parts):
+                    with open(part, "rb") as src:
+                        if i:
+                            src.seek(_id3v2_size(src.read(10)))
+                        shutil.copyfileobj(src, out)
+
+
 class SoundFileMerger:
     """Merges MP3 parts via soundfile + numpy (decodes and re-encodes)."""
 
@@ -161,13 +242,13 @@ class SoundFileMerger:
         for part in parts:
             try:
                 data, sr = sf.read(part)
-                if sample_rate is None:
-                    sample_rate = sr
-                combined_data.append(data)
-            except (OSError, RuntimeError, ValueError):
-                continue
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise MergeFailed(f"SoundFileMerger: cannot read {part}: {exc}") from exc
+            if sample_rate is None:
+                sample_rate = sr
+            combined_data.append(data)
         if not combined_data or sample_rate is None:
-            raise RuntimeError("SoundFileMerger: no valid audio parts to merge")
+            raise MergeFailed("SoundFileMerger: no valid audio parts to merge")
         final_audio = np.concatenate(combined_data, axis=0)
         sf.write(output_path, final_audio, sample_rate)
 
@@ -176,26 +257,29 @@ class PydubMerger:
     """Merges MP3 parts using PyDub."""
 
     def merge(self, parts: List[str], output_path: str) -> None:
+        _require_parts(parts, "PydubMerger")
         combined = AudioSegment.from_mp3(parts[0])
         for part in parts[1:]:
-            if os.path.exists(part):
-                combined += AudioSegment.from_mp3(part)
+            combined += AudioSegment.from_mp3(part)
         combined.export(output_path, format="mp3")
 
 
 class FFmpegMerger:
-    """Merges MP3 parts via an FFmpeg concat-demuxer subprocess (stream copy)."""
+    """Merges audio parts via an FFmpeg concat-demuxer subprocess.
+
+    Streams are copied when the output is MP3 and re-encoded otherwise.
+    """
 
     def merge(self, parts: List[str], output_path: str) -> None:
+        _require_parts(parts, "FFmpegMerger")
         fd, listfile = tempfile.mkstemp(prefix="tts_ka_concat_", suffix=".txt")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 for part in parts:
-                    if os.path.exists(part):
-                        abs_path = os.path.abspath(part).replace("\\", "/")
-                        # Per ffmpeg concat-demuxer spec, escape `'` as `'\''`.
-                        escaped = abs_path.replace("'", "'\\''")
-                        f.write(f"file '{escaped}'\n")
+                    abs_path = os.path.abspath(part).replace("\\", "/")
+                    # Per ffmpeg concat-demuxer spec, escape `'` as `'\''`.
+                    escaped = abs_path.replace("'", "'\\''")
+                    f.write(f"file '{escaped}'\n")
             argv = [
                 "ffmpeg",
                 "-y",
@@ -204,20 +288,16 @@ class FFmpegMerger:
                 "-f", "concat",
                 "-safe", "0",
                 "-i", listfile,
-                "-c", "copy",
-                output_path,
             ]
+            if output_path.lower().endswith(".mp3"):
+                argv += ["-c", "copy"]
+            argv.append(output_path)
             try:
-                result = subprocess.run(argv, shell=False, check=False)
-                rc = result.returncode
+                rc = subprocess.run(argv, shell=False, check=False).returncode
             except FileNotFoundError:
-                rc = 127
+                raise MergeFailed("FFmpegMerger: ffmpeg is not installed") from None
             if rc != 0:
-                # Last resort: copy first part so caller always has *something*
-                if os.path.exists(parts[0]):
-                    shutil.copy2(parts[0], output_path)
-                else:
-                    raise RuntimeError("FFmpegMerger: no valid parts found")
+                raise MergeFailed(f"FFmpegMerger: ffmpeg exited with code {rc}")
         finally:
             try:
                 os.remove(listfile)
@@ -250,6 +330,8 @@ async def generate_audio_with_subs(text: str, language: str, output_path: str,
 
     Returns a list of ``WordEvent`` collected during synthesis. Edge-tts uses
     100-nanosecond ticks for offsets, which are normalised to milliseconds.
+    Transient errors are retried like ``fast_generate_audio``; a final failure
+    removes the partial file and raises ``GenerationFailed``.
     """
     try:
         from edge_tts import Communicate
@@ -270,36 +352,57 @@ async def generate_audio_with_subs(text: str, language: str, output_path: str,
         kwargs["pitch"] = prosody.pitch
         kwargs["volume"] = prosody.volume
 
-    communicate = Communicate(clean_text, resolved_voice, **kwargs)
     events: List[WordEvent] = []
-    with open(output_path, "wb") as audio_file:
-        async for chunk in communicate.stream():
-            ctype = chunk.get("type")
-            if ctype == "audio":
-                audio_file.write(chunk["data"])
-            elif ctype == "WordBoundary":
-                # edge-tts uses 100-ns ticks; convert to ms.
-                offset_ms = int(chunk["offset"]) // 10_000
-                duration_ms = int(chunk["duration"]) // 10_000
-                events.append(
-                    WordEvent(
-                        text=chunk.get("text", ""),
-                        start_ms=offset_ms,
-                        duration_ms=duration_ms,
+
+    async def attempt() -> None:
+        events.clear()
+        # edge-tts >= 7 defaults to SentenceBoundary, which turns word events off.
+        communicate = Communicate(clean_text, resolved_voice,
+                                  boundary="WordBoundary", **kwargs)
+        with open(output_path, "wb") as audio_file:
+            async for chunk in communicate.stream():
+                ctype = chunk.get("type")
+                if ctype == "audio":
+                    audio_file.write(chunk["data"])
+                elif ctype == "WordBoundary":
+                    # edge-tts uses 100-ns ticks; convert to ms.
+                    offset_ms = int(chunk["offset"]) // 10_000
+                    duration_ms = int(chunk["duration"]) // 10_000
+                    events.append(
+                        WordEvent(
+                            text=chunk.get("text", ""),
+                            start_ms=offset_ms,
+                            duration_ms=duration_ms,
+                        )
                     )
-                )
+
+    try:
+        await _retry_edge(attempt, EdgeTTSGenerator._EDGE_RETRIES,
+                          EdgeTTSGenerator._EDGE_RETRY_BASE_DELAY)
+    except Exception as exc:
+        try:
+            os.remove(output_path)
+        except OSError:
+            pass
+        raise generation_failed("Subtitled audio generation failed", exc) from exc
     return events
 
 
 def fast_merge_audio_files(parts: List[str], output_path: str) -> None:
-    """Merge audio parts using the best available strategy, with fallbacks."""
+    """Merge audio *parts* into *output_path*, raising ``MergeFailed`` rather than dropping audio.
+
+    MP3 output from MP3 parts is joined losslessly by ``ConcatMp3Merger``;
+    anything else goes through the re-encoding back-ends with fallbacks.
+    """
     if not parts:
         raise ValueError("No parts to merge")
-    if os.path.exists(output_path):
-        os.remove(output_path)
-    if len(parts) == 1:
-        if os.path.abspath(parts[0]) != os.path.abspath(output_path):
-            shutil.copy2(parts[0], output_path)
+    out_abs = os.path.abspath(output_path)
+    if any(os.path.abspath(p) == out_abs for p in parts):
+        raise ValueError(f"Output {output_path!r} is also one of the parts to merge")
+    if len(parts) == 1 or (
+        output_path.lower().endswith(".mp3") and all(_looks_like_mp3(p) for p in parts)
+    ):
+        ConcatMp3Merger().merge(parts, output_path)
         return
 
     mergers: List[AudioMerger] = []
@@ -317,7 +420,7 @@ def fast_merge_audio_files(parts: List[str], output_path: str) -> None:
         except Exception as exc:
             last_error = exc
 
-    raise RuntimeError(f"All merge strategies failed: {last_error}")
+    raise MergeFailed(f"All merge strategies failed: {last_error}")
 
 
 def _spawn_detached(argv: List[str]) -> bool:

@@ -23,7 +23,7 @@ pip install "TTS_ka[readers]"      # + PDF / EPUB / DOCX / HTML readers
 pip install "TTS_ka[metadata]"     # + mutagen for ID3 tags / chapters
 pip install "TTS_ka[server]"       # + FastAPI / uvicorn (REST server)
 pip install "TTS_ka[mcp]"          # + MCP SDK (AI-agent integration)
-pip install "TTS_ka[soundfile]"    # + faster merges via soundfile
+pip install "TTS_ka[soundfile]"    # + soundfile merges for non-MP3 output
 pip install "TTS_ka[hotkeys]"      # + pynput (Windows native hotkeys)
 pip install "TTS_ka[dev]"          # test tools + black / flake8 / mypy
 ```
@@ -502,7 +502,7 @@ The filter list is composable: import `TextProcessingPipeline` from `not_reading
 The shape of the call is what matters, not magic flags:
 
 - **Short text** (under ~200 words, no streaming): one direct edge-tts call. Latency is dominated by the network round-trip.
-- **Long text**: split into ~30-second chunks, synthesized in parallel (`--parallel` workers), merged via `soundfile` → `pydub` → `ffmpeg` fallbacks.
+- **Long text**: split into ~30-second chunks, synthesized in parallel (`--parallel` workers) into a private temp dir, then joined losslessly by byte-concatenating the MP3 parts (no re-encode). Non-MP3 output falls back to `soundfile` → `pydub` → `ffmpeg`. A merge that would drop a chunk fails the run instead of writing a shorter file.
 - **Streaming**: chunk size drops to `STREAMING_CHUNK_SECONDS = 15` so the first chunk lands fast and feeds the player while the rest synthesizes.
 
 For honest timings, run `python -m TTS_ka your-real-text --lang en` and read the printed `Completed in X.XXs` line. Numbers depend heavily on your network to Edge's TTS endpoint, so machine-published benchmarks are not meaningful.
@@ -531,7 +531,9 @@ python -m TTS_ka your-text --lang en --parallel 2
 
 **Hung `--live` process** — the live loop blocks on stdin until EOF. Send Ctrl+D (Unix) / Ctrl+Z + Enter (Windows) to close the input stream, or Ctrl+C to abort.
 
-**Ctrl+C left a partial file** — generation cleanups remove `*.part_*.mp3` chunks on cancel, but the final merged output is left if it had already been written.
+**Ctrl+C left a partial file** — chunks are written to a per-run `tts-ka-run-*` dir in the system temp dir and removed on success, failure, or Ctrl+C; the output file is only replaced once the merge succeeds. Dirs left behind by a crash (or by GUI streaming, whose player reads them lazily) are swept on a later run after 12 hours.
+
+**Exit codes** — `0` success, `1` synthesis or merge failure, `2` usage error (no text, empty stdin/clipboard, file not found, bad option), `130` Ctrl+C. A single word that looks like a path (`notes.txt`, `docs/intro`) but doesn't exist is reported as *file not found* rather than read aloud; pipe it in (`echo notes.txt | tts-ka -`) to speak it literally.
 
 ---
 

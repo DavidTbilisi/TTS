@@ -48,6 +48,7 @@ def _print_welcome() -> None:
 
 from .fast_audio import (
     GenerationFailed,
+    MergeFailed,
     discard_empty_output,
     fast_generate_audio,
     generate_audio_with_subs,
@@ -55,7 +56,12 @@ from .fast_audio import (
     play_audio,
 )
 from .streaming_player import stop_active_streaming_player
-from .ultra_fast import smart_generate_long_text, get_optimal_settings, OPTIMAL_WORKERS
+from .ultra_fast import (
+    EmptyInputError,
+    OPTIMAL_WORKERS,
+    get_optimal_settings,
+    smart_generate_long_text,
+)
 from .simple_help import show_simple_help, show_troubleshooting
 from .constants import STREAMING_CHUNK_SECONDS, VOICE_MAP
 from .user_config import (
@@ -69,7 +75,7 @@ from .user_config import (
 )
 from . import voices as _voices
 from . import prosody as _prosody
-from .readers import read_file as _read_file, MissingExtraError
+from .readers import READERS, read_file as _read_file, MissingExtraError
 from . import metadata as _metadata
 from . import subtitles as _subtitles
 from . import completion as _completion
@@ -138,9 +144,9 @@ def _make_emitter(enabled: bool, stream) -> Callable[[Dict[str, Any]], None]:
     return emit
 
 
-async def _run_preview(text: str, voice_id: str, output_path: str) -> None:
-    """Generate a short sample with *voice_id* into *output_path*."""
-    await fast_generate_audio(text, "en", output_path, voice=voice_id)
+async def _run_preview(text: str, voice_id: str, output_path: str) -> bool:
+    """Generate a short sample with *voice_id* into *output_path*; False on failure."""
+    return await fast_generate_audio(text, "en", output_path, quiet=True, voice=voice_id)
 
 
 def _resolve_output_path(raw: Optional[str], force: bool = False,
@@ -280,7 +286,7 @@ def get_input_text(text_input: str) -> str:
     if text_input == "clipboard":
         text = _read_clipboard().replace("\r\n", "\n")
         if not text.strip():
-            print("No text was copied from the clipboard.")
+            print("No text was copied from the clipboard.", file=sys.stderr)
             return ""
         return text
 
@@ -292,6 +298,21 @@ def get_input_text(text_input: str) -> str:
             raise SystemExit(2)
 
     return text_input
+
+
+def _looks_like_missing_file(text: str) -> bool:
+    """True when *text* is a single token that reads as a file path but does not exist.
+
+    Catches typos like ``tts-ka chaptr1.pdf``, which would otherwise be spoken
+    aloud as the literal filename.
+    """
+    s = text.strip()
+    if not s or any(c.isspace() for c in s) or os.path.exists(os.path.expanduser(s)):
+        return False
+    ext = os.path.splitext(s)[1].lower()
+    if ext in READERS:
+        return True
+    return bool(ext) and ext != "." and ("/" in s or os.sep in s)
 
 
 def _maybe_serve(argv: list) -> bool:
@@ -598,7 +619,9 @@ For comprehensive help with examples: %(prog)s --help-full
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
             preview_path = tmp.name
         try:
-            asyncio.run(_run_preview(phrase, voice.id, preview_path))
+            if not asyncio.run(_run_preview(phrase, voice.id, preview_path)):
+                print(f"❌ {generation_failed('Voice preview failed')}", file=sys.stderr)
+                raise SystemExit(1)
             if not play_audio(preview_path):
                 _warn_no_player(preview_path)
         finally:
@@ -653,21 +676,36 @@ For comprehensive help with examples: %(prog)s --help-full
         except KeyboardInterrupt:
             stop_active_streaming_player()
             emit({"event": "error", "message": "cancelled"})
+            raise SystemExit(130)
         return
 
     # Stdin handling: if no text arg and stdin is piped, or text == "-", read stdin.
-    if args.text == "-" or (not args.text and not sys.stdin.isatty()):
+    from_stdin = args.text == "-" or (not args.text and not sys.stdin.isatty())
+    if from_stdin:
         try:
             args.text = sys.stdin.read()
         except (OSError, ValueError):
             args.text = ""
 
     if not args.text or not args.text.strip():
-        if not args.json:
-            _print_welcome()
-        else:
+        if args.json:
             emit({"event": "error", "message": "no text provided"})
-        return
+        elif from_stdin:
+            print("Error: No text provided on stdin", file=sys.stderr)
+        else:
+            _print_welcome()
+            return
+        raise SystemExit(2)
+
+    if not from_stdin and _looks_like_missing_file(args.text):
+        missing = args.text.strip()
+        emit({"event": "error", "message": f"file not found: {missing}"})
+        print(
+            f"Error: file not found: {missing} "
+            f"(to speak it as text: echo '{missing}' | tts-ka -)",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
 
     text = (args.text if args.text and "\n" in args.text and not os.path.exists(args.text)
             else get_input_text(resolve_positional_text_source(args.text)))
@@ -675,8 +713,8 @@ For comprehensive help with examples: %(prog)s --help-full
         if args.json:
             emit({"event": "error", "message": "empty input"})
         else:
-            print("Error: No text provided")
-        return
+            print("Error: No text provided", file=sys.stderr)
+        raise SystemExit(2)
 
     if args.study:
         try:
@@ -691,7 +729,8 @@ For comprehensive help with examples: %(prog)s --help-full
         _study_launch(
             text=text,
             language=args.lang,
-            rate=args.rate,
+            voice=args.voice,
+            prosody=_prosody.build_opts(args.rate, args.pitch, args.volume),
             chunk_size_words=args.study_chunk_words,
         )
         return
@@ -815,7 +854,7 @@ For comprehensive help with examples: %(prog)s --help-full
 
     try:
         asyncio.run(run_generation())
-    except GenerationFailed as exc:
+    except (GenerationFailed, MergeFailed, EmptyInputError) as exc:
         # run_generation already emitted the --json error event.
         print(f"❌ {exc}", file=sys.stderr)
         raise SystemExit(1)
@@ -823,6 +862,7 @@ For comprehensive help with examples: %(prog)s --help-full
         stop_active_streaming_player()
         _cprint("\n  [yellow]⚡[/yellow]  Generation cancelled")
         emit({"event": "error", "message": "cancelled"})
+        raise SystemExit(130)
 
 
 if __name__ == "__main__":
