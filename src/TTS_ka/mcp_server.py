@@ -175,7 +175,16 @@ class _LiveSession:
     def _schedule(self, sentence: str) -> None:
         idx = self._queued
         self._queued += 1
-        self._tasks.append(asyncio.create_task(self._speak(sentence, idx)))
+        task = asyncio.create_task(self._speak(sentence, idx))
+
+        def _skip_if_cancelled(t: asyncio.Task) -> None:
+            # A task cancelled before its first step never enters _speak, so
+            # its finally can't skip the index and later sentences would wait.
+            if t.cancelled():
+                self.player.skip_index(idx)
+
+        task.add_done_callback(_skip_if_cancelled)
+        self._tasks.append(task)
 
     def _arm_idle_flush(self) -> None:
         self._cancel_idle_flush()

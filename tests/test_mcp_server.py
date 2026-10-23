@@ -785,6 +785,19 @@ class TestStreamRobustness:
         assert sorted(i for i, _ in sess.player.chunks) == [0, 2]
         assert r == "closed: spoke 2 chunk(s)"
 
+    async def test_task_cancelled_before_it_starts_still_skips_its_index(self):
+        sessions = {}
+        server = build_server(sessions=sessions)
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte):
+            sid, sess = await _open(server, sessions)
+            # feed() never yields, so neither task has taken a step yet.
+            await sess.feed("First fine. Second fine. ")
+            sess._tasks[0].cancel()
+            await asyncio.gather(*sess._tasks, return_exceptions=True)
+            await _call(server, "stream_close", session_id=sid)
+        assert sess.player.skipped == [0]
+        assert [i for i, _ in sess.player.chunks] == [1]
+
     async def test_sentence_ending_an_append_is_spoken_without_close(self):
         sessions = {}
         server = build_server(sessions=sessions)
