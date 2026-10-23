@@ -22,12 +22,14 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
-        extras: ["test"]
+        # study (pygame-ce) is on every leg: it is a compiled dep, so an
+        # install on each Python version is the check that wheels exist.
+        extras: ["test,study"]
         include:
           # One leg also installs the optional extras so the MCP / server /
           # reader / metadata tests run instead of being import-skipped.
           - python-version: "3.12"
-            extras: "test,mcp,server,readers,metadata"
+            extras: "test,study,mcp,server,readers,metadata"
 
     steps:
       - uses: actions/checkout@v5
