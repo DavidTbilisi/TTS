@@ -113,12 +113,13 @@ async def _exercise_unknown_session(server_env):
             r = await session.call_tool(
                 "stream_append", {"session_id": "bogus", "text": "x"}
             )
-            assert "unknown session_id" in _unwrap(r)
+            assert r.is_error
+            assert "unknown session_id" in r.content[0].text
             r = await session.call_tool(
                 "session_status", {"session_id": "bogus"}
             )
-            snap = _unwrap(r)
-            assert "error" in snap
+            assert r.is_error
+            assert "unknown session_id" in r.content[0].text
 
 
 @pytest.mark.slow

@@ -300,7 +300,7 @@ class TestStreamingFallback:
         text = "word " * 300
         captured_show_gui = {}
 
-        def fake_player_ctor(show_gui=True):
+        def fake_player_ctor(show_gui=True, preferred=None):
             captured_show_gui['value'] = show_gui
             inst = MagicMock()
             return inst

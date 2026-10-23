@@ -26,6 +26,12 @@ def _isolated_tempdir(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_mpv_ipc(monkeypatch):
+    """Keep StreamingAudioPlayer on the stubbable stdin-playlist path; IPC tests opt back in."""
+    monkeypatch.setenv("TTS_KA_MPV_IPC", "0")
+
+
+@pytest.fixture(autouse=True)
 def _silence_windows_real_media_players():
     """Do not spawn VLC / media players for fake ``*.mp3`` paths during tests (Windows).
 

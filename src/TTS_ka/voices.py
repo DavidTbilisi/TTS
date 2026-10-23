@@ -70,6 +70,21 @@ def lang_for_voice(voice_id: str) -> Optional[str]:
     return v.lang if v else None
 
 
+def validate_lang_voice(lang: str, voice: Optional[str]) -> Optional[str]:
+    """Return an error message when *lang* or *voice* is unsupported, else None.
+
+    Shared by the REST and MCP servers so bad input fails up front instead of
+    in every later synthesis call.
+    """
+    from .constants import VOICE_MAP
+
+    if lang not in VOICE_MAP:
+        return f"invalid lang {lang!r} (use one of: {', '.join(VOICE_MAP)})"
+    if voice and get_voice(voice) is None:
+        return f"unknown voice {voice!r} (see list_voices)"
+    return None
+
+
 def format_table(voices: List[Voice]) -> str:
     """Render *voices* as a fixed-width table suitable for terminal output."""
     if not voices:

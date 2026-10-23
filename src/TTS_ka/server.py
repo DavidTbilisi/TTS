@@ -26,7 +26,7 @@ import tempfile
 from dataclasses import asdict
 from typing import Optional
 
-from .constants import MAX_PARALLEL_WORKERS, VOICE_MAP
+from .constants import MAX_PARALLEL_WORKERS
 from . import voices as _voices
 from .deps import MissingExtraError
 
@@ -101,10 +101,9 @@ def create_app(token: Optional[str] = None):
         voice = body.get("voice")
         if not text:
             raise HTTPException(status_code=400, detail="missing 'text'")
-        if lang not in VOICE_MAP:
-            raise HTTPException(status_code=400, detail=f"invalid lang {lang!r}")
-        if voice and _voices.get_voice(voice) is None:
-            raise HTTPException(status_code=400, detail=f"unknown voice {voice!r}")
+        invalid = _voices.validate_lang_voice(lang, voice)
+        if invalid:
+            raise HTTPException(status_code=400, detail=invalid)
 
         # Synthesize fully before responding so a failure can still be a
         # proper HTTP error instead of an empty 200 body.

@@ -345,7 +345,7 @@ async def smart_generate_long_text(
             )
             show_gui = False
 
-        streaming_player = StreamingAudioPlayer(show_gui=show_gui)
+        streaming_player = StreamingAudioPlayer(show_gui=show_gui, preferred=preferred_player)
         streaming_player.start()
         if sys.platform.startswith('win'):
             mode = "GUI" if show_gui else "headless"
@@ -355,6 +355,7 @@ async def smart_generate_long_text(
     
     # Generate chunks in parallel
     work_dir = _make_run_dir()
+    released = True
     try:
         parts = await ultra_fast_parallel_generation(
             chunks,
@@ -378,18 +379,17 @@ async def smart_generate_long_text(
 
         if streaming_player:
             _cprint("  [dim]⏸  Waiting for playback to finish…[/dim]")
-            streaming_player.wait_for_completion()
-            await asyncio.sleep(0.2)
+            released = await asyncio.to_thread(streaming_player.wait_until_released)
     except BaseException:
         _interrupt_streaming_cleanup(streaming_player, work_dir)
         raise
 
-    # GUI streaming: mpv opens queued parts lazily and outlives this call, so
-    # deleting now would cut playback short; _sweep_stale_run_dirs removes it later.
-    gui_streaming = bool(streaming_player and getattr(streaming_player, 'show_gui', False))
+    # A player that outlives this call without saying it is done (a GUI window
+    # fed a stdin playlist) may still open queued parts, so deleting them now
+    # would cut playback short; _sweep_stale_run_dirs removes the dir later.
     if keep_parts:
         _cprint(f"  [dim]Part files kept in {work_dir}[/dim]")
-    elif not gui_streaming:
+    elif released:
         shutil.rmtree(work_dir, ignore_errors=True)
 
     elapsed = time.perf_counter() - start
