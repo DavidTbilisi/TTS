@@ -88,6 +88,11 @@ server = [
 mcp = [
     "mcp>=2.0.0",
 ]
+gui = [
+    # Sun Valley ttk theme for tts-ka-gui; darkdetect follows the OS light/dark setting.
+    "sv-ttk>=2.6.0",
+    "darkdetect>=0.8.0",
+]
 study = [
     # pygame-ce, not pygame: pygame 2.6.1 (2024) ships no Python 3.14 wheels
     # and fails to build without SDL headers. Same `import pygame` API.

@@ -39,3 +39,70 @@ def test_setup_tab_builds_with_voices() -> None:
             assert len(app._setup_voices) > 0
         finally:
             app.root.destroy()
+
+
+# A config with every playback flag on; the Speak-tab checkboxes start from it.
+_CONFIG_ALL_ON = {"stream": True, "no_play": True, "no_gui": True, "chunk_seconds": 0, "parallel": 0}
+
+
+def test_unchecked_boxes_beat_config_true(tmp_path) -> None:
+    """Unticking Stream / Save-only must win over ``true`` in the config."""
+    from TTS_ka import gui
+
+    out = tmp_path / "out.mp3"
+    out.write_bytes(b"mp3")
+    with patch.object(gui, "get_optimal_settings", return_value={"chunk_seconds": 0, "parallel": 1}), \
+         patch.object(gui, "fast_generate_audio", return_value=True) as synth, \
+         patch.object(gui, "smart_generate_long_text") as long_text, \
+         patch.object(gui, "play_audio", return_value=True) as play:
+        assert gui._run_async_speak(
+            "hello", "en", str(out), stream=False, vlc_gui=False, no_play=False, defs=_CONFIG_ALL_ON
+        )
+    synth.assert_called_once()
+    long_text.assert_not_called()
+    play.assert_called_once_with(str(out))
+
+
+def test_checked_player_window_beats_config_no_gui(tmp_path) -> None:
+    from TTS_ka import gui
+
+    with patch.object(gui, "get_optimal_settings", return_value={"chunk_seconds": 0, "parallel": 1}), \
+         patch.object(gui, "smart_generate_long_text") as long_text, \
+         patch.object(gui, "play_audio") as play:
+        gui._run_async_speak(
+            "hello", "en", str(tmp_path / "o.mp3"), stream=True, vlc_gui=True, no_play=False,
+            defs=_CONFIG_ALL_ON,
+        )
+    kw = long_text.call_args.kwargs
+    assert kw["enable_streaming"] is True
+    assert kw["show_gui"] is True
+    play.assert_not_called()
+
+
+def test_speak_tab_file_row_and_player_window_follow_their_toggles() -> None:
+    tk = pytest.importorskip("tkinter")
+    try:
+        probe = tk.Tk()
+        probe.destroy()
+    except tk.TclError:
+        pytest.skip("no display available")
+
+    from TTS_ka import gui
+
+    with patch("TTS_ka.deps.collect_dep_rows", return_value=[]), \
+         patch("TTS_ka.deps.format_dep_report", return_value="ok"), \
+         patch("TTS_ka.native_hotkeys.NativeHotkeyManager", MagicMock()), \
+         patch.object(gui.TTSSpeakApp, "_run_setup_check_async"):
+        app = gui.TTSSpeakApp({"lang": "en", "stream": False})
+        try:
+            assert not app._file_row.winfo_manager(), "file row hidden in type/paste mode"
+            app.source_mode.set("file")
+            assert app._file_row.winfo_manager() == "grid"
+            app.source_mode.set("text")
+            assert not app._file_row.winfo_manager()
+
+            assert app._player_window_cb.instate(["disabled"])
+            app.stream.set(True)
+            assert not app._player_window_cb.instate(["disabled"])
+        finally:
+            app.root.destroy()

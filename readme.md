@@ -25,6 +25,7 @@ pip install "TTS_ka[server]"       # + FastAPI / uvicorn (REST server)
 pip install "TTS_ka[mcp]"          # + MCP SDK (AI-agent integration)
 pip install "TTS_ka[soundfile]"    # + soundfile merges for non-MP3 output
 pip install "TTS_ka[hotkeys]"      # + pynput (Windows native hotkeys)
+pip install "TTS_ka[gui]"          # + Sun Valley theme (light/dark) for tts-ka-gui
 pip install "TTS_ka[dev]"          # test tools + black / flake8 / mypy
 ```
 
@@ -288,7 +289,7 @@ tts-ka-gui
 # or: python -m TTS_ka.gui
 ```
 
-Tkinter window with these tabs:
+Tkinter window with these tabs (with the `[gui]` extra it uses the Sun Valley theme and follows the system light/dark setting; `TTS_KA_GUI_THEME=light|dark|classic` overrides):
 
 - **Setup** — guided first run: verify dependencies, pick and preview a voice, then speak.
 - **Speak** — paste text or point at a UTF-8 file, choose language and voice, hit **Speak** with optional **Stream**.
@@ -494,6 +495,7 @@ All keys are optional. Real, supported schema:
 | `TTS_KA_CACHE` | `0` → disable the chunk cache |
 | `TTS_KA_CACHE_DIR` | Chunk cache location (default `$XDG_CACHE_HOME/tts-ka`, `~/Library/Caches/tts-ka`, `%LOCALAPPDATA%\tts-ka\Cache`) |
 | `TTS_KA_CACHE_MAX_MB` | Chunk cache size cap, least-recently-used pruned (default `500`, ≈ 23 h of speech) |
+| `TTS_KA_GUI_THEME` | `tts-ka-gui` theme: `light`, `dark`, `system` (default, needs the `[gui]` extra) or `classic` (plain Tk) |
 | `TTS_API_TOKEN` | Bearer token required by `tts-ka serve` |
 
 ---
