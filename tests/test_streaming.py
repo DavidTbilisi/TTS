@@ -1,11 +1,48 @@
-"""Tests for streaming audio playback functionality."""
+"""Tests for streaming audio playback functionality.
 
+``StreamingAudioPlayer`` runs for real here (thread, queue, player discovery,
+command building); only the OS-level launch is stubbed by ``_FakeProcess``
+(autouse fixture below), so no test starts a real mpv/VLC/ffplay. Tests that
+assert on the launch patch ``subprocess.Popen`` themselves, which wins over
+the fixture.
+"""
+
+import io
 import os
+import subprocess
 import time
 import pytest
 from unittest.mock import MagicMock, patch
 
 from TTS_ka.streaming_player import StreamingAudioPlayer
+
+
+class _FakeProcess:
+    """``subprocess.Popen`` stand-in for a media player that exits at once."""
+
+    def __init__(self, args, stdin=None, **kwargs):
+        self.args = args
+        self.stdin = io.BytesIO() if stdin == subprocess.PIPE else None
+        self.returncode = 0
+
+    def wait(self, timeout=None):
+        return 0
+
+    def poll(self):
+        return 0
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _no_real_player():
+    with patch("subprocess.Popen", _FakeProcess), \
+         patch("os.startfile", MagicMock(), create=True):
+        yield
 
 
 class TestStreamingAudioPlayer:
