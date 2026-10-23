@@ -12,8 +12,8 @@ Tools:
 - ``list_voices(lang?)`` — return the voice catalog.
 
 Transport: stdio (JSON-RPC). Because stdout is reserved for the protocol,
-all decorative ``print()`` from underlying modules is redirected to stderr
-for the lifetime of the server.
+mcp's ``stdio_server`` points fd 1 at stderr while serving, so decorative
+``print()`` from underlying modules (and subprocesses) never reaches the wire.
 
 Run via ``TTS_ka-mcp`` (installed entry point) or ``python -m TTS_ka.mcp_server``.
 """
@@ -217,14 +217,14 @@ def _load_default_prosody() -> ProsodyOpts:
 
 def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
                  default_prosody: Optional[ProsodyOpts] = None):
-    """Construct a FastMCP server with the TTS_ka tools registered.
+    """Construct an MCPServer with the TTS_ka tools registered.
 
     *sessions* is the session dict — exposed so tests can inspect state.
     *default_prosody* overrides the config-derived default (useful for tests).
     """
-    from mcp.server.fastmcp import FastMCP  # local import: optional extra
+    from mcp.server.mcpserver import MCPServer  # local import: optional extra
 
-    server = FastMCP(
+    server = MCPServer(
         "tts-ka",
         instructions=(
             "Text-to-speech for AI agents. Use `speak` for one-shot lines, "
@@ -389,42 +389,19 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 
-async def _run_with_preserved_stdout(server) -> None:
-    """Run the FastMCP server, keeping the real OS stdout for protocol framing.
-
-    Strategy:
-      1. ``os.dup(1)`` saves a duplicate fd pointing at the real stdout.
-      2. ``os.dup2(2, 1)`` redirects fd 1 (and therefore ``sys.stdout``,
-         ``print``, and any subprocesses inheriting fd 1) to stderr.
-      3. We hand the saved fd to ``stdio_server`` so JSON-RPC framing still
-         goes out the original stdout the client is reading.
-
-    Any ``print()`` from imported modules (``StreamingAudioPlayer`` warnings,
-    edge-tts retry hints, etc.) lands on the user's stderr — never on the
-    protocol stream.
-    """
-    from io import TextIOWrapper
-    import anyio
-    from mcp.server.stdio import stdio_server
-
-    saved_stdout_fd = os.dup(1)
-    os.dup2(2, 1)
-    real_stdout_binary = os.fdopen(saved_stdout_fd, "wb", buffering=0)
-    real_stdout = anyio.wrap_file(TextIOWrapper(real_stdout_binary, encoding="utf-8"))
-
-    async with stdio_server(stdout=real_stdout) as (read, write):
-        await server._mcp_server.run(
-            read, write, server._mcp_server.create_initialization_options()
-        )
-
-
 def main() -> None:
-    """Run the MCP server over stdio with print-corruption protection.
+    """Run the MCP server over stdio.
 
-    See :func:`_run_with_preserved_stdout` for why this dance is needed.
+    mcp >= 2 diverts fd 1 to stderr for the life of the transport and frames
+    JSON-RPC on a private duplicate of the real stdout, so stray ``print()``
+    from edge-tts, players, etc. cannot corrupt the protocol stream.
+
+    stdout is a pipe here, so it is block-buffered: a print still sitting in
+    the buffer at shutdown would flush *after* fd 1 is restored and land on
+    the wire. Line buffering flushes each print while fd 1 is still diverted.
     """
-    server = build_server()
-    asyncio.run(_run_with_preserved_stdout(server))
+    sys.stdout.reconfigure(line_buffering=True)
+    build_server().run("stdio")
 
 
 if __name__ == "__main__":

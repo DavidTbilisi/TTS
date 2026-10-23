@@ -1,7 +1,7 @@
 """Tests for the MCP server tool surface.
 
 We don't exercise the JSON-RPC transport — that's the mcp library's job.
-Instead we call the tool callables directly via FastMCP's `call_tool`
+Instead we call the tool callables directly via MCPServer's `call_tool`
 to verify the wiring, session lifecycle, and stdout safety.
 """
 
@@ -77,11 +77,10 @@ class TestLiveSession:
 async def _call(server, name, **kwargs):
     """Invoke a registered MCP tool and return the unwrapped Python value.
 
-    FastMCP wraps scalar returns in ``{"result": value}``; we peel that off.
-    Dict / list returns from tools with explicit shapes pass through as-is
-    (FastMCP keeps the top-level field name).
+    MCPServer wraps scalar and list returns in ``{"result": value}``; we peel
+    that off. Dict returns pass through as-is.
     """
-    _, structured = await server.call_tool(name, kwargs)
+    structured = (await server.call_tool(name, kwargs)).structured_content
     if isinstance(structured, dict) and list(structured.keys()) == ["result"]:
         return structured["result"]
     return structured
@@ -535,7 +534,7 @@ class TestListVoices:
     async def test_list_all(self):
         server = build_server()
         result = await _call(server, "list_voices")
-        # FastMCP wraps list returns in a {"result": [...]} structured payload.
+        # MCPServer wraps list returns in a {"result": [...]} structured payload.
         items = result["result"] if isinstance(result, dict) and "result" in result else result
         assert isinstance(items, list)
         assert all("id" in v and "lang" in v for v in items)
