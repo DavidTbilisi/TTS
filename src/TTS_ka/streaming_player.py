@@ -115,6 +115,13 @@ def unregister_active_streaming_player(player: "StreamingAudioPlayer") -> None:
         _active_streaming_players.discard(player)
 
 
+def any_streaming_player_running() -> bool:
+    """True while a registered player still plays (a GUI window counts until it is closed)."""
+    with _active_lock:
+        players = list(_active_streaming_players)
+    return any(p.running() for p in players)
+
+
 def stop_all_streaming_players() -> None:
     """Terminate playback for every active streaming player (e.g. Ctrl+C, MCP ``stop``)."""
     with _active_lock:
@@ -284,8 +291,9 @@ class StreamingAudioPlayer:
         self.playback_thread = threading.Thread(
             target=self._playback_worker, daemon=True
         )
-        self.playback_thread.start()
+        # Register first: a worker that ends at once unregisters on its way out.
         register_active_streaming_player(self)
+        self.playback_thread.start()
 
     def wait_for_completion(self) -> None:
         """Block until the playback thread exits or the timeout elapses."""
@@ -295,23 +303,31 @@ class StreamingAudioPlayer:
         while self.playback_thread.is_alive() and time.monotonic() < deadline:
             self.playback_thread.join(timeout=0.25)
 
-    def wait_until_released(self, timeout: Optional[float] = None) -> bool:
+    def wait_until_released(
+        self,
+        timeout: Optional[float] = None,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> bool:
         """Block until the player no longer needs the chunk files, so they can be deleted.
 
         Waits for the playback thread, then for a player process that was
         launched and left running (VLC / mplayer / ffplay fallbacks). Returns
-        False on *timeout*, or straight away when a GUI player outlives
-        playback without telling us it is done (it may still open queued files).
+        False on *timeout*, once *cancel_event* is set (the caller stops the
+        player), or straight away when a GUI player outlives playback without
+        telling us it is done (it may still open queued files).
         """
         deadline = None if timeout is None else time.monotonic() + timeout
 
         def remaining() -> Optional[float]:
             return None if deadline is None else max(0.0, deadline - time.monotonic())
 
+        def cancelled() -> bool:
+            return cancel_event is not None and cancel_event.is_set()
+
         thread = self.playback_thread
         while thread is not None and thread.is_alive():
             left = remaining()
-            if left == 0.0:
+            if left == 0.0 or cancelled():
                 return False
             thread.join(timeout=0.25 if left is None else min(0.25, left))
         if self._released:
@@ -321,11 +337,33 @@ class StreamingAudioPlayer:
             return True
         if self.show_gui:
             return False
-        try:
-            proc.wait(timeout=remaining())
-            return True
-        except subprocess.TimeoutExpired:
+        if cancel_event is None:
+            try:
+                proc.wait(timeout=remaining())
+                return True
+            except subprocess.TimeoutExpired:
+                return False
+        while not cancelled():
+            left = remaining()
+            if left == 0.0:
+                return False
+            try:
+                proc.wait(timeout=0.25 if left is None else min(0.25, left))
+                return True
+            except subprocess.TimeoutExpired:
+                pass
+        return False
+
+    def running(self) -> bool:
+        """True until playback ends; a GUI window left open counts as running until closed."""
+        if self._stopped:
             return False
+        thread = self.playback_thread
+        return (thread is not None and thread.is_alive()) or self._window_open()
+
+    def _window_open(self) -> bool:
+        proc = self.process
+        return self.show_gui and not self._stopped and proc is not None and proc.poll() is None
 
     def stop(self) -> None:
         """Stop playback now: drop queued chunks and terminate the player."""
@@ -345,6 +383,7 @@ class StreamingAudioPlayer:
             ipc.close()
         else:
             _terminate_process_quietly(self.process)
+        unregister_active_streaming_player(self)
 
     def pause(self) -> bool:
         """Pause playback; False when the active player can't be controlled."""
@@ -395,7 +434,10 @@ class StreamingAudioPlayer:
         except Exception as e:
             print(f"⚠️  Playback error: {e}")
         finally:
-            unregister_active_streaming_player(self)
+            # A GUI window outlives the worker; it stays registered so a stop
+            # (Ctrl+C, the GUI's Stop) can still close it.
+            if not self._window_open():
+                unregister_active_streaming_player(self)
 
     # ── mpv stdin-playlist (Windows + Unix) ───────────────────────────────────
 

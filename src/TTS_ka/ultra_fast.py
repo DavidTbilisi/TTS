@@ -396,7 +396,11 @@ async def smart_generate_long_text(
 
         if streaming_player:
             _cprint("  [dim]⏸  Waiting for playback to finish…[/dim]")
-            released = await asyncio.to_thread(streaming_player.wait_until_released)
+            released = await asyncio.to_thread(
+                streaming_player.wait_until_released, None, cancel_event
+            )
+            if cancel_event is not None and cancel_event.is_set():
+                raise GenerationCancelled()  # the cleanup below stops the player
     except BaseException:
         _interrupt_streaming_cleanup(streaming_player, work_dir)
         raise
