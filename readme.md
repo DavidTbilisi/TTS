@@ -193,14 +193,23 @@ With `pip install "TTS_ka[readers]"`, file inputs are dispatched by extension:
 | `.txt`, `.rst` | plain UTF-8 | — |
 | `.md`, `.markdown` | strips fences, links, emphasis, headers | — |
 | `.html`, `.htm` | BeautifulSoup if available, regex fallback | `beautifulsoup4` |
-| `.pdf` | text per page, joined | `pypdf` |
+| `.pdf` | text per page, joined; `--pages` selects pages | `pdftotext` (poppler) if installed, else `pypdf` |
 | `.epub` | each item's text, joined | `ebooklib` + `beautifulsoup4` |
 | `.docx` | paragraph text | `python-docx` |
 
 Unknown extensions fall back to UTF-8 plain reading. Missing extras raise `MissingExtraError` with the exact `pip install` line.
 
+For PDFs, install poppler (`sudo apt install poppler-utils`, `brew install poppler`) when you can. Typeset books mark hyphenation points with soft hyphens, and `pypdf` extracts those as spaces, so `different` is read aloud as "dif fer ent". `pdftotext` keeps them as soft hyphens, which TTS_ka removes. `--doctor` shows which extractor is in use.
+
 ```bash
 python -m TTS_ka book.epub --lang en -o book.mp3 --chapters book-chapters.json
+```
+
+For a PDF, `--pages` reads only part of it: 1-based page numbers, comma-separated, with `N-` running to the last page and `-M` starting at the first. Only the selected pages are extracted, so picking a chapter out of a long book is fast. A page past the end, a malformed range, or `--pages` on anything that isn't a PDF file exits 2.
+
+```bash
+python -m TTS_ka book.pdf --lang en --pages 20-24 --stream   # one chapter
+python -m TTS_ka book.pdf --lang en --pages 1-3,7,410-      # several ranges, in the order given
 ```
 
 ---

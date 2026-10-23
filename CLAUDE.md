@@ -69,7 +69,7 @@ Environment variables (see `readme.md`):
 | `gui.py` | tkinter GUI (`tts-ka-gui`): Setup / Speak / Config / Hotkeys / Windows shell (Windows only) / About tabs |
 | `chunking.py` | WPM-based text splitting |
 | `not_reading.py` | Text sanitization before generation |
-| `readers/` | File → text by extension (txt/md/html/pdf/epub/docx; heavy deps via `[readers]`) |
+| `readers/` | File → text by extension (txt/md/html/pdf/epub/docx; heavy deps via `[readers]`). `read_file(path, pages=)` / `--pages 20-24,30-`: 1-based PDF page selection (`pdf.parse_page_spec`); out-of-range, malformed or non-PDF raises `PageRangeError` → exit 2. PDFs go through poppler `pdftotext` when installed (pages split on `\f`, count from `pdfinfo`), else `pypdf`: `pypdf` turns soft hyphens into spaces ("dif fer ent"), `pdftotext` keeps U+00AD plus a stray space after the next glyph, which `_repair_soft_hyphens` rejoins (not after a hyphen/dash: `big-O`, `rm -f`) |
 | `voices.py` / `prosody.py` | Voice catalog (`--list-voices`, `--voice`); `--rate/--pitch/--volume` parsing |
 | `metadata.py` / `subtitles.py` | ID3 tags + chapters (`[metadata]`); SRT/VTT from edge-tts WordBoundary events |
 | `user_config.py` | JSON config loading, CLI defaults, `LANG_CODES` |

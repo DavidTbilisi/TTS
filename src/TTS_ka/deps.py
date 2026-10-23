@@ -133,6 +133,23 @@ def check_clipboard() -> DepRow:
     )
 
 
+def check_pdf_reader() -> DepRow:
+    """Report which PDF text extractor ``readers.pdf`` will use."""
+    if shutil.which("pdftotext"):
+        return DepRow("pdf reader", True, "pdftotext (poppler)")
+    fix = _platform_fix(
+        win="install poppler (e.g. scoop install poppler) for cleaner text",
+        mac="brew install poppler  (cleaner text than pypdf)",
+        linux="sudo apt install poppler-utils  (cleaner text than pypdf)",
+    )
+    if importlib.util.find_spec("pypdf") is not None:
+        return DepRow("pdf reader", False,
+                      "pypdf only - hyphenated words in typeset books may be read as fragments",
+                      fix=fix)
+    return DepRow("pdf reader", False, "none - PDF input needs pdftotext or pypdf",
+                  fix=f"{fix}  or: pip install TTS_ka[readers]")
+
+
 def check_soundfile() -> DepRow:
     if importlib.util.find_spec("soundfile") is None:
         return DepRow(
@@ -165,11 +182,13 @@ def collect_dep_rows() -> List[DepRow]:
     rows.append(check_ffmpeg())
     rows.append(check_streaming_player())
     rows.append(check_clipboard())
+    rows.append(check_pdf_reader())
     rows.append(check_chunk_cache())
     return rows
 
 
-_OPTIONAL_NAMES = frozenset({"soundfile", "streaming player", "clipboard", "chunk cache"})
+_OPTIONAL_NAMES = frozenset({"soundfile", "streaming player", "clipboard", "pdf reader",
+                             "chunk cache"})
 
 
 def format_dep_report(rows: Optional[List[DepRow]] = None) -> str:
@@ -190,6 +209,7 @@ def format_dep_report(rows: Optional[List[DepRow]] = None) -> str:
     lines.append("ffmpeg: required for long/chunked output and reliable MP3 handling.")
     lines.append("streaming player: needed only for --stream (live playback while generating).")
     lines.append("clipboard: needed only for `tts-ka cb` (speak what you copied).")
+    lines.append("pdf reader: needed only for PDF input.")
     critical = ("edge-tts", "pydub", "ffmpeg")
     if all(r.ok for r in rows if r.name in critical):
         lines.append("")

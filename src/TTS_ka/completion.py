@@ -20,7 +20,7 @@ _LONG_FLAGS: List[str] = [
     "--json", "--title", "--author", "--album", "--cover", "--chapters",
     "--srt", "--vtt", "--help-full", "--print-completion",
     "--chunk-seconds", "--parallel", "--live", "--live-idle-ms",
-    "--doctor", "--config", "--no-cache", "--clear-cache",
+    "--doctor", "--config", "--no-cache", "--clear-cache", "--pages",
 ]
 _SHORT_FLAGS: List[str] = ["-h", "-V", "-o", "-l", "-c", "-j", "-n", "-s", "-H"]
 
@@ -83,6 +83,7 @@ _TTS_ka() {{
         '--volume[Volume, e.g. +10%%]:volume:'
         '--output[Output MP3]:file:_files'
         '-o[Output MP3]:file:_files'
+        '--pages[PDF pages, e.g. 20-24]:pages:'
         '--chapters[Chapters JSON]:file:_files'
         '--cover[Cover image]:file:_files'
         '--title[ID3 title]:title:'
@@ -137,6 +138,7 @@ def fish_completion() -> str:
             f"complete -c {cmd} -l volume -d 'Volume, e.g. +10%' -r",
             f"complete -c {cmd} -l output -d 'Output MP3' -r",
             f"complete -c {cmd} -s o -d 'Output MP3' -r",
+            f"complete -c {cmd} -l pages -d 'PDF pages, e.g. 20-24' -x",
             f"complete -c {cmd} -l chapters -d 'Chapters JSON' -r",
             f"complete -c {cmd} -l cover -d 'Cover image' -r",
             f"complete -c {cmd} -l title -d 'ID3 title' -r",

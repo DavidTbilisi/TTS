@@ -156,3 +156,25 @@ def test_run_dependency_check_missing_edge(mock_collect) -> None:
         DepRow("streaming player", True, "vlc"),
     ]
     assert run_dependency_check() == 1
+
+
+class TestPdfReaderRow:
+    def test_pdftotext_found(self):
+        from TTS_ka.deps import check_pdf_reader
+        with patch("TTS_ka.deps.shutil.which", return_value="/usr/bin/pdftotext"):
+            row = check_pdf_reader()
+        assert row.ok and "pdftotext" in row.detail
+
+    def test_pypdf_only_suggests_poppler(self):
+        from TTS_ka.deps import check_pdf_reader
+        with patch("TTS_ka.deps.shutil.which", return_value=None), \
+             patch("TTS_ka.deps.importlib.util.find_spec", return_value=object()):
+            row = check_pdf_reader()
+        assert not row.ok and "pypdf only" in row.detail and "poppler" in row.fix
+
+    def test_nothing_installed(self):
+        from TTS_ka.deps import check_pdf_reader
+        with patch("TTS_ka.deps.shutil.which", return_value=None), \
+             patch("TTS_ka.deps.importlib.util.find_spec", return_value=None):
+            row = check_pdf_reader()
+        assert not row.ok and "TTS_ka[readers]" in row.fix
