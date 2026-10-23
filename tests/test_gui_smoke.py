@@ -106,3 +106,86 @@ def test_speak_tab_file_row_and_player_window_follow_their_toggles() -> None:
             assert not app._player_window_cb.instate(["disabled"])
         finally:
             app.root.destroy()
+
+
+def test_setup_tab_fits_at_minimum_size() -> None:
+    """At the window's minimum size, the last Setup step must still be on screen."""
+    tk = pytest.importorskip("tkinter")
+    try:
+        probe = tk.Tk()
+        probe.destroy()
+    except tk.TclError:
+        pytest.skip("no display available")
+
+    from tkinter import ttk
+
+    from TTS_ka import gui
+
+    with patch("TTS_ka.deps.collect_dep_rows", return_value=[]), \
+         patch("TTS_ka.deps.format_dep_report", return_value="ok"), \
+         patch("TTS_ka.native_hotkeys.NativeHotkeyManager", MagicMock()), \
+         patch.object(gui.TTSSpeakApp, "_run_setup_check_async"):
+        app = gui.TTSSpeakApp({"lang": "en"})
+        try:
+            w, h = app.root.minsize()
+            app.root.geometry(f"{w}x{h}")
+            app.root.update()
+            tab = app.root.nametowidget(app._nb.tabs()[0])
+            go = next(
+                c for c in tab.winfo_children()
+                if isinstance(c, ttk.Button) and c.cget("text").startswith("Go to Speak")
+            )
+            assert go.winfo_y() + go.winfo_height() <= tab.winfo_height()
+        finally:
+            app.root.destroy()
+
+
+def test_no_tab_cuts_off_text_at_the_minimum_window() -> None:
+    """At the minimum size every label / button / check / radio gets its full size inside its tab.
+
+    Text boxes and entries are left out: they are meant to shrink.
+    """
+    tk = pytest.importorskip("tkinter")
+    try:
+        probe = tk.Tk()
+        probe.destroy()
+    except tk.TclError:
+        pytest.skip("no display available")
+
+    from TTS_ka import gui
+
+    fixed = {"TLabel", "TButton", "TCheckbutton", "TRadiobutton"}
+
+    def descendants(w):
+        for c in w.winfo_children():
+            yield c
+            yield from descendants(c)
+
+    with patch("TTS_ka.deps.collect_dep_rows", return_value=[]), \
+         patch("TTS_ka.deps.format_dep_report", return_value="ok"), \
+         patch("TTS_ka.native_hotkeys.NativeHotkeyManager", MagicMock()), \
+         patch.object(gui.TTSSpeakApp, "_run_setup_check_async"):
+        app = gui.TTSSpeakApp({"lang": "en"})
+        try:
+            w, h = app.root.minsize()
+            app.root.geometry(f"{w}x{h}")
+            cut = []
+            for tab_id in app._nb.tabs():
+                app._nb.select(tab_id)
+                app.root.update()
+                tab = app.root.nametowidget(tab_id)
+                right = tab.winfo_rootx() + tab.winfo_width()
+                bottom = tab.winfo_rooty() + tab.winfo_height()
+                for c in descendants(tab):
+                    if c.winfo_class() not in fixed or not c.winfo_ismapped():
+                        continue
+                    if (
+                        c.winfo_width() < c.winfo_reqwidth()
+                        or c.winfo_height() < c.winfo_reqheight()
+                        or c.winfo_rootx() + c.winfo_width() > right
+                        or c.winfo_rooty() + c.winfo_height() > bottom
+                    ):
+                        cut.append((app._nb.tab(tab_id, "text"), c.winfo_class(), str(c.cget("text"))[:40]))
+            assert not cut, cut
+        finally:
+            app.root.destroy()

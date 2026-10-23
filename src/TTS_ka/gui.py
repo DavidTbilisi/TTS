@@ -419,14 +419,16 @@ class TTSSpeakApp:
         ).grid(row=1, column=0, sticky=tk.W, pady=(2, 10))
 
         # --- Step 1: verify setup -------------------------------------------
-        ttk.Label(frm, text="1.  Verify your setup", style="Heading.TLabel").grid(row=2, column=0, sticky=tk.W)
-        self._setup_report = _scrolled_text(frm, height=9, wrap=tk.WORD)
-        self._setup_report.grid(row=3, column=0, sticky=(tk.E, tk.W), pady=(4, 0))
+        step1 = ttk.Frame(frm)
+        step1.grid(row=2, column=0, sticky=tk.EW)
+        ttk.Label(step1, text="1.  Verify your setup", style="Heading.TLabel").pack(side=tk.LEFT)
+        ttk.Button(step1, text="Re-check", command=self._on_setup_recheck).pack(side=tk.RIGHT)
+        # The report is the row that gives way, so steps 2 and 3 stay visible at the minimum size.
+        self._setup_report = _scrolled_text(frm, height=6, wrap=tk.WORD)
+        self._setup_report.grid(row=3, column=0, sticky=tk.NSEW, pady=(4, 0))
+        frm.rowconfigure(3, weight=1)
         self._setup_report.insert("1.0", "Checking dependencies…")
         self._setup_report.configure(state=tk.DISABLED)
-        ttk.Button(frm, text="Re-check", command=self._on_setup_recheck).grid(
-            row=4, column=0, sticky=tk.W, pady=(4, 0)
-        )
 
         ttk.Separator(frm, orient=tk.HORIZONTAL).grid(
             row=5, column=0, sticky=(tk.E, tk.W), pady=12
@@ -449,8 +451,11 @@ class TTSSpeakApp:
         )
         self._setup_preview_btn.pack(side=tk.LEFT, padx=(8, 0))
         self.setup_status = tk.StringVar(value="")
-        ttk.Label(frm, textvariable=self.setup_status, wraplength=520, justify=tk.LEFT).grid(
-            row=8, column=0, sticky=tk.W, pady=(4, 0)
+        status_lbl = ttk.Label(frm, textvariable=self.setup_status, wraplength=520, justify=tk.LEFT)
+        status_lbl.grid(row=8, column=0, sticky=tk.W, pady=(4, 0))
+        status_lbl.grid_remove()  # an empty line would push step 3 down
+        self.setup_status.trace_add(
+            "write", lambda *_: status_lbl.grid() if self.setup_status.get() else status_lbl.grid_remove()
         )
 
         ttk.Separator(frm, orient=tk.HORIZONTAL).grid(
@@ -668,13 +673,14 @@ class TTSSpeakApp:
 
         ttk.Checkbutton(
             frm,
-            text="VLC RC playlist mode on Windows (vlc_rc; uncheck sets TTS_KA_VLC_RC=0)",
+            text="Windows: play all chunks in one VLC window (vlc_rc)",
             variable=self.cfg_vlc_rc,
-        ).grid(row=7, column=0, columnspan=2, sticky=tk.W)
+        ).grid(row=7, column=0, columnspan=3, sticky=tk.W)
 
         help_txt = (
             "Saved keys match ~/.tts_config.json: lang (Speak tab), output, chunk_seconds, "
-            "parallel, no_play, stream, no_gui, no_turbo, vlc_rc."
+            "parallel, no_play, stream, no_gui, no_turbo, vlc_rc. "
+            "Unticking the VLC option sets TTS_KA_VLC_RC=0 (one VLC per chunk)."
         )
         ttk.Label(frm, text=help_txt, wraplength=480, justify=tk.LEFT).grid(
             row=8, column=0, columnspan=3, sticky=tk.W, pady=(12, 0)
