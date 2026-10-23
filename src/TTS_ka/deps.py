@@ -11,6 +11,14 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 
+class MissingExtraError(RuntimeError):
+    """An optional dependency (installed via a ``TTS_ka[extra]``) is missing."""
+
+    def __init__(self, requirement: str, extra: str) -> None:
+        super().__init__(f"{requirement}. Install with: pip install TTS_ka[{extra}]")
+        self.extra = extra
+
+
 @dataclass
 class DepRow:
     name: str
@@ -136,33 +144,18 @@ def check_soundfile() -> DepRow:
     return _check_module("soundfile", "soundfile")
 
 
-def check_uvloop() -> DepRow:
-    if sys.platform.startswith("win"):
-        return DepRow("uvloop", True, "n/a on Windows")
-    if importlib.util.find_spec("uvloop") is None:
-        return DepRow(
-            "uvloop",
-            False,
-            "optional - faster asyncio on Linux/macOS",
-            fix="pip install uvloop",
-        )
-    return _check_module("uvloop", "uvloop")
-
-
 def collect_dep_rows() -> List[DepRow]:
     rows: List[DepRow] = []
     rows.append(_check_module("edge-tts", "edge_tts"))
     rows.append(_check_module("pydub", "pydub"))
-    rows.append(_check_module("httpx", "httpx"))
     rows.append(check_soundfile())
-    rows.append(check_uvloop())
     rows.append(check_ffmpeg())
     rows.append(check_streaming_player())
     rows.append(check_clipboard())
     return rows
 
 
-_OPTIONAL_NAMES = frozenset({"soundfile", "uvloop", "streaming player", "clipboard"})
+_OPTIONAL_NAMES = frozenset({"soundfile", "streaming player", "clipboard"})
 
 
 def format_dep_report(rows: Optional[List[DepRow]] = None) -> str:

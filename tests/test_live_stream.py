@@ -6,19 +6,13 @@ SentenceBuffer is tested directly. live_loop is tested with injected fakes
 
 from __future__ import annotations
 
-import asyncio
-import os
-import sys
 import time
 from typing import AsyncIterator, List, Optional
 from unittest.mock import MagicMock
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-
-from TTS_ka.live_stream import (  # noqa: E402
-    DEFAULT_IDLE_FLUSH_MS,
+from TTS_ka.live_stream import (
     SentenceBuffer,
     live_loop,
 )
@@ -311,3 +305,21 @@ class TestLiveLoop:
         assert player.add_chunk.call_count == 1
         err = capsys.readouterr().err
         assert "Could not speak" in err
+
+    @pytest.mark.asyncio
+    async def test_generator_false_return_is_a_failure(self, temp_dir, capsys):
+        """A generator returning False (fast_generate_audio's failure signal) is not queued."""
+        player = _fake_player()
+
+        async def failing_gen(text, lang, output_path, *, voice=None, prosody=None):
+            return False
+
+        await live_loop(
+            lang="en",
+            input_reader=_reader_from(["One. ", None]),
+            audio_generator=failing_gen,
+            player=player,
+            tmp_dir=temp_dir,
+        )
+        player.add_chunk.assert_not_called()
+        assert "Could not speak sentence 0: synthesis failed" in capsys.readouterr().err

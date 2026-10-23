@@ -136,7 +136,6 @@ class TestMainIntegration:
         with patch("sys.argv", ["TTS_ka", str(f), "--lang", "en", "--no-play"]):
             with patch("TTS_ka.main.fast_generate_audio",
                        new=AsyncMock(return_value=True)) as mfa, \
-                 patch("TTS_ka.main.cleanup_http", new=AsyncMock()), \
                  patch("TTS_ka.main.get_optimal_settings",
                        return_value={"method": "direct", "chunk_seconds": 0, "parallel": 1}):
                 from TTS_ka.main import main

@@ -5,7 +5,6 @@ import sys
 import tempfile
 import shutil
 import pytest
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 # Add src to Python path for imports
@@ -22,8 +21,8 @@ def _popen_argv_head(argv):
 def _silence_windows_real_media_players():
     """Do not spawn VLC / media players for fake ``*.mp3`` paths during tests (Windows).
 
-    ``PlayerDetector`` uses ``subprocess.run`` → ``Popen`` for ``where``/``which``; a
-    blanket ``Popen`` mock breaks that. We only stub Popen for real player binaries.
+    A blanket ``Popen`` mock would break tests that really run helper binaries, so we
+    only stub Popen for real player binaries.
     """
     if not sys.platform.startswith("win"):
         yield
@@ -52,108 +51,9 @@ def _silence_windows_real_media_players():
         yield
 
 
-@pytest.fixture(autouse=True)
-def _isolate_http_health(tmp_path, monkeypatch):
-    """Keep the HTTP circuit breaker from reading/writing real on-disk state.
-
-    Points the marker at a per-test path and resets the in-process memo so test
-    order never matters and a real "down" verdict cannot leak into mocked tests.
-    """
-    monkeypatch.setenv("TTS_KA_HTTP_STATE", str(tmp_path / "http_health.json"))
-    try:
-        from TTS_ka.fast_audio import _reset_http_health
-        _reset_http_health()
-        yield
-        _reset_http_health()
-    except Exception:
-        yield
-
-
 @pytest.fixture
 def temp_dir():
     """Create a temporary directory for tests."""
     temp_path = tempfile.mkdtemp()
     yield temp_path
     shutil.rmtree(temp_path, ignore_errors=True)
-
-
-@pytest.fixture
-def sample_text():
-    """Sample text for testing."""
-    return "Hello world, this is a test."
-
-
-@pytest.fixture
-def sample_georgian_text():
-    """Sample Georgian text for testing."""
-    return "გამარჯობა მსოფლიო"
-
-
-@pytest.fixture
-def sample_russian_text():
-    """Sample Russian text for testing."""
-    return "Привет мир"
-
-
-@pytest.fixture
-def sample_long_text():
-    """Long text for chunking tests."""
-    return "This is a very long text that should be split into multiple chunks. " * 50
-
-
-@pytest.fixture
-def sample_text_file(temp_dir, sample_text):
-    """Create a temporary text file."""
-    file_path = os.path.join(temp_dir, "test.txt")
-    with open(file_path, "w", encoding="utf-8") as f:
-        f.write(sample_text)
-    return file_path
-
-
-@pytest.fixture
-def mock_audio_response():
-    """Mock audio response for edge-tts."""
-    return b"fake_audio_data" * 1000
-
-
-@pytest.fixture
-def mock_communicate():
-    """Mock edge-tts communicate (injected via sys.modules to avoid null-byte SyntaxError)."""
-    mock_instance = MagicMock()
-    mock_edge = MagicMock()
-    mock_edge.Communicate = MagicMock(return_value=mock_instance)
-    with patch.dict('sys.modules', {'edge_tts': mock_edge}):
-        yield mock_instance
-
-
-@pytest.fixture
-def mock_httpx_client():
-    """Mock httpx client for fast audio."""
-    with patch('httpx.AsyncClient') as mock:
-        mock_client = MagicMock()
-        mock.return_value.__aenter__.return_value = mock_client
-        mock_client.get.return_value.status_code = 200
-        mock_client.get.return_value.content = b"fake_audio_data"
-        yield mock_client
-
-
-@pytest.fixture
-def mock_soundfile():
-    """Mock soundfile for audio processing."""
-    with patch('soundfile.write') as mock:
-        yield mock
-
-
-@pytest.fixture
-def mock_pygame():
-    """Mock pygame for audio playback."""
-    with patch.dict('sys.modules', {'pygame': MagicMock()}):
-        yield
-
-
-@pytest.fixture
-def mock_clipboard():
-    """Mock the stdlib clipboard reader for clipboard operations."""
-    with patch('TTS_ka.main._read_clipboard') as mock:
-        mock.return_value = "clipboard text"
-        yield mock

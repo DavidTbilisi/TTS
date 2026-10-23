@@ -31,8 +31,6 @@ def server_env():
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = SRC + (os.pathsep + existing if existing else "")
     env["PYTHONIOENCODING"] = "utf-8"
-    # No HTTP / edge-tts: the test must never trigger a synth, but belt+braces.
-    env["TTS_KA_SKIP_HTTP"] = "1"
     return env
 
 

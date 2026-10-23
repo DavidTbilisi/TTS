@@ -12,15 +12,7 @@ import os
 from dataclasses import dataclass
 from typing import List, Optional
 
-
-class MissingExtraError(RuntimeError):
-    """Raised when mutagen isn't installed."""
-
-    def __init__(self) -> None:
-        super().__init__(
-            "Writing ID3 tags requires the 'mutagen' package. "
-            "Install with: pip install TTS_ka[metadata]"
-        )
+from .deps import MissingExtraError
 
 
 @dataclass(frozen=True)
@@ -90,7 +82,7 @@ def apply(path: str, spec: MetadataSpec) -> None:
     try:
         from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, CHAP, CTOC, ID3NoHeaderError
     except ImportError:
-        raise MissingExtraError()
+        raise MissingExtraError("Writing ID3 tags requires the 'mutagen' package", "metadata")
 
     try:
         tags = ID3(path)

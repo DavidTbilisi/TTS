@@ -1,16 +1,9 @@
 """Tests for streaming audio playback functionality."""
 
 import os
-import sys
 import time
 import pytest
-import asyncio
-import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock, patch, Mock, call
-
-# Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+from unittest.mock import MagicMock, patch
 
 from TTS_ka.streaming_player import StreamingAudioPlayer
 
@@ -94,8 +87,7 @@ class TestStreamingAudioPlayer:
         
         # Create an empty file
         chunk_path = os.path.join(temp_dir, "empty_chunk.mp3")
-        with open(chunk_path, 'wb') as f:
-            pass  # Empty file
+        open(chunk_path, 'wb').close()  # empty file
         
         # Add chunk
         player.add_chunk(chunk_path)
@@ -291,7 +283,7 @@ class TestStreamingAudioPlayer:
 
     @patch('subprocess.Popen')
     def test_unix_mpv_uses_stdin_playlist(self, mock_popen, temp_dir):
-        """On Unix, _play_mpv uses stdin playlist (doesn't wait for all chunks)."""
+        """On Unix, the mpv path uses stdin playlist (doesn't wait for all chunks)."""
         mock_stdin = MagicMock()
         mock_proc = MagicMock()
         mock_proc.wait.return_value = 0
@@ -309,7 +301,7 @@ class TestStreamingAudioPlayer:
         player.chunk_queue.put(chunk2)
         player.chunk_queue.put(None)
 
-        player._play_mpv("mpv")
+        player._play_mpv_stdin_playlist("mpv")
 
         assert mock_popen.call_count == 1
         argv = mock_popen.call_args[0][0]
@@ -319,6 +311,22 @@ class TestStreamingAudioPlayer:
         )
         assert os.path.basename(chunk1).encode() in written
         assert os.path.basename(chunk2).encode() in written
+
+    @patch('subprocess.Popen')
+    def test_unix_vlc_single_process_all_chunks(self, mock_popen, temp_dir):
+        """On Unix, VLC is launched once with every chunk (no overlapping second instance)."""
+        chunks = [os.path.join(temp_dir, f"c{i}.mp3") for i in range(3)]
+        player = StreamingAudioPlayer(show_gui=False)
+        for c in chunks:
+            player.chunk_queue.put(c)
+        player.chunk_queue.put(None)
+
+        player._play_vlc_unix("vlc")
+
+        assert mock_popen.call_count == 1
+        argv = mock_popen.call_args[0][0]
+        assert argv[:4] == ["vlc", "--intf", "dummy", "--play-and-exit"]
+        assert argv[4:] == [os.path.abspath(c) for c in chunks]
 
     @patch('subprocess.Popen')
     def test_unix_ffplay_sequential_chunks(self, mock_popen, temp_dir):
@@ -375,81 +383,33 @@ class TestStreamingAudioPlayer:
             # Should have called os.startfile for the audio chunks
             assert mock_startfile.called
     
-    @patch('subprocess.run')
-    def test_find_streaming_player(self, mock_run):
-        """Test finding available audio players via PlayerDetector."""
+    def test_find_returns_first_candidate_on_path(self):
         from TTS_ka.streaming_player import PlayerDetector
 
-        mock_run.return_value = MagicMock(returncode=0)
-        result = PlayerDetector.find()
-        assert result is not None
+        on_path = {"vlc", "ffplay"}
+        with patch('TTS_ka.streaming_player.shutil.which',
+                   side_effect=lambda name: f"/usr/bin/{name}" if name in on_path else None):
+            assert PlayerDetector.find() == "vlc"
+            assert PlayerDetector.find(preferred="ffplay") == "ffplay"
+            # Unavailable preferred player falls through to the default order.
+            assert PlayerDetector.find(preferred="mplayer") == "vlc"
 
-    @patch('subprocess.run')
-    def test_find_no_player(self, mock_run):
-        """Test when no player is available."""
+    def test_find_no_player(self):
         from TTS_ka.streaming_player import PlayerDetector
 
-        mock_run.return_value = MagicMock(returncode=1)
-        with patch.object(PlayerDetector, '_locate_windows', return_value=None), \
-             patch.object(PlayerDetector, '_locate_unix', return_value=None):
-            result = PlayerDetector.find()
-        assert result is None
+        with patch('TTS_ka.streaming_player.shutil.which', return_value=None), \
+             patch('sys.platform', 'linux'):
+            assert PlayerDetector.find() is None
 
-    @patch('subprocess.run')
-    def test_find_player_on_darwin(self, mock_run):
-        """Test player detection on macOS."""
+    def test_locate_windows_install_path_fallback(self):
+        """Not on PATH, but VLC is at a standard install path on Windows."""
         from TTS_ka.streaming_player import PlayerDetector
 
-        with patch('sys.platform', 'darwin'):
-            mock_run.return_value = MagicMock(returncode=0)
-            result = PlayerDetector.find()
-        assert result is not None
-
-    @patch('subprocess.run')
-    def test_find_player_on_linux(self, mock_run):
-        """Test player detection on Linux."""
-        from TTS_ka.streaming_player import PlayerDetector
-
-        with patch('sys.platform', 'linux'):
-            mock_run.return_value = MagicMock(returncode=0)
-            result = PlayerDetector.find()
-        assert result is not None
-
-    def test_locate_windows_subprocess_oserror(self):
-        """When 'where' raises OSError, _locate_windows returns None when no path exists."""
-        from TTS_ka.streaming_player import PlayerDetector
-
-        with patch('subprocess.run', side_effect=OSError("not found")), \
+        with patch('TTS_ka.streaming_player.shutil.which', return_value=None), \
              patch('sys.platform', 'win32'), \
-             patch('os.path.exists', return_value=False):  # mpv not at any standard path
-            result = PlayerDetector._locate_windows("mpv")
-        assert result is None  # 'where' failed and no installation path matched
-
-    def test_locate_windows_vlc_path_fallback(self):
-        """When 'where' fails but a VLC installation path exists, it is returned."""
-        from TTS_ka.streaming_player import PlayerDetector
-
-        with patch('subprocess.run', side_effect=OSError("not found")), \
-             patch('sys.platform', 'win32'), \
-             patch('os.path.exists', return_value=True):
-            result = PlayerDetector._locate_windows("vlc")
-        assert result is not None
-
-    def test_locate_unix_oserror_returns_none(self):
-        """When 'which' raises OSError, _locate_unix returns None."""
-        from TTS_ka.streaming_player import PlayerDetector
-
-        with patch('subprocess.run', side_effect=OSError("which not found")):
-            result = PlayerDetector._locate_unix("mpv")
-        assert result is None
-
-    def test_locate_unix_not_found_returns_none(self):
-        """When 'which' returns non-zero, _locate_unix returns None."""
-        from TTS_ka.streaming_player import PlayerDetector
-
-        with patch('subprocess.run', return_value=MagicMock(returncode=1)):
-            result = PlayerDetector._locate_unix("mpv")
-        assert result is None
+             patch('os.path.exists', side_effect=lambda p: p == PlayerDetector._WIN_VLC_PATHS[0]):
+            assert PlayerDetector._locate("vlc") == PlayerDetector._WIN_VLC_PATHS[0]
+            assert PlayerDetector._locate("mpv") is None
 
     @patch('subprocess.Popen')
     def test_unix_fallback_subprocess_argv_linux(self, mock_popen, temp_dir):
@@ -716,7 +676,7 @@ class TestStreamingEdgeCases:
         assert player.finished_generating is True
 
 
-class TestStreamingPerformance:
+class TestStreamingQueuePerformance:
     """Test streaming performance characteristics."""
     
     @pytest.mark.slow
@@ -748,57 +708,6 @@ class TestStreamingPerformance:
             added_count += 1
         
         assert added_count == 50
-    
-    @pytest.mark.asyncio
-    async def test_parallel_generation_with_streaming_speed(self, temp_dir):
-        """Test that streaming doesn't slow down generation."""
-        from TTS_ka.ultra_fast import ultra_fast_parallel_generation
-        
-        chunks = ["Test text"] * 10
-        
-        async def mock_generate(text, lang, output, quiet=False, **kwargs):
-            await asyncio.sleep(0.01)  # Simulate generation
-            with open(output, 'wb') as f:
-                f.write(b'audio')
-            return True
-        
-        original_dir = os.getcwd()
-        os.chdir(temp_dir)
-        
-        try:
-            # Test without streaming
-            start = time.time()
-            with patch('TTS_ka.ultra_fast.fast_generate_audio', mock_generate):
-                parts1 = await ultra_fast_parallel_generation(chunks, 'en', parallel=4)
-            time_without = time.time() - start
-            
-            # Cleanup
-            for part in parts1:
-                if os.path.exists(part):
-                    os.remove(part)
-            
-            # Test with streaming
-            player = StreamingAudioPlayer()
-            player.start()
-            
-            start = time.time()
-            with patch('TTS_ka.ultra_fast.fast_generate_audio', mock_generate):
-                parts2 = await ultra_fast_parallel_generation(
-                    chunks, 'en', parallel=4, streaming_player=player
-                )
-            time_with = time.time() - start
-            
-            player.finish_generation()
-            
-            # Cleanup
-            for part in parts2:
-                if os.path.exists(part):
-                    os.remove(part)
-            
-            # Streaming should add minimal overhead (<10%)
-            assert time_with < time_without * 1.1
-        finally:
-            os.chdir(original_dir)
 
 
 class TestStreamingFileHandling:
@@ -832,21 +741,6 @@ class TestStreamingFileHandling:
         assert not os.path.exists(part_files[0])  # part_0 - removed
         assert os.path.exists(part_files[1])      # part_1 - locked, remains
         assert not os.path.exists(part_files[2])  # part_2 - removed
-    
-    def test_alternative_filename_generation(self):
-        """Test alternative filename generation for locked files."""
-        # This simulates the logic in ultra_fast_parallel_generation
-        import time
-        
-        base_name = ".part_3.mp3"
-        timestamp = int(time.time() * 1000)
-        alternative_name = f".part_3_{timestamp}.mp3"
-        
-        # Alternative name should be unique and valid
-        assert alternative_name != base_name
-        assert alternative_name.startswith(".part_3_")
-        assert alternative_name.endswith(".mp3")
-        assert str(timestamp) in alternative_name
 
 
 class TestStreamingIntegrationWithMainSystem:
@@ -1002,8 +896,7 @@ class TestStreamingPlayerRobustness:
         
         # Create empty file
         empty_file = os.path.join(temp_dir, "empty.mp3")
-        with open(empty_file, 'wb') as f:
-            pass  # Create empty file
+        open(empty_file, 'wb').close()
         
         player.add_chunk(empty_file)
         

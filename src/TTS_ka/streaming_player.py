@@ -21,8 +21,8 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
-import asyncio
 import socket
 import subprocess
 import threading
@@ -38,7 +38,6 @@ _RC_CONNECT_ATTEMPTS = 50
 _RC_CONNECT_DELAY_SEC = 0.08
 _RC_CMD_READ_TIMEOUT = 0.35
 _RC_IS_PLAYING_READ_TIMEOUT = 1.25
-_RC_IDLE_STABLE_SEC = 1.6
 
 
 def _vlc_use_rc() -> bool:
@@ -139,40 +138,13 @@ class PlayerDetector:
 
     @classmethod
     def _locate(cls, player: str) -> Optional[str]:
+        if shutil.which(player):
+            return player
         if sys.platform.startswith("win"):
-            return cls._locate_windows(player)
-        return cls._locate_unix(player)
-
-    @classmethod
-    def _locate_windows(cls, player: str) -> Optional[str]:
-        try:
-            result = subprocess.run(
-                ["where", player], capture_output=True, timeout=1
-            )
-            if result.returncode == 0:
-                return player
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-        if player == "vlc":
-            for path in cls._WIN_VLC_PATHS:
+            fallbacks = {"vlc": cls._WIN_VLC_PATHS, "mpv": cls._WIN_MPV_PATHS}
+            for path in fallbacks.get(player, []):
                 if os.path.exists(path):
                     return path
-        if player == "mpv":
-            for path in cls._WIN_MPV_PATHS:
-                if os.path.exists(path):
-                    return path
-        return None
-
-    @classmethod
-    def _locate_unix(cls, player: str) -> Optional[str]:
-        try:
-            result = subprocess.run(
-                ["which", player], capture_output=True, timeout=1
-            )
-            if result.returncode == 0:
-                return player
-        except (OSError, subprocess.TimeoutExpired):
-            pass
         return None
 
 
@@ -292,7 +264,7 @@ class StreamingAudioPlayer:
 
         *first_chunk* is the path already popped from the queue (Windows
         worker pops before dispatching).  Pass ``None`` when the queue
-        hasn't been pre-popped (Unix ``_play_mpv`` path).
+        hasn't been pre-popped (Unix mpv path).
         """
         if self.show_gui:
             cmd = [
@@ -553,7 +525,7 @@ class StreamingAudioPlayer:
         if "vlc" in player:
             self._play_vlc_unix(player)
         elif "mpv" in player:
-            self._play_mpv(player)
+            self._play_mpv_stdin_playlist(player)
         elif "ffplay" in player:
             self._play_ffplay(player)
         elif "mplayer" in player:
@@ -586,6 +558,7 @@ class StreamingAudioPlayer:
             pass
 
     def _play_vlc_unix(self, player: str) -> None:
+        """VLC: wait for all chunks, then play them as one playlist (argv order)."""
         chunks: List[str] = []
         while True:
             chunk = self.chunk_queue.get()
@@ -594,36 +567,16 @@ class StreamingAudioPlayer:
             chunks.append(chunk)
         if not chunks:
             return
+        cmd = [player] if self.show_gui else [player, "--intf", "dummy"]
+        cmd += ["--play-and-exit"] + [os.path.abspath(c) for c in chunks]
+        label = "VLC GUI" if self.show_gui else "VLC"
+        print(f"[{label}] playing {len(chunks)} chunk(s)")
         try:
-            first_cmd = (
-                [player, "--play-and-exit", chunks[0]]
-                if self.show_gui
-                else [player, "--intf", "dummy", "--play-and-exit", chunks[0]]
-            )
-            label = "VLC GUI" if self.show_gui else "VLC"
-            print(f"[{label}] playback starting...")
             self.process = subprocess.Popen(
-                first_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
-            if len(chunks) > 1:
-                playlist = self._create_vlc_playlist(chunks)
-                if playlist:
-                    time.sleep(1)
-                    full_cmd = (
-                        [player, "--play-and-exit", playlist]
-                        if self.show_gui
-                        else [player, "--intf", "dummy", "--play-and-exit", playlist]
-                    )
-                    print(f"[{label}] playlist with {len(chunks)} chunks")
-                    self.process = subprocess.Popen(
-                        full_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                    )
         except Exception as e:
             print(f"⚠️  VLC playback error: {e}")
-
-    def _play_mpv(self, player: str) -> None:
-        """mpv streaming via stdin playlist — starts on first chunk, gapless."""
-        self._play_mpv_stdin_playlist(player)
 
     def _play_ffplay(self, player: str) -> None:
         """ffplay: one subprocess per chunk (ffplay doesn't support stdin playlists)."""
@@ -662,44 +615,3 @@ class StreamingAudioPlayer:
                 )
             except Exception as e:
                 print(f"⚠️  mplayer playback error: {e}")
-
-    def _create_vlc_playlist(self, chunks: List[str]) -> Optional[str]:
-        """Write an M3U playlist file for seamless VLC playback."""
-        playlist_path = ".streaming_playlist.m3u"
-        try:
-            with open(playlist_path, "w", encoding="utf-8") as f:
-                f.write("#EXTM3U\n")
-                for i, chunk in enumerate(chunks):
-                    if os.path.exists(chunk):
-                        f.write(f"#EXTINF:-1,Chunk {i + 1}\n")
-                        f.write(f"{os.path.abspath(chunk)}\n")
-            return playlist_path
-        except Exception as e:
-            print(f"⚠️  Could not create playlist: {e}")
-            return None
-
-
-# ── Legacy helper (kept for backward compatibility) ───────────────────────────
-
-async def play_audio_streaming(
-    chunks: List[str],
-    merge_first: bool = True,
-    show_gui: bool = True,
-) -> StreamingAudioPlayer:
-    """Play audio chunks with optional streaming.
-
-    Returns a ``StreamingAudioPlayer`` instance.  When *merge_first* is
-    ``True`` (or on Windows) the player is returned without starting — the
-    caller is responsible for merging and playing separately.
-    """
-    player = StreamingAudioPlayer(show_gui=show_gui)
-    if merge_first or sys.platform.startswith("win"):
-        return player
-
-    player.start()
-    for i, chunk in enumerate(chunks):
-        if os.path.exists(chunk):
-            player.add_chunk(chunk, i)
-            await asyncio.sleep(0.01)
-    player.finish_generation()
-    return player

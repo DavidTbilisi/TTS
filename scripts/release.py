@@ -5,7 +5,6 @@ Usage:
   python scripts/release.py patch|minor|major [--dry-run] [--no-push] [--allow-dirty]
 
 Requires: git, clean working tree (unless --allow-dirty).
-Optional: bump2version (``pip install bump2version``) — otherwise this script bumps files itself.
 """
 
 from __future__ import annotations
@@ -13,7 +12,6 @@ from __future__ import annotations
 import argparse
 import re
 import subprocess
-import sys
 from pathlib import Path
 
 
@@ -69,10 +67,9 @@ def read_current_version() -> str:
 
 
 def bump_files(old: str, new: str, *, dry_run: bool) -> None:
-    """Update version in pyproject.toml, .bumpversion.cfg, __init__.py."""
+    """Update version in pyproject.toml and __init__.py."""
     files: list[tuple[Path, str, str]] = [
         (REPO_ROOT / "pyproject.toml", f'version = "{old}"', f'version = "{new}"'),
-        (REPO_ROOT / ".bumpversion.cfg", f"current_version = {old}", f"current_version = {new}"),
         (
             REPO_ROOT / "src" / "TTS_ka" / "__init__.py",
             f'__version__ = "{old}"',
@@ -89,19 +86,6 @@ def bump_files(old: str, new: str, *, dry_run: bool) -> None:
         else:
             path.write_text(new_text, encoding="utf-8")
             print(f"Updated {path.relative_to(REPO_ROOT)}")
-
-
-def try_bumpversion(part: str, *, dry_run: bool) -> bool:
-    """Use bump2version/bumpversion if installed (.bumpversion.cfg lists all files)."""
-    if dry_run:
-        return False
-    for mod in ("bumpversion", "bump2version"):
-        try:
-            run([sys.executable, "-m", mod, part])
-            return True
-        except subprocess.CalledProcessError:
-            continue
-    return False
 
 
 def github_release_url(tag: str) -> str | None:
@@ -144,10 +128,9 @@ def main() -> None:
         print("Would git add, commit, tag, push (skipped --dry-run)")
         return
 
-    if not try_bumpversion(args.part, dry_run=False):
-        bump_files(current, new_v, dry_run=False)
+    bump_files(current, new_v, dry_run=False)
 
-    run(["git", "add", "pyproject.toml", ".bumpversion.cfg", "src/TTS_ka/__init__.py"])
+    run(["git", "add", "pyproject.toml", "src/TTS_ka/__init__.py"])
     run(["git", "commit", "-m", f"chore(release): bump version to {new_v}"])
     run(["git", "tag", "-a", tag, "-m", f"Release {new_v}"])
 

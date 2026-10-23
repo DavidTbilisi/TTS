@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import patch
 
 from TTS_ka.native_hotkeys import (
     clipboard_tts_argv,
-    default_hotkey_callbacks,
+    hotkey_callbacks_for_config,
     resolved_hotkey_lang_map,
     spawn_clipboard_tts,
 )
@@ -76,7 +75,7 @@ def test_default_hotkey_callbacks_invoke_spawn(monkeypatch) -> None:
         langs.append(lang)
 
     monkeypatch.setattr("TTS_ka.native_hotkeys.spawn_clipboard_tts", capture)
-    cbs = default_hotkey_callbacks()
+    cbs = hotkey_callbacks_for_config(None)
     for _combo, fn in cbs.items():
         fn()
     assert set(langs) == {"en", "ka", "ka-m", "ru"}

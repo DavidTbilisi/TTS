@@ -7,14 +7,15 @@
   "stream": false,
   "no_turbo": false,
   "no_gui": false,
-  "skip_http": false,
-  "verbose": false,
+  "rate": "+0%",
+  "pitch": "+0Hz",
+  "volume": "+0%",
   "vlc_rc": true,
   "hotkeys": {
     "<ctrl>+<alt>+1": "en",
     "<ctrl>+<alt>+2": "ru",
     "<ctrl>+<alt>+3": "ka",
-    "<ctrl>+<alt>+5": "ka-m",
-    "<ctrl>+<alt>+4": null
+    "<ctrl>+<alt>+4": "ka-m",
+    "<ctrl>+<alt>+5": "en-US"
   }
 }

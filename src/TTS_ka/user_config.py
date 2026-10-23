@@ -1,4 +1,4 @@
-"""Load optional JSON user preferences (language, speed, playback, HTTP behavior)."""
+"""Load optional JSON user preferences (language, speed, playback)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,9 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
-LANG_CODES = frozenset({"ka", "ka-m", "ru", "en"})
+from .constants import VOICE_MAP
+
+LANG_CODES = frozenset(VOICE_MAP)
 
 
 def merge_hotkey_bindings(
@@ -100,7 +102,7 @@ def write_user_config(path: str | os.PathLike[str], data: Mapping[str, Any]) -> 
 
 
 def apply_env_from_config(cfg: Mapping[str, Any]) -> None:
-    """Apply ``skip_http`` / ``verbose`` / ``vlc_rc`` to the process environment if not already set."""
+    """Apply ``vlc_rc`` to the process environment if not already set."""
     if not cfg:
         return
 
@@ -109,10 +111,6 @@ def apply_env_from_config(cfg: Mapping[str, Any]) -> None:
             return
         os.environ[key] = val
 
-    if cfg.get("skip_http"):
-        set_if_unset("TTS_KA_SKIP_HTTP", "1")
-    if cfg.get("verbose"):
-        set_if_unset("TTS_KA_VERBOSE", "1")
     if cfg.get("vlc_rc") is False:
         set_if_unset("TTS_KA_VLC_RC", "0")
 

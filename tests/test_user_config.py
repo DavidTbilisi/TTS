@@ -4,7 +4,6 @@ import json
 import os
 from unittest.mock import patch
 
-import pytest
 
 from TTS_ka.user_config import (
     apply_env_from_config,
@@ -78,16 +77,16 @@ class TestResolvedPlaybackFlags:
 
 
 class TestApplyEnvFromConfig:
-    def test_sets_skip_http_when_unset(self):
+    def test_sets_vlc_rc_when_unset(self):
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("TTS_KA_SKIP_HTTP", None)
-            apply_env_from_config({"skip_http": True})
-            assert os.environ.get("TTS_KA_SKIP_HTTP") == "1"
+            os.environ.pop("TTS_KA_VLC_RC", None)
+            apply_env_from_config({"vlc_rc": False})
+            assert os.environ.get("TTS_KA_VLC_RC") == "0"
 
     def test_respects_existing_env(self):
-        with patch.dict(os.environ, {"TTS_KA_SKIP_HTTP": "0"}, clear=False):
-            apply_env_from_config({"skip_http": True})
-            assert os.environ["TTS_KA_SKIP_HTTP"] == "0"
+        with patch.dict(os.environ, {"TTS_KA_VLC_RC": "1"}, clear=False):
+            apply_env_from_config({"vlc_rc": False})
+            assert os.environ["TTS_KA_VLC_RC"] == "1"
 
 
 class TestResolveConfigPath:

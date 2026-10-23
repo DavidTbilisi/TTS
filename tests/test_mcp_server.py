@@ -7,13 +7,10 @@ to verify the wiring, session lifecycle, and stdout safety.
 
 from __future__ import annotations
 
-import os
-import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 pytest.importorskip("mcp", reason="mcp extra not installed")
 
@@ -189,6 +186,16 @@ class TestSpeakTool:
         assert "network down" in r
 
     @pytest.mark.asyncio
+    async def test_speak_false_return_is_an_error_not_played(self):
+        """fast_generate_audio returning False (e.g. HTTP 403) must not report success."""
+        server = build_server()
+        with patch("TTS_ka.mcp_server.fast_generate_audio", new=AsyncMock(return_value=False)), \
+             patch("TTS_ka.mcp_server.play_audio") as mplay:
+            r = await _call(server, "speak", text="hi", lang="en")
+        assert r.startswith("error: synthesis failed")
+        mplay.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_speak_blocking_waits_for_duration(self):
         """blocking=True sleeps for the measured duration and echoes settings."""
         import asyncio as _asyncio
@@ -268,8 +275,8 @@ class TestStopTool:
                 f.write(b"x")
 
         with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=fake):
-            sid1 = await _call(server, "stream_open")
-            sid2 = await _call(server, "stream_open")
+            await _call(server, "stream_open")
+            await _call(server, "stream_open")
             assert len(sessions) == 2
             r = await _call(server, "stop")
         assert "stopped 2" in r
@@ -336,6 +343,21 @@ class TestSessionStatus:
             snap = await _call(server, "session_status", session_id=sid)
             assert snap["synths_failed"] == 1
             assert "network down" in (snap["last_error"] or "")
+            await _call(server, "stream_close", session_id=sid)
+
+    @pytest.mark.asyncio
+    async def test_status_counts_false_return_as_failure(self):
+        sessions = {}
+        server = build_server(sessions=sessions)
+        with patch("TTS_ka.mcp_server.fast_generate_audio", new=AsyncMock(return_value=False)):
+            sid = await _call(server, "stream_open", lang="en")
+            await _call(server, "stream_append", session_id=sid, text="One. ")
+            import asyncio as _a
+            await _a.sleep(0)
+            await _a.gather(*sessions[sid]._tasks, return_exceptions=True)
+            snap = await _call(server, "session_status", session_id=sid)
+            assert snap["synths_failed"] == 1
+            assert "GenerationFailed" in (snap["last_error"] or "")
             await _call(server, "stream_close", session_id=sid)
 
     @pytest.mark.asyncio

@@ -19,8 +19,15 @@ class TestBashCompletion:
 
     def test_lang_choices_present(self):
         out = completion.bash_completion()
-        for lang in ("en", "ka", "ru"):
-            assert lang in out
+        assert 'compgen -W "ka ka-m ru en en-US"' in out
+
+    @pytest.mark.parametrize("shell", ["bash", "zsh", "fish"])
+    def test_registers_both_command_spellings(self, shell):
+        out = completion.render(shell)
+        assert "tts-ka" in out
+        assert "TTS_ka" in out
+        for flag in ("live", "doctor", "config", "chunk-seconds"):
+            assert (f"-l {flag}" if shell == "fish" else f"--{flag}") in out
 
     def test_voice_ids_present(self):
         out = completion.bash_completion()
@@ -44,7 +51,7 @@ class TestZshCompletion:
         out = completion.zsh_completion()
         # The header (#compdef TTS_ka) must be the first non-empty line.
         first_line = next(line for line in out.splitlines() if line.strip())
-        assert first_line.startswith("#compdef TTS_ka")
+        assert first_line == "#compdef tts-ka TTS_ka"
 
     def test_voice_ids_present(self):
         out = completion.zsh_completion()
@@ -59,11 +66,11 @@ class TestFishCompletion:
     def test_uses_complete_directive(self):
         out = completion.fish_completion()
         for line in out.strip().splitlines():
-            assert line.startswith("complete -c TTS_ka"), line
+            assert line.startswith(("complete -c tts-ka ", "complete -c TTS_ka ")), line
 
     def test_lang_choices_present(self):
         out = completion.fish_completion()
-        assert "en ka ru" in out
+        assert "-xa 'ka ka-m ru en en-US'" in out
 
     def test_voice_ids_present(self):
         out = completion.fish_completion()

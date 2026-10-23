@@ -67,12 +67,16 @@ class TestSplitTextIntoChunks:
         assert len(chunks) == 1
         assert chunks[0] == "Hello"
 
-    @pytest.mark.parametrize("approx_seconds", [5, 15, 30, 60, 120])
+    def test_single_long_word_not_split(self):
+        long_word = "a" * 1000
+        assert split_text_into_chunks(long_word, 60) == [long_word]
+
+    @pytest.mark.parametrize("approx_seconds", [1, 5, 15, 30, 60, 120, 300])
     def test_various_approx_seconds(self, approx_seconds):
         text = "This is a test sentence. " * 20
         chunks = split_text_into_chunks(text, approx_seconds=approx_seconds)
-        assert len(chunks) >= 1
         assert all(c.strip() for c in chunks)
+        assert " ".join(chunks).split() == text.split()
 
 
 class TestFastFirstChunk:

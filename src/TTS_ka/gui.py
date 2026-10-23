@@ -14,8 +14,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict
 
-from .constants import STREAMING_CHUNK_SECONDS
-from .fast_audio import cleanup_http, fast_generate_audio, play_audio
+from .constants import STREAMING_CHUNK_SECONDS, VOICE_MAP
+from .fast_audio import (
+    GenerationFailed,
+    discard_empty_output,
+    fast_generate_audio,
+    generation_failed,
+    play_audio,
+)
 from .ultra_fast import (
     OPTIMAL_WORKERS,
     GenerationCancelled,
@@ -228,36 +234,31 @@ def _run_async_speak(
         parallel = min(4, OPTIMAL_WORKERS)
 
     async def run_generation() -> None:
-        try:
-            if chunk_seconds > 0 or len(text.split()) > 200 or stream_f:
-                await smart_generate_long_text(
-                    text,
-                    lang,
-                    chunk_seconds=chunk_seconds or 30,
-                    parallel=parallel,
-                    output_path=output_path,
-                    enable_streaming=stream_f,
-                    show_gui=show_player,
-                    cancel_event=cancel_event,
-                    progress_callback=progress_callback,
-                )
-            else:
-                if progress_callback:
-                    progress_callback(0, 1)
-                if cancel_event is None:
-                    await fast_generate_audio(text, lang, output_path)
-                else:
-                    await _await_with_cancel(fast_generate_audio(text, lang, output_path), cancel_event)
-                if progress_callback:
-                    progress_callback(1, 1)
+        if chunk_seconds > 0 or len(text.split()) > 200 or stream_f:
+            await smart_generate_long_text(
+                text,
+                lang,
+                chunk_seconds=chunk_seconds or 30,
+                parallel=parallel,
+                output_path=output_path,
+                enable_streaming=stream_f,
+                show_gui=show_player,
+                cancel_event=cancel_event,
+                progress_callback=progress_callback,
+            )
+        else:
+            if progress_callback:
+                progress_callback(0, 1)
+            gen = fast_generate_audio(text, lang, output_path, quiet=True)
+            ok = await (gen if cancel_event is None else _await_with_cancel(gen, cancel_event))
+            if not ok:
+                discard_empty_output(output_path)
+                raise generation_failed("Audio generation failed")
+            if progress_callback:
+                progress_callback(1, 1)
 
-            if not no_play_f and not stream_f and os.path.isfile(output_path):
-                play_audio(output_path)
-        finally:
-            try:
-                await cleanup_http()
-            except Exception:
-                pass
+        if not no_play_f and not stream_f and os.path.isfile(output_path):
+            play_audio(output_path)
 
     asyncio.run(run_generation())
 
@@ -476,7 +477,7 @@ class TTSSpeakApp:
         ttk.Combobox(
             frm,
             textvariable=self.lang,
-            values=("ka", "ka-m", "ru", "en"),
+            values=tuple(VOICE_MAP),
             state="readonly",
             width=10,
         ).grid(row=0, column=1, sticky=tk.W, padx=(4, 0))
@@ -589,34 +590,23 @@ class TTSSpeakApp:
             row=6, column=0, columnspan=2, sticky=tk.W, pady=(8, 0)
         )
 
-        self.cfg_skip_http = tk.BooleanVar(value=False)
-        self.cfg_verbose = tk.BooleanVar(value=False)
         self.cfg_vlc_rc = tk.BooleanVar(value=True)
         raw = self._initial_raw
         if raw:
-            self.cfg_skip_http.set(bool(raw.get("skip_http")))
-            self.cfg_verbose.set(bool(raw.get("verbose")))
-            v = raw.get("vlc_rc", True)
-            self.cfg_vlc_rc.set(v is not False)
+            self.cfg_vlc_rc.set(raw.get("vlc_rc", True) is not False)
 
-        ttk.Checkbutton(frm, text="skip_http (TTS_KA_SKIP_HTTP)", variable=self.cfg_skip_http).grid(
-            row=7, column=0, columnspan=2, sticky=tk.W
-        )
-        ttk.Checkbutton(frm, text="verbose (TTS_KA_VERBOSE)", variable=self.cfg_verbose).grid(
-            row=8, column=0, columnspan=2, sticky=tk.W
-        )
         ttk.Checkbutton(
             frm,
             text="VLC RC playlist mode on Windows (vlc_rc; uncheck sets TTS_KA_VLC_RC=0)",
             variable=self.cfg_vlc_rc,
-        ).grid(row=9, column=0, columnspan=2, sticky=tk.W)
+        ).grid(row=7, column=0, columnspan=2, sticky=tk.W)
 
         help_txt = (
             "Saved keys match ~/.tts_config.json: lang (Speak tab), output, chunk_seconds, "
-            "parallel, no_play, stream, no_gui, no_turbo, skip_http, verbose, vlc_rc."
+            "parallel, no_play, stream, no_gui, no_turbo, vlc_rc."
         )
         ttk.Label(frm, text=help_txt, wraplength=480, justify=tk.LEFT).grid(
-            row=10, column=0, columnspan=3, sticky=tk.W, pady=(12, 0)
+            row=8, column=0, columnspan=3, sticky=tk.W, pady=(12, 0)
         )
         frm.columnconfigure(1, weight=1)
 
@@ -684,7 +674,7 @@ class TTSSpeakApp:
         ttk.Button(bf2, text="Save hotkeys + apply", command=self._on_hotkey_save_to_config).pack(side=tk.LEFT)
 
         help_txt = (
-            "Combo strings follow pynput (e.g. <ctrl>+<alt>+1). Languages: en, ru, ka, ka-m. "
+            "Combo strings follow pynput (e.g. <ctrl>+<alt>+1). Languages: " + ", ".join(VOICE_MAP) + ". "
             "In JSON you can set a combo to null to drop a default. Standalone listener: TTS_ka-hotkeys."
         )
         ttk.Label(frm, text=help_txt, wraplength=520, justify=tk.LEFT).grid(
@@ -765,7 +755,7 @@ class TTSSpeakApp:
             ttk.Combobox(
                 self._hk_rows_inner,
                 textvariable=lv,
-                values=("en", "ru", "ka", "ka-m"),
+                values=tuple(VOICE_MAP),
                 width=9,
                 state="readonly",
             ).grid(row=r, column=2, padx=4, pady=2)
@@ -1032,12 +1022,10 @@ class TTSSpeakApp:
         bf = ttk.Frame(frm)
         bf.grid(row=7, column=0, sticky=tk.W, pady=(10, 0))
         ttk.Button(bf, text="Install soundfile", command=self._on_pip_install_soundfile).pack(side=tk.LEFT, padx=(0, 8))
-        if not sys.platform.startswith("win"):
-            ttk.Button(bf, text="Install uvloop", command=self._on_pip_install_uvloop).pack(side=tk.LEFT)
 
         tip = (
             "Install global hotkeys (pynput) from the Hotkeys tab on Windows. "
-            "Commands: pip install \"TTS_ka[soundfile]\"  |  pip install uvloop (Unix/macOS)"
+            "Command: pip install \"TTS_ka[soundfile]\""
         )
         ttk.Label(frm, text=tip, wraplength=520, justify=tk.LEFT).grid(row=8, column=0, sticky=tk.W, pady=(12, 0))
 
@@ -1053,9 +1041,6 @@ class TTSSpeakApp:
 
     def _on_pip_install_soundfile(self) -> None:
         self._run_pip_install_async(("TTS_ka[soundfile]",), "TTS_ka[soundfile]")
-
-    def _on_pip_install_uvloop(self) -> None:
-        self._run_pip_install_async(("uvloop",), "uvloop")
 
     def _on_quit(self) -> None:
         if self._hotkey_mgr is not None:
@@ -1163,8 +1148,6 @@ class TTSSpeakApp:
         self.cfg_chunk_var.set(str(int(self.defs.get("chunk_seconds", 0))))
         self.cfg_parallel_var.set(str(int(self.defs.get("parallel", 0))))
         self.cfg_no_turbo.set(bool(self.defs.get("no_turbo")))
-        self.cfg_skip_http.set(bool(raw.get("skip_http")))
-        self.cfg_verbose.set(bool(raw.get("verbose")))
         self.cfg_vlc_rc.set(raw.get("vlc_rc", True) is not False)
         if getattr(self, "_hotkeys_rows_built", False):
             self._hotkey_load_rows_from_disk()
@@ -1179,7 +1162,7 @@ class TTSSpeakApp:
                 return 0
 
         lang = self.lang.get().strip()
-        if lang not in ("ka", "ka-m", "ru", "en"):
+        if lang not in LANG_CODES:
             lang = "en"
         return {
             "lang": lang,
@@ -1190,8 +1173,6 @@ class TTSSpeakApp:
             "stream": bool(self.stream.get()),
             "no_gui": not bool(self.vlc_gui.get()),
             "no_turbo": bool(self.cfg_no_turbo.get()),
-            "skip_http": bool(self.cfg_skip_http.get()),
-            "verbose": bool(self.cfg_verbose.get()),
             "vlc_rc": bool(self.cfg_vlc_rc.get()),
         }
 
@@ -1291,6 +1272,8 @@ class TTSSpeakApp:
                     err = "Streaming stopped: install VLC for GUI streaming, or turn off \"VLC window\"."
             except GenerationCancelled:
                 err = "Cancelled."
+            except GenerationFailed as exc:
+                err = str(exc)
             except KeyboardInterrupt:
                 err = "Cancelled."
             except BaseException:

@@ -1,4 +1,4 @@
-"""FEAT-2: speech rate / pitch / volume via SSML prosody."""
+"""FEAT-2: speech rate / pitch / volume (prosody) parsing and forwarding."""
 
 from __future__ import annotations
 
@@ -80,76 +80,27 @@ class TestBuildOpts:
         assert opts.pitch == "+0Hz"
 
 
-class TestSSMLOutput:
-    """Generators wrap the text in <prosody> when opts are non-default."""
+class TestEdgeTTSProsody:
+    """EdgeTTSGenerator forwards prosody to edge_tts.Communicate only when non-default."""
 
-    async def test_no_prosody_no_prosody_tag(self, tmp_path):
-        """Default opts must NOT introduce a <prosody> tag (no perf regression)."""
-        from TTS_ka.fast_audio import HttpAudioGenerator
-        captured = {}
-
-        class FakeResp:
-            status_code = 200
-            async def aiter_bytes(self, chunk_size=8192):
-                if False:
-                    yield b""
-                yield b"X"
-
-        class FakeCM:
-            def __init__(self, captured, content):
-                captured["content"] = content
-            async def __aenter__(self):
-                return FakeResp()
-            async def __aexit__(self, *exc):
-                return False
-
-        class FakeClient:
-            def stream(self, method, url, headers=None, content=None):
-                return FakeCM(captured, content)
-
-        with patch("TTS_ka.fast_audio.get_http_client",
-                   new=AsyncMock(return_value=FakeClient())):
-            await HttpAudioGenerator().generate(
-                "hi", "en", str(tmp_path / "a.mp3"),
-                quiet=True, prosody=prosody.ProsodyOpts()
+    async def _generate(self, tmp_path, opts):
+        from TTS_ka.fast_audio import EdgeTTSGenerator
+        mock_edge = MagicMock()
+        mock_edge.Communicate = MagicMock(return_value=AsyncMock())
+        with patch.dict("sys.modules", {"edge_tts": mock_edge}):
+            ok = await EdgeTTSGenerator().generate(
+                "hello", "en", str(tmp_path / "a.mp3"), quiet=True, prosody=opts
             )
-        assert b"<prosody" not in captured["content"]
+        assert ok is True
+        return mock_edge.Communicate.call_args.kwargs
 
-    async def test_prosody_attrs_appear_in_ssml(self, tmp_path):
-        from TTS_ka.fast_audio import HttpAudioGenerator
-        captured = {}
+    async def test_default_opts_pass_no_kwargs(self, tmp_path):
+        assert await self._generate(tmp_path, prosody.ProsodyOpts()) == {}
 
-        class FakeResp:
-            status_code = 200
-            async def aiter_bytes(self, chunk_size=8192):
-                if False:
-                    yield b""
-                yield b"X"
-
-        class FakeCM:
-            def __init__(self, captured, content):
-                captured["content"] = content
-            async def __aenter__(self):
-                return FakeResp()
-            async def __aexit__(self, *exc):
-                return False
-
-        class FakeClient:
-            def stream(self, method, url, headers=None, content=None):
-                return FakeCM(captured, content)
-
+    async def test_non_default_opts_forwarded(self, tmp_path):
         opts = prosody.build_opts("+30%", "-5Hz", "+10%")
-        with patch("TTS_ka.fast_audio.get_http_client",
-                   new=AsyncMock(return_value=FakeClient())):
-            await HttpAudioGenerator().generate(
-                "hello", "en", str(tmp_path / "a.mp3"),
-                quiet=True, prosody=opts
-            )
-        body = captured["content"]
-        assert b"<prosody" in body
-        assert b"rate='+30%'" in body
-        assert b"pitch='-5Hz'" in body
-        assert b"volume='+10%'" in body
+        kwargs = await self._generate(tmp_path, opts)
+        assert kwargs == {"rate": "+30%", "pitch": "-5Hz", "volume": "+10%"}
 
 
 class TestCLI:
@@ -161,7 +112,6 @@ class TestCLI:
                                 "--volume=+5%", "--no-play"]):
             with patch("TTS_ka.main.fast_generate_audio",
                        new=AsyncMock(return_value=True)) as mfa, \
-                 patch("TTS_ka.main.cleanup_http", new=AsyncMock()), \
                  patch("TTS_ka.main.get_optimal_settings",
                        return_value={"method": "direct", "chunk_seconds": 0, "parallel": 1}):
                 from TTS_ka.main import main

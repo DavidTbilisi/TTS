@@ -7,8 +7,10 @@ def read_pdf(path: str) -> str:
     try:
         from pypdf import PdfReader
     except ImportError:
-        from . import MissingExtraError
-        raise MissingExtraError("PDF", "pypdf")
+        from ..deps import MissingExtraError
+        raise MissingExtraError(
+            "Reading PDF files requires the 'pypdf' package", "readers"
+        )
     reader = PdfReader(path)
     pages = []
     for page in reader.pages:

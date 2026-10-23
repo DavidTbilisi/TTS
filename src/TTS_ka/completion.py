@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import List
 
 from . import voices as _voices
+from .constants import VOICE_MAP
 
 
 _LONG_FLAGS: List[str] = [
@@ -18,10 +19,15 @@ _LONG_FLAGS: List[str] = [
     "--stream", "--no-gui", "--player", "--list-voices", "--preview-voice",
     "--json", "--title", "--author", "--album", "--cover", "--chapters",
     "--srt", "--vtt", "--help-full", "--print-completion",
+    "--chunk-seconds", "--parallel", "--live", "--live-idle-ms",
+    "--doctor", "--config",
 ]
-_SHORT_FLAGS: List[str] = ["-h", "-V", "-o"]
+_SHORT_FLAGS: List[str] = ["-h", "-V", "-o", "-l", "-c", "-j", "-n", "-s", "-H"]
 
-_LANGS: List[str] = ["en", "ka", "ru"]
+# Both console-script spellings (see pyproject.toml [project.scripts]).
+_COMMANDS: List[str] = ["tts-ka", "TTS_ka"]
+
+_LANGS: List[str] = list(VOICE_MAP)
 _PLAYERS: List[str] = ["vlc", "mpv", "ffplay", "mplayer"]
 
 
@@ -41,10 +47,11 @@ _TTS_ka_complete() {{
     cur="${{COMP_WORDS[COMP_CWORD]}}"
     prev="${{COMP_WORDS[COMP_CWORD-1]}}"
     case "$prev" in
-        --lang) COMPREPLY=( $(compgen -W "{langs}" -- "$cur") ); return ;;
+        --lang|-l) COMPREPLY=( $(compgen -W "{langs}" -- "$cur") ); return ;;
         --voice|--preview-voice) COMPREPLY=( $(compgen -W "{voices}" -- "$cur") ); return ;;
         --player) COMPREPLY=( $(compgen -W "{players}" -- "$cur") ); return ;;
         --print-completion) COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") ); return ;;
+        --config|--output|-o|--chapters|--cover) COMPREPLY=( $(compgen -f -- "$cur") ); return ;;
     esac
     if [[ "$cur" == -* ]]; then
         COMPREPLY=( $(compgen -W "{flags}" -- "$cur") )
@@ -52,18 +59,21 @@ _TTS_ka_complete() {{
         COMPREPLY=( $(compgen -f -- "$cur") )
     fi
 }}
-complete -F _TTS_ka_complete TTS_ka
+complete -F _TTS_ka_complete {" ".join(_COMMANDS)}
 """
 
 
 def zsh_completion() -> str:
     """Render a zsh completion script. Put it in a directory on $fpath."""
     voices = " ".join(_voice_ids())
-    return f"""#compdef TTS_ka
+    langs = " ".join(_LANGS)
+    commands = " ".join(_COMMANDS)
+    return f"""#compdef {commands}
 _TTS_ka() {{
     local -a flags
     flags=(
-        '--lang[Language (ka, ru, en)]:lang:(en ka ru)'
+        '--lang[Language]:lang:({langs})'
+        '-l[Language]:lang:({langs})'
         '--voice[Voice ID]:voice:({voices})'
         '--preview-voice[Preview a voice]:voice:({voices})'
         '--player[Streaming player]:player:(vlc mpv ffplay mplayer)'
@@ -82,6 +92,17 @@ _TTS_ka() {{
         '--no-play[Skip playback]'
         '--no-turbo[Disable auto-optimization]'
         '--stream[Enable streaming playback]'
+        '-s[Enable streaming playback]'
+        '-n[Skip playback]'
+        '--chunk-seconds[Chunk size in seconds]:seconds:'
+        '-c[Chunk size in seconds]:seconds:'
+        '--parallel[Parallel workers]:workers:'
+        '-j[Parallel workers]:workers:'
+        '--live[Speak stdin sentence by sentence]'
+        '--live-idle-ms[Idle flush delay (ms)]:ms:'
+        '--config[Config JSON]:file:_files'
+        '--doctor[Check dependencies]'
+        '-H[Comprehensive help]'
         '--no-gui[Headless streaming]'
         '--list-voices[List voices]'
         '--json[JSON output]'
@@ -95,43 +116,55 @@ _TTS_ka() {{
     )
     _arguments -s $flags '*:file:_files'
 }}
-compdef _TTS_ka TTS_ka
+compdef _TTS_ka {commands}
 """
 
 
 def fish_completion() -> str:
-    """Render a fish completion script (~/.config/fish/completions/TTS_ka.fish)."""
+    """Render a fish completion script (~/.config/fish/completions/tts-ka.fish)."""
     voices = " ".join(_voice_ids())
     lines = [
-        f"complete -c TTS_ka -l lang -d 'Language' -xa '{' '.join(_LANGS)}'",
-        f"complete -c TTS_ka -l voice -d 'Voice ID' -xa '{voices}'",
-        f"complete -c TTS_ka -l preview-voice -d 'Preview a voice' -xa '{voices}'",
-        f"complete -c TTS_ka -l player -d 'Streaming player' -xa '{' '.join(_PLAYERS)}'",
-        "complete -c TTS_ka -l print-completion -d 'Shell' -xa 'bash zsh fish'",
-        "complete -c TTS_ka -l rate -d 'Speech rate, e.g. +30%' -r",
-        "complete -c TTS_ka -l pitch -d 'Pitch shift, e.g. -2Hz' -r",
-        "complete -c TTS_ka -l volume -d 'Volume, e.g. +10%' -r",
-        "complete -c TTS_ka -l output -d 'Output MP3' -r",
-        "complete -c TTS_ka -s o -d 'Output MP3' -r",
-        "complete -c TTS_ka -l chapters -d 'Chapters JSON' -r",
-        "complete -c TTS_ka -l cover -d 'Cover image' -r",
-        "complete -c TTS_ka -l title -d 'ID3 title' -r",
-        "complete -c TTS_ka -l author -d 'ID3 author' -r",
-        "complete -c TTS_ka -l album -d 'ID3 album' -r",
-        "complete -c TTS_ka -l force -d 'Overwrite existing'",
-        "complete -c TTS_ka -l no-play -d 'Skip playback'",
-        "complete -c TTS_ka -l no-turbo -d 'Disable auto-opt'",
-        "complete -c TTS_ka -l stream -d 'Streaming playback'",
-        "complete -c TTS_ka -l no-gui -d 'Headless streaming'",
-        "complete -c TTS_ka -l list-voices -d 'List voices'",
-        "complete -c TTS_ka -l json -d 'JSON output'",
-        "complete -c TTS_ka -l srt -d 'Write SRT'",
-        "complete -c TTS_ka -l vtt -d 'Write VTT'",
-        "complete -c TTS_ka -l help-full -d 'Comprehensive help'",
-        "complete -c TTS_ka -l version -d 'Print version'",
-        "complete -c TTS_ka -s V -d 'Print version'",
-        "complete -c TTS_ka -l help -d 'Show help'",
-        "complete -c TTS_ka -s h -d 'Show help'",
+        line
+        for cmd in _COMMANDS
+        for line in (
+            f"complete -c {cmd} -l lang -s l -d 'Language' -xa '{' '.join(_LANGS)}'",
+            f"complete -c {cmd} -l voice -d 'Voice ID' -xa '{voices}'",
+            f"complete -c {cmd} -l preview-voice -d 'Preview a voice' -xa '{voices}'",
+            f"complete -c {cmd} -l player -d 'Streaming player' -xa '{' '.join(_PLAYERS)}'",
+            f"complete -c {cmd} -l print-completion -d 'Shell' -xa 'bash zsh fish'",
+            f"complete -c {cmd} -l rate -d 'Speech rate, e.g. +30%' -r",
+            f"complete -c {cmd} -l pitch -d 'Pitch shift, e.g. -2Hz' -r",
+            f"complete -c {cmd} -l volume -d 'Volume, e.g. +10%' -r",
+            f"complete -c {cmd} -l output -d 'Output MP3' -r",
+            f"complete -c {cmd} -s o -d 'Output MP3' -r",
+            f"complete -c {cmd} -l chapters -d 'Chapters JSON' -r",
+            f"complete -c {cmd} -l cover -d 'Cover image' -r",
+            f"complete -c {cmd} -l title -d 'ID3 title' -r",
+            f"complete -c {cmd} -l author -d 'ID3 author' -r",
+            f"complete -c {cmd} -l album -d 'ID3 album' -r",
+            f"complete -c {cmd} -l force -d 'Overwrite existing'",
+            f"complete -c {cmd} -l no-play -d 'Skip playback'",
+            f"complete -c {cmd} -l no-turbo -d 'Disable auto-opt'",
+            f"complete -c {cmd} -l stream -s s -d 'Streaming playback'",
+            f"complete -c {cmd} -s n -d 'Skip playback'",
+            f"complete -c {cmd} -l chunk-seconds -s c -d 'Chunk size (seconds)' -r",
+            f"complete -c {cmd} -l parallel -s j -d 'Parallel workers' -r",
+            f"complete -c {cmd} -l live -d 'Speak stdin sentence by sentence'",
+            f"complete -c {cmd} -l live-idle-ms -d 'Idle flush delay (ms)' -r",
+            f"complete -c {cmd} -l config -d 'Config JSON' -r",
+            f"complete -c {cmd} -l doctor -d 'Check dependencies'",
+            f"complete -c {cmd} -s H -d 'Comprehensive help'",
+            f"complete -c {cmd} -l no-gui -d 'Headless streaming'",
+            f"complete -c {cmd} -l list-voices -d 'List voices'",
+            f"complete -c {cmd} -l json -d 'JSON output'",
+            f"complete -c {cmd} -l srt -d 'Write SRT'",
+            f"complete -c {cmd} -l vtt -d 'Write VTT'",
+            f"complete -c {cmd} -l help-full -d 'Comprehensive help'",
+            f"complete -c {cmd} -l version -d 'Print version'",
+            f"complete -c {cmd} -s V -d 'Print version'",
+            f"complete -c {cmd} -l help -d 'Show help'",
+            f"complete -c {cmd} -s h -d 'Show help'",
+        )
     ]
     return "\n".join(lines) + "\n"
 

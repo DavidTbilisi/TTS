@@ -88,11 +88,6 @@ def hotkey_callbacks_for_config(cfg: Mapping[str, Any] | None) -> Dict[str, Call
     return _callbacks_from_lang_map(resolved_hotkey_lang_map(cfg))
 
 
-def default_hotkey_callbacks(cfg: Mapping[str, Any] | None = None) -> Dict[str, Callable[[], None]]:
-    """Backward-compatible name: same as :func:`hotkey_callbacks_for_config`."""
-    return hotkey_callbacks_for_config(cfg)
-
-
 class NativeHotkeyManager:
     """Start/stop a ``pynput.keyboard.GlobalHotKeys`` listener (single-use per start)."""
 
@@ -103,10 +98,6 @@ class NativeHotkeyManager:
     @staticmethod
     def available() -> bool:
         return pynput_available() and sys.platform == "win32"
-
-    def is_running(self) -> bool:
-        with self._lock:
-            return self._listener is not None
 
     def start(
         self,

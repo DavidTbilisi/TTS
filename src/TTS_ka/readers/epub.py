@@ -17,13 +17,17 @@ def read_epub_chapters(path: str) -> List[Tuple[str, str]]:
         import ebooklib
         from ebooklib import epub
     except ImportError:
-        from . import MissingExtraError
-        raise MissingExtraError("EPUB", "ebooklib")
+        from ..deps import MissingExtraError
+        raise MissingExtraError(
+            "Reading EPUB files requires the 'ebooklib' package", "readers"
+        )
     try:
         from bs4 import BeautifulSoup
     except ImportError:
-        from . import MissingExtraError
-        raise MissingExtraError("EPUB", "beautifulsoup4")
+        from ..deps import MissingExtraError
+        raise MissingExtraError(
+            "Reading EPUB files requires the 'beautifulsoup4' package", "readers"
+        )
 
     book = epub.read_epub(path)
     chapters: List[Tuple[str, str]] = []

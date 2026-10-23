@@ -86,7 +86,6 @@ class TestVoiceFlag:
         with patch("sys.argv", ["TTS_ka", "hi", "--voice", "en-US-JennyNeural", "--no-play"]):
             with patch("TTS_ka.main.fast_generate_audio",
                        new=AsyncMock(return_value=True)) as mfa, \
-                 patch("TTS_ka.main.cleanup_http", new=AsyncMock()), \
                  patch("TTS_ka.main.get_optimal_settings",
                        return_value={"method": "direct", "chunk_seconds": 0, "parallel": 1}):
                 from TTS_ka.main import main
@@ -99,7 +98,6 @@ class TestVoiceFlag:
         with patch("sys.argv", ["TTS_ka", "Привет", "--voice", "ru-RU-DmitryNeural", "--no-play"]):
             with patch("TTS_ka.main.fast_generate_audio",
                        new=AsyncMock(return_value=True)) as mfa, \
-                 patch("TTS_ka.main.cleanup_http", new=AsyncMock()), \
                  patch("TTS_ka.main.get_optimal_settings",
                        return_value={"method": "direct", "chunk_seconds": 0, "parallel": 1}):
                 from TTS_ka.main import main
@@ -133,7 +131,6 @@ class TestPreviewVoice:
         with patch("sys.argv", ["TTS_ka", "--preview-voice", "en-US-JennyNeural"]):
             with patch("TTS_ka.main.fast_generate_audio",
                        new=AsyncMock(return_value=True)) as mfa, \
-                 patch("TTS_ka.main.cleanup_http", new=AsyncMock()), \
                  patch("TTS_ka.main.play_audio") as mpa:
                 from TTS_ka.main import main
                 main()
@@ -152,72 +149,21 @@ class TestPreviewVoice:
 
 
 class TestGeneratorVoiceOverride:
-    """HttpAudioGenerator / EdgeTTSGenerator must honor an explicit voice arg."""
+    """EdgeTTSGenerator must honor an explicit voice arg, else use VOICE_MAP."""
 
-    async def test_http_generator_uses_explicit_voice(self, tmp_path):
-        from TTS_ka.fast_audio import HttpAudioGenerator
-        gen = HttpAudioGenerator()
-        out = tmp_path / "a.mp3"
-
-        captured = {}
-
-        class FakeResponse:
-            status_code = 200
-
-            async def aiter_bytes(self, chunk_size=8192):
-                if False:
-                    yield b""
-                yield b"FAKE"
-
-        class FakeStreamCM:
-            def __init__(self, captured, content):
-                captured["content"] = content
-
-            async def __aenter__(self):
-                return FakeResponse()
-
-            async def __aexit__(self, *exc):
-                return False
-
-        class FakeClient:
-            def stream(self, method, url, headers=None, content=None):
-                return FakeStreamCM(captured, content)
-
-        with patch("TTS_ka.fast_audio.get_http_client", new=AsyncMock(return_value=FakeClient())):
-            ok = await gen.generate("hello", "en", str(out),
-                                    quiet=True, voice="en-US-JennyNeural")
+    async def _voice_used(self, tmp_path, voice):
+        from TTS_ka.fast_audio import EdgeTTSGenerator
+        mock_edge = MagicMock()
+        mock_edge.Communicate = MagicMock(return_value=AsyncMock())
+        with patch.dict("sys.modules", {"edge_tts": mock_edge}):
+            ok = await EdgeTTSGenerator().generate(
+                "hello", "en", str(tmp_path / "a.mp3"), quiet=True, voice=voice
+            )
         assert ok is True
-        # SSML must reference the explicit voice, not the default en-GB-SoniaNeural
-        assert b"en-US-JennyNeural" in captured["content"]
-        assert b"en-GB-SoniaNeural" not in captured["content"]
+        return mock_edge.Communicate.call_args[0][1]
 
-    async def test_http_generator_falls_back_to_voice_map_when_voice_none(self, tmp_path):
-        from TTS_ka.fast_audio import HttpAudioGenerator
-        gen = HttpAudioGenerator()
-        out = tmp_path / "a.mp3"
-        captured = {}
+    async def test_uses_explicit_voice(self, tmp_path):
+        assert await self._voice_used(tmp_path, "en-US-JennyNeural") == "en-US-JennyNeural"
 
-        class FakeResponse:
-            status_code = 200
-            async def aiter_bytes(self, chunk_size=8192):
-                if False:
-                    yield b""
-                yield b"FAKE"
-
-        class FakeStreamCM:
-            def __init__(self, captured, content):
-                captured["content"] = content
-            async def __aenter__(self):
-                return FakeResponse()
-            async def __aexit__(self, *exc):
-                return False
-
-        class FakeClient:
-            def stream(self, method, url, headers=None, content=None):
-                return FakeStreamCM(captured, content)
-
-        with patch("TTS_ka.fast_audio.get_http_client",
-                   new=AsyncMock(return_value=FakeClient())):
-            await gen.generate("hello", "en", str(out), quiet=True)
-        # No --voice given: falls back to VOICE_MAP['en']
-        assert b"en-GB-SoniaNeural" in captured["content"]
+    async def test_falls_back_to_voice_map_when_voice_none(self, tmp_path):
+        assert await self._voice_used(tmp_path, None) == "en-GB-SoniaNeural"

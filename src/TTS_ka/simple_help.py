@@ -1,28 +1,29 @@
-"""Simple ASCII-only help system for Windows compatibility."""
+"""Long-form help printed by ``tts-ka --help-full`` (``-H``)."""
 
 def show_simple_help():
-    """Show simple help without Unicode characters."""
+    """Show comprehensive help: languages, examples, every option group."""
     print()
     print("=" * 70)
     print("           ULTRA-FAST TTS - Maximum Speed Generation")
     print("=" * 70)
     print()
 
-    print("SUPPORTED LANGUAGES:")
-    print("  ka    - Georgian female (Premium quality)")
-    print("  ka-m  - Georgian male")
-    print("  ru    - Russian   (Fast neural voice)")
-    print("  en    - English   (Maximum speed)")
+    print("SUPPORTED LANGUAGES (-l / --lang):")
+    print("  ka     - Georgian female (Eka)")
+    print("  ka-m   - Georgian male (Giorgi)")
+    print("  ru     - Russian")
+    print("  en     - English (UK)")
+    print("  en-US  - English (US)")
     print()
 
     print("QUICK START EXAMPLES (auto-optimization is ON by default):")
-    print("  python -m TTS_ka \"Hello world\" --lang en")
-    print("  python -m TTS_ka \"Привет мир\" --lang ru")
-    print("  python -m TTS_ka clipboard --lang ka")
-    print("  python -m TTS_ka file.txt --lang en")
-    print("  python -m TTS_ka --check-deps          # ffmpeg, players, Python stack")
-    print("  TTS_ka-gui                             # Speak / Config / Windows context menu (tkinter)")
-    print("  TTS_ka-hotkeys                         # global Ctrl+Alt+1..4 clipboard TTS (needs pip install TTS_ka[hotkeys])")
+    print('  tts-ka "Hello world" --lang en')
+    print('  tts-ka "Привет мир" --lang ru')
+    print("  tts-ka clipboard --lang ka            # or: cb / clip / paste")
+    print("  tts-ka file.txt --lang en             # .txt .md .html .pdf .epub .docx")
+    print("  tts-ka --doctor                       # ffmpeg, players, Python stack")
+    print("  tts-ka-gui                            # Speak / Config / Setup (tkinter)")
+    print("  tts-ka-hotkeys                        # global Ctrl+Alt+1..4 clipboard TTS ([hotkeys] extra)")
     print()
 
     print("PERFORMANCE OPTIONS:")
@@ -32,6 +33,29 @@ def show_simple_help():
     print("  --chunk-seconds 30     Custom chunk size (-c 30)")
     print("  --parallel 6           Multiple workers (-j 6)")
     print("  --stream               Play while generating (chunked) (-s)")
+    print("  --player mpv           Preferred streaming player (vlc, mpv, ffplay, mplayer)")
+    print()
+
+    print("VOICE AND PROSODY:")
+    print("  --list-voices          Show the voice catalog (filter with --lang)")
+    print("  --voice ID             Pick a specific voice, e.g. en-US-JennyNeural")
+    print("  --preview-voice ID     Speak a short sample with that voice")
+    print("  --rate +20%  --pitch -2Hz  --volume +10%")
+    print()
+
+    print("OUTPUT:")
+    print("  -o PATH / --output     Output MP3 (default: data.mp3); --force to overwrite")
+    print("  --srt / --vtt          Also write subtitles next to the MP3")
+    print("  --title --author --album --cover IMG --chapters JSON   ID3 tags ([metadata] extra)")
+    print("  --json                 Machine-readable result on stdout")
+    print()
+
+    print("AI STREAMING AND SERVERS:")
+    print("  claude --print ... | tts-ka --live -l en    Speak stdin sentence by sentence")
+    print("  --live-idle-ms 800     Flush a partial sentence after this much silence")
+    print("  tts-ka serve --port 7777                    REST server ([server] extra)")
+    print("  tts-ka-mcp                                  MCP server for AI clients ([mcp] extra)")
+    print("  --print-completion bash|zsh|fish            Shell completion script")
     print()
 
     print("SHORTHAND FLAGS (same as long form):")
@@ -39,38 +63,32 @@ def show_simple_help():
     print("  -c SECS    --chunk-seconds          -j N      --parallel")
     print("  -s         --stream                 -n        --no-play")
     print("  -H         --help-full              -V        --version")
-    print("             --check-deps")
+    print("             --doctor (alias --check-deps)")
     print("  cb | clip | paste      same as positional word 'clipboard' (if not a filename)")
     print()
 
     print("CONFIG FILE (JSON, optional):")
     print("  Default path:  ~/.tts_config.json")
     print("  Override:      environment variable TTS_KA_CONFIG=/path/to/file.json")
-    print("  CLI:           python -m TTS_ka --config /path/to/file.json ...")
+    print("  CLI:           tts-ka --config /path/to/file.json ...")
     print("  Keys: lang, output, chunk_seconds, parallel, no_play, stream, no_turbo,")
-    print("        no_gui, skip_http, verbose, vlc_rc  (see extras/tts_config.example.json)")
-    print("  CLI flags always override file defaults; env vars override file for skip_http,")
-    print("        verbose, and vlc_rc when the variable is already set.")
-    print()
-
-    print("SPEED COMPARISON (1000 words):")
-    print("  Direct generation:     15-25 seconds")
-    print("  Optimized / turbo:     8-15 seconds")
-    print("  Chunked parallel:      6-12 seconds")
+    print("        no_gui, rate, pitch, volume, vlc_rc, hotkeys")
+    print("        (see extras/tts_config.example.json)")
+    print("  CLI flags always override file defaults; TTS_KA_VLC_RC overrides vlc_rc.")
     print()
 
     print("COMMON WORKFLOWS:")
-    print("  1. Copy text -> python -m TTS_ka clipboard --lang en")
-    print("  2. File input -> python -m TTS_ka file.txt --lang ru")
-    print("  3. Batch mode -> Add --no-play flag")
+    print("  1. Copy text -> tts-ka cb --lang en")
+    print("  2. File input -> tts-ka file.txt --lang ru")
+    print("  3. Batch mode -> add --no-play")
     print()
 
     print("OPTIMIZATION TIPS:")
     print("  * Default mode already picks chunk size and workers")
-    print("  * Georgian: Highest quality, slightly slower")
-    print("  * Russian/English: Maximum speed")
+    print("  * Use --stream for long texts to hear the first sentence sooner")
     print("  * Use clipboard workflow for fastest operation")
     print()
+
 
 def show_troubleshooting():
     """Show troubleshooting guide."""
@@ -85,7 +103,7 @@ def show_troubleshooting():
     print()
 
     print("Language errors:")
-    print("  -> Use only: ka, ka-m, ru, en")
+    print("  -> Use only: ka, ka-m, ru, en, en-US")
     print("  -> Check text encoding (UTF-8)")
     print("  -> Try simple ASCII text first")
     print()

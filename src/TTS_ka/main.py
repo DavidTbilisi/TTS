@@ -12,16 +12,7 @@ import sys
 import time
 from typing import Any, Callable, Dict, Optional
 
-from .rich_progress import console as _console, HAS_RICH as _HAS_RICH
-import re as _re
-
-
-def _cprint(msg: str) -> None:
-    """Rich console print with plain-text fallback."""
-    if _HAS_RICH and _console is not None:
-        _console.print(msg)
-    else:
-        print(_re.sub(r"\[/?[^\]]*\]", "", msg), file=sys.stderr)
+from .rich_progress import LANG_FLAG, cprint as _cprint
 
 
 def _warn_no_player(file_path: str) -> None:
@@ -56,15 +47,17 @@ def _print_welcome() -> None:
 
 
 from .fast_audio import (
+    GenerationFailed,
+    discard_empty_output,
     fast_generate_audio,
-    play_audio,
-    cleanup_http,
     generate_audio_with_subs,
+    generation_failed,
+    play_audio,
 )
 from .streaming_player import stop_active_streaming_player
 from .ultra_fast import smart_generate_long_text, get_optimal_settings, OPTIMAL_WORKERS
 from .simple_help import show_simple_help, show_troubleshooting
-from .constants import STREAMING_CHUNK_SECONDS
+from .constants import STREAMING_CHUNK_SECONDS, VOICE_MAP
 from .user_config import (
     apply_env_from_config,
     argparse_defaults_from_config,
@@ -147,13 +140,7 @@ def _make_emitter(enabled: bool, stream) -> Callable[[Dict[str, Any]], None]:
 
 async def _run_preview(text: str, voice_id: str, output_path: str) -> None:
     """Generate a short sample with *voice_id* into *output_path*."""
-    try:
-        await fast_generate_audio(text, "en", output_path, voice=voice_id)
-    finally:
-        try:
-            await cleanup_http()
-        except Exception:
-            pass
+    await fast_generate_audio(text, "en", output_path, voice=voice_id)
 
 
 def _resolve_output_path(raw: Optional[str], force: bool = False,
@@ -385,8 +372,8 @@ For comprehensive help with examples: %(prog)s --help-full
         "-l",
         "--lang",
         default=defs["lang"],
-        choices=["ka", "ka-m", "ru", "en"],
-        help="Language: ka=Georgian female, ka-m=Georgian male, ru=Russian, en=English",
+        choices=list(VOICE_MAP),
+        help="Language: ka=Georgian female, ka-m=Georgian male, ru=Russian, en=English (UK), en-US=English (US)",
     )
     parser.add_argument(
         "-c",
@@ -579,9 +566,7 @@ For comprehensive help with examples: %(prog)s --help-full
         return
 
     if args.list_voices:
-        voices = (_voices.voices_for_lang(args.lang)
-                  if args.lang in {"ka", "ru", "en"}
-                  else _voices.all_voices())
+        voices = _voices.voices_for_lang(args.lang) or _voices.all_voices()
         if "--lang" not in sys.argv[1:] and not any(a.startswith("--lang=") for a in sys.argv[1:]):
             voices = _voices.all_voices()
         print(_voices.format_table(voices))
@@ -706,10 +691,10 @@ For comprehensive help with examples: %(prog)s --help-full
             chunk_seconds = STREAMING_CHUNK_SECONDS
             optimal["method"] = "smart"
 
-        lang_names = {"ka": "Georgian", "ka-m": "Georgian (male)", "ru": "Russian", "en": "English"}
-        lang_flags = {"ka": "🇬🇪", "ka-m": "🇬🇪", "ru": "🇷🇺", "en": "🇬🇧"}
+        lang_names = {"ka": "Georgian", "ka-m": "Georgian (male)", "ru": "Russian",
+                      "en": "English", "en-US": "English (US)"}
         lang_name = lang_names.get(args.lang, "Unknown")
-        flag = lang_flags.get(args.lang, "🔊")
+        flag = LANG_FLAG.get(args.lang, "🔊")
         word_count = len(text.split())
         _cprint(
             f"\n  {flag}  [bold]{lang_name}[/bold]"
@@ -755,8 +740,11 @@ For comprehensive help with examples: %(prog)s --help-full
                 )
             else:
                 start = time.perf_counter()
-                await fast_generate_audio(text, args.lang, output_path,
-                                           voice=args.voice, prosody=prosody_opts)
+                ok = await fast_generate_audio(text, args.lang, output_path, quiet=True,
+                                               voice=args.voice, prosody=prosody_opts)
+                if not ok:
+                    discard_empty_output(output_path)
+                    raise generation_failed("Audio generation failed")
                 elapsed = time.perf_counter() - start
                 print(f"⚡ Completed in {elapsed:.2f}s (direct)")
 
@@ -794,14 +782,13 @@ For comprehensive help with examples: %(prog)s --help-full
         except Exception as exc:
             emit({"event": "error", "message": str(exc)})
             raise
-        finally:
-            try:
-                await cleanup_http()
-            except Exception:
-                pass
 
     try:
         asyncio.run(run_generation())
+    except GenerationFailed as exc:
+        # run_generation already emitted the --json error event.
+        print(f"❌ {exc}", file=sys.stderr)
+        raise SystemExit(1)
     except KeyboardInterrupt:
         stop_active_streaming_player()
         _cprint("\n  [yellow]⚡[/yellow]  Generation cancelled")

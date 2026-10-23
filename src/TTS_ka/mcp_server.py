@@ -6,6 +6,8 @@ Tools:
 - ``stream_open(lang?, voice?)`` → session_id — start an incremental session.
 - ``stream_append(session_id, text)`` — push text; speaks complete sentences.
 - ``stream_close(session_id)`` — drain remaining buffer and stop accepting input.
+- ``session_status(session_id)`` — progress, pending/failed synths, buffer preview.
+- ``list_sessions()`` — IDs of all active streaming sessions.
 - ``stop()`` — terminate all active playback and sessions.
 - ``list_voices(lang?)`` — return the voice catalog.
 
@@ -26,7 +28,7 @@ import tempfile
 import uuid
 from typing import Dict, List, Optional
 
-from .fast_audio import cleanup_http, fast_generate_audio, play_audio
+from .fast_audio import fast_generate_audio, generation_failed, play_audio
 from .live_stream import DEFAULT_IDLE_FLUSH_MS, SentenceBuffer
 from .not_reading import replace_not_readable
 from .prosody import ProsodyOpts, parse_pitch, parse_rate, parse_volume
@@ -126,8 +128,10 @@ class _LiveSession:
             self._idx += 1
             path = os.path.join(self.tmp_dir, f".part_{idx:04d}.mp3")
             try:
-                await fast_generate_audio(cleaned, self.lang, path,
-                                          voice=self.voice, prosody=self.prosody)
+                ok = await fast_generate_audio(cleaned, self.lang, path,
+                                               voice=self.voice, prosody=self.prosody)
+                if ok is False:
+                    raise generation_failed("synthesis failed")
                 self.player.add_chunk(path, chunk_index=idx)
             except Exception as exc:  # noqa: BLE001
                 self._failed += 1
@@ -257,8 +261,10 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
         tmp_dir = tempfile.mkdtemp(prefix="ttska-mcp-one-")
         path = os.path.join(tmp_dir, "out.mp3")
         try:
-            await fast_generate_audio(cleaned, lang, path,
-                                      voice=voice, prosody=prosody)
+            ok = await fast_generate_audio(cleaned, lang, path,
+                                           voice=voice, prosody=prosody)
+            if ok is False:
+                raise generation_failed("synthesis failed")
         except Exception as exc:  # noqa: BLE001
             shutil.rmtree(tmp_dir, ignore_errors=True)
             return f"error: {exc}"
@@ -360,18 +366,12 @@ def build_server(sessions: Optional[Dict[str, _LiveSession]] = None,
         for sess in list(sessions.values()):
             sess.hard_stop()
         sessions.clear()
-        try:
-            await cleanup_http()
-        except Exception:
-            pass
         return f"stopped {n} session(s)"
 
     @server.tool()
     def list_voices(lang: Optional[str] = None) -> List[Dict[str, str]]:
-        """Return available voices. Optionally filter by lang (ka, ru, en, en-US)."""
-        catalog = (_voices.voices_for_lang(lang)
-                   if lang and lang in {"ka", "ru", "en", "en-US"}
-                   else _voices.all_voices())
+        """Return available voices. Optionally filter by catalog lang (ka, ru, en)."""
+        catalog = (lang and _voices.voices_for_lang(lang)) or _voices.all_voices()
         return [
             {
                 "id": v.id,
@@ -400,10 +400,9 @@ async def _run_with_preserved_stdout(server) -> None:
          goes out the original stdout the client is reading.
 
     Any ``print()`` from imported modules (``StreamingAudioPlayer`` warnings,
-    HTTP-fallback notices, etc.) lands on the user's stderr — never on the
+    edge-tts retry hints, etc.) lands on the user's stderr — never on the
     protocol stream.
     """
-    import os
     from io import TextIOWrapper
     import anyio
     from mcp.server.stdio import stdio_server

@@ -7,6 +7,7 @@ import time
 import pytest
 import threading
 from unittest.mock import MagicMock, patch, AsyncMock
+from TTS_ka.fast_audio import GenerationFailed
 from TTS_ka.ultra_fast import (
     ultra_fast_parallel_generation,
     ultra_fast_cleanup_parts,
@@ -136,15 +137,28 @@ class TestUltraFastParallelGeneration:
 
         assert len(parts) == 2
 
-    async def test_failure_returns_parts_still(self, tmp_path):
-        chunks = ["chunk one"]
+    async def test_partial_failure_raises_and_cleans_up(self, tmp_path):
+        """A missing chunk means missing text: raise instead of merging a gap."""
+        chunks = ["chunk one", "chunk two", "chunk three"]
         output_path = str(tmp_path / "out.mp3")
+        results = iter([True, False, True])
 
-        with patch('TTS_ka.ultra_fast.fast_generate_audio', new=AsyncMock(return_value=False)), \
-             patch('TTS_ka.ultra_fast.create_progress_display', return_value=MagicMock()):
-            parts = await ultra_fast_parallel_generation(chunks, "en", parallel=1, output_path=output_path)
+        async def fake(text, lang, out, **kw):
+            with open(out, "wb") as f:
+                f.write(b"audio")
+            return next(results)
 
-        assert isinstance(parts, list)
+        cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with patch('TTS_ka.ultra_fast.fast_generate_audio', side_effect=fake), \
+                 patch('TTS_ka.ultra_fast.create_progress_display', return_value=MagicMock()):
+                with pytest.raises(GenerationFailed, match="1 of 3 chunks failed"):
+                    await ultra_fast_parallel_generation(chunks, "en", parallel=1,
+                                                         output_path=output_path)
+            assert not any(n.startswith(".part_") for n in os.listdir(tmp_path))
+        finally:
+            os.chdir(cwd)
 
     async def test_first_chunk_uses_output_path_when_streaming(self, tmp_path):
         chunks = ["chunk one", "chunk two"]
@@ -160,20 +174,34 @@ class TestUltraFastParallelGeneration:
 
         assert parts[0] == output_path
 
-    async def test_exception_in_worker_caught(self, tmp_path, capsys):
+    async def test_exception_in_worker_reported(self, tmp_path, capsys):
         chunks = ["bad chunk"]
         output_path = str(tmp_path / "out.mp3")
 
         with patch('TTS_ka.ultra_fast.fast_generate_audio', new=AsyncMock(side_effect=Exception("oops"))), \
              patch('TTS_ka.ultra_fast.create_progress_display', return_value=MagicMock()):
-            parts = await ultra_fast_parallel_generation(chunks, "en", parallel=1, output_path=output_path)
+            with pytest.raises(GenerationFailed, match="1 of 1 chunks failed to synthesize: oops"):
+                await ultra_fast_parallel_generation(chunks, "en", parallel=1, output_path=output_path)
 
-        # Error is caught, warning is printed (goes to stderr via rich console)
+        # The per-chunk warning is still printed (stderr via rich console)
         captured = capsys.readouterr()
         assert "oops" in (captured.out + captured.err)
 
 
 class TestSmartGenerateLongText:
+    async def test_direct_failure_raises_and_removes_empty_output(self, tmp_path, capsys):
+        output_path = str(tmp_path / "out.mp3")
+
+        async def fake(text, lang, out, **kw):
+            open(out, "wb").close()  # edge-tts leaves a 0-byte file on 403
+            return False
+
+        with patch('TTS_ka.ultra_fast.fast_generate_audio', side_effect=fake):
+            with pytest.raises(GenerationFailed, match="Audio generation failed"):
+                await smart_generate_long_text("short text", "en", output_path=output_path)
+        assert not os.path.exists(output_path)
+        assert "Completed" not in capsys.readouterr().err
+
     async def test_short_text_direct_generation(self, tmp_path, capsys):
         """Very short text (< 200 words, no streaming) goes direct."""
         output_path = str(tmp_path / "out.mp3")
@@ -192,7 +220,7 @@ class TestSmartGenerateLongText:
         text = "word " * 300
 
         with patch('TTS_ka.ultra_fast.ultra_fast_parallel_generation', new=AsyncMock(return_value=[output_path])) as mupg, \
-             patch('TTS_ka.ultra_fast.fast_merge_audio_files') as mmaf, \
+             patch('TTS_ka.ultra_fast.fast_merge_audio_files'), \
              patch('TTS_ka.ultra_fast.create_progress_display', return_value=MagicMock()):
             await smart_generate_long_text(text, "en", chunk_seconds=20, parallel=2, output_path=output_path)
 

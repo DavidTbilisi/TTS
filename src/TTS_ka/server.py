@@ -16,7 +16,9 @@ When the ``TTS_API_TOKEN`` env var is set, every request must carry a
 matching ``Authorization: Bearer <token>`` header or receive HTTP 401.
 """
 
-from __future__ import annotations
+# No ``from __future__ import annotations`` here: FastAPI resolves endpoint
+# annotations at decoration time, and ``Request`` is imported locally inside
+# ``create_app`` — a stringified annotation would be treated as a query param.
 
 import asyncio
 import os
@@ -24,18 +26,11 @@ import tempfile
 from dataclasses import asdict
 from typing import Optional
 
-from .constants import MAX_PARALLEL_WORKERS
+from .constants import MAX_PARALLEL_WORKERS, VOICE_MAP
 from . import voices as _voices
+from .deps import MissingExtraError
 
-
-class MissingExtraError(RuntimeError):
-    """Raised when fastapi/uvicorn aren't installed."""
-
-    def __init__(self) -> None:
-        super().__init__(
-            "TTS_ka serve requires 'fastapi' and 'uvicorn'. "
-            "Install with: pip install TTS_ka[server]"
-        )
+_SERVER_REQUIREMENT = "TTS_ka serve requires 'fastapi' and 'uvicorn'"
 
 
 def _check_token(authorization: Optional[str], expected: Optional[str]) -> bool:
@@ -58,15 +53,22 @@ def _generation_semaphore() -> "asyncio.Semaphore":
     return _SEM
 
 
+def _remove_quietly(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 def create_app(token: Optional[str] = None):
     """Build the FastAPI app. Importing FastAPI is deferred so tests can mock it."""
     try:
         from fastapi import FastAPI, HTTPException, Header, Request
         from fastapi.responses import JSONResponse, StreamingResponse, PlainTextResponse
     except ImportError:
-        raise MissingExtraError()
+        raise MissingExtraError(_SERVER_REQUIREMENT, "server")
 
-    from .fast_audio import fast_generate_audio  # local import to avoid cycles
+    from .fast_audio import fast_generate_audio, generation_failed  # local import to avoid cycles
 
     app = FastAPI(title="TTS_ka", version="serve")
     token_value = token if token is not None else os.environ.get("TTS_API_TOKEN")
@@ -99,37 +101,35 @@ def create_app(token: Optional[str] = None):
         voice = body.get("voice")
         if not text:
             raise HTTPException(status_code=400, detail="missing 'text'")
-        if lang not in {"ka", "ru", "en"}:
+        if lang not in VOICE_MAP:
             raise HTTPException(status_code=400, detail=f"invalid lang {lang!r}")
         if voice and _voices.get_voice(voice) is None:
             raise HTTPException(status_code=400, detail=f"unknown voice {voice!r}")
 
-        sem = _generation_semaphore()
+        # Synthesize fully before responding so a failure can still be a
+        # proper HTTP error instead of an empty 200 body.
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+            out_path = tmp.name
+        async with _generation_semaphore():
+            ok = await fast_generate_audio(text, lang, out_path,
+                                           quiet=True, voice=voice)
+        if not ok:
+            _remove_quietly(out_path)
+            raise HTTPException(status_code=502,
+                                detail=str(generation_failed("synthesis failed")))
 
-        async def stream_audio():
-            async with sem:
-                with tempfile.NamedTemporaryFile(
-                    suffix=".mp3", delete=False
-                ) as tmp:
-                    out_path = tmp.name
-                try:
-                    ok = await fast_generate_audio(text, lang, out_path,
-                                                    quiet=True, voice=voice)
-                    if not ok:
-                        return
-                    with open(out_path, "rb") as f:
-                        while True:
-                            chunk = f.read(8192)
-                            if not chunk:
-                                break
-                            yield chunk
-                finally:
-                    try:
-                        os.remove(out_path)
-                    except OSError:
-                        pass
+        def stream_file():
+            try:
+                with open(out_path, "rb") as f:
+                    while True:
+                        chunk = f.read(8192)
+                        if not chunk:
+                            break
+                        yield chunk
+            finally:
+                _remove_quietly(out_path)
 
-        return StreamingResponse(stream_audio(), media_type="audio/mpeg")
+        return StreamingResponse(stream_file(), media_type="audio/mpeg")
 
     return app
 
@@ -140,6 +140,6 @@ def run_server(host: str = "127.0.0.1", port: int = 7777,
     try:
         import uvicorn
     except ImportError:
-        raise MissingExtraError()
+        raise MissingExtraError(_SERVER_REQUIREMENT, "server")
     app = create_app(token=token)
     uvicorn.run(app, host=host, port=port, log_level="info")

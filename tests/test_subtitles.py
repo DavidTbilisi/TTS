@@ -159,7 +159,6 @@ class TestCLI:
                            WordEvent("hello", 0, 500),
                            WordEvent("world", 500, 500),
                        ])) as mgen, \
-                 patch("TTS_ka.main.cleanup_http", new=AsyncMock()), \
                  patch("TTS_ka.main.get_optimal_settings",
                        return_value={"method": "direct", "chunk_seconds": 0, "parallel": 1}):
                 from TTS_ka.main import main
@@ -176,7 +175,6 @@ class TestCLI:
                                 "--output", str(out), "--no-play", "--vtt"]):
             with patch("TTS_ka.main.generate_audio_with_subs",
                        new=AsyncMock(return_value=[WordEvent("hi", 0, 500)])), \
-                 patch("TTS_ka.main.cleanup_http", new=AsyncMock()), \
                  patch("TTS_ka.main.get_optimal_settings",
                        return_value={"method": "direct", "chunk_seconds": 0, "parallel": 1}):
                 from TTS_ka.main import main
@@ -191,7 +189,6 @@ class TestCLI:
                                 "--output", str(out), "--no-play", "--srt", "--vtt"]):
             with patch("TTS_ka.main.generate_audio_with_subs",
                        new=AsyncMock(return_value=[WordEvent("hi", 0, 500)])), \
-                 patch("TTS_ka.main.cleanup_http", new=AsyncMock()), \
                  patch("TTS_ka.main.get_optimal_settings",
                        return_value={"method": "direct", "chunk_seconds": 0, "parallel": 1}):
                 from TTS_ka.main import main
