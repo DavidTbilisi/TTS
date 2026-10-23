@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -342,9 +343,30 @@ def _maybe_serve(argv: list) -> bool:
     return True
 
 
+class Terminated(KeyboardInterrupt):
+    """SIGTERM, raised like Ctrl+C so the same cleanup runs; exits 143 instead of 130."""
+
+
+def _raise_terminated(signum: int, frame: object) -> None:
+    raise Terminated()
+
+
+def _install_sigterm_handler() -> None:
+    # Python's default SIGTERM exits without cleanup, leaving a headless mpv (--idle) to
+    # play on and idle forever. A flatpak mpv sits in its own process group, so the
+    # caller's `kill -- -PGID` can't reach it either: only we can stop it.
+    if signal.getsignal(signal.SIGTERM) is signal.SIG_DFL:
+        signal.signal(signal.SIGTERM, _raise_terminated)
+
+
+def _interrupt_exit_code(exc: KeyboardInterrupt) -> int:
+    return 143 if isinstance(exc, Terminated) else 130
+
+
 def main() -> None:
     if _maybe_serve(sys.argv[1:]):
         return
+    _install_sigterm_handler()
 
     cfg_parser = argparse.ArgumentParser(add_help=False)
     cfg_parser.add_argument("--config", metavar="PATH", default=None)
@@ -715,10 +737,10 @@ For comprehensive help with examples: %(prog)s --help-full
                 # A terminal on stdin is where the text is typed; keys would steal it.
                 key_controls=not args.no_keys and not sys.stdin.isatty(),
             ))
-        except KeyboardInterrupt:
+        except KeyboardInterrupt as exc:
             stop_active_streaming_player()
             emit({"event": "error", "message": "cancelled"})
-            raise SystemExit(130)
+            raise SystemExit(_interrupt_exit_code(exc))
         return
 
     # Stdin handling: if no text arg and stdin is piped, or text == "-", read stdin.
@@ -910,11 +932,11 @@ For comprehensive help with examples: %(prog)s --help-full
         # run_generation already emitted the --json error event.
         print(f"❌ {exc}", file=sys.stderr)
         raise SystemExit(1)
-    except KeyboardInterrupt:
+    except KeyboardInterrupt as exc:
         stop_active_streaming_player()
         _cprint("\n  [yellow]⚡[/yellow]  Generation cancelled")
         emit({"event": "error", "message": "cancelled"})
-        raise SystemExit(130)
+        raise SystemExit(_interrupt_exit_code(exc))
 
 
 if __name__ == "__main__":

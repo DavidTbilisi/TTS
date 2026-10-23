@@ -571,7 +571,7 @@ python -m TTS_ka your-text --lang en --parallel 2
 
 **Ctrl+C left a partial file** — chunks are written to a per-run `tts-ka-run-*` dir in the system temp dir and removed on success, failure, or Ctrl+C; the output file is only replaced once the merge succeeds. Dirs left behind by a crash (or by GUI streaming, whose player reads them lazily) are swept on a later run after 12 hours.
 
-**Exit codes** — `0` success, `1` synthesis or merge failure, `2` usage error (no text, empty stdin/clipboard, file not found, bad option), `130` Ctrl+C. A single word that looks like a path (`notes.txt`, `docs/intro`) but doesn't exist is reported as *file not found* rather than read aloud; pipe it in (`echo notes.txt | tts-ka -`) to speak it literally.
+**Exit codes** — `0` success, `1` synthesis or merge failure, `2` usage error (no text, empty stdin/clipboard, file not found, bad option), `130` Ctrl+C, `143` SIGTERM (`kill`). Both stop the audio player before exiting. A single word that looks like a path (`notes.txt`, `docs/intro`) but doesn't exist is reported as *file not found* rather than read aloud; pipe it in (`echo notes.txt | tts-ka -`) to speak it literally.
 
 ---
 
