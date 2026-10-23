@@ -3,6 +3,10 @@
 We don't exercise the JSON-RPC transport — that's the mcp library's job.
 Instead we call the tool callables directly via MCPServer's `call_tool`
 to verify the wiring, session lifecycle, and stdout safety.
+
+Sessions get a ``_StubPlayer`` instead of ``StreamingAudioPlayer`` (autouse
+fixture below), so no test launches a real mpv/VLC on the 1-byte placeholder
+MP3s; the player itself is covered by ``test_streaming.py``.
 """
 
 from __future__ import annotations
@@ -20,6 +24,42 @@ pytest.importorskip("mcp", reason="mcp extra not installed")
 
 from TTS_ka import mcp_server as _mcp  # noqa: E402
 from TTS_ka.mcp_server import _LiveSession, build_server  # noqa: E402
+
+
+class _StubPlayer:
+    """StreamingAudioPlayer stand-in: records calls, no thread, no subprocess.
+
+    ``process`` can be set to a real Popen to model VLC / mplayer, which
+    launch a player and return while it is still playing.
+    """
+
+    def __init__(self, show_gui=False):
+        self.chunks = []           # (chunk_index, path) in add_chunk order
+        self.process = None
+        self.started = False
+        self.finished = False
+        self.stopped = False
+
+    def start(self):
+        self.started = True
+
+    def add_chunk(self, path, chunk_index=None):
+        self.chunks.append((chunk_index, path))
+
+    def finish_generation(self):
+        self.finished = True
+
+    def wait_for_completion(self):
+        pass
+
+    def stop(self):
+        self.stopped = True
+
+
+@pytest.fixture(autouse=True)
+def _stub_player():
+    with patch("TTS_ka.mcp_server.StreamingAudioPlayer", _StubPlayer):
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -112,6 +152,8 @@ class TestStreamFlow:
             sid = await _call(server, "stream_open", lang="en")
             assert isinstance(sid, str)
             assert sid in sessions
+            player = sessions[sid].player
+            assert player.started
 
             r = await _call(server, "stream_append",
                             session_id=sid, text="One. Two! ")
@@ -120,6 +162,11 @@ class TestStreamFlow:
             r = await _call(server, "stream_close", session_id=sid)
             assert "closed" in r
             assert sid not in sessions
+        # Both sentences reached the player, indexed in document order,
+        # and close() told it no more input is coming.
+        assert sorted(i for i, _ in player.chunks) == [0, 1]
+        assert all(p.endswith(f".part_{i:04d}.mp3") for i, p in player.chunks)
+        assert player.finished
 
     @pytest.mark.asyncio
     async def test_append_unknown_session(self):
@@ -289,9 +336,11 @@ class TestStopTool:
             await _call(server, "stream_open")
             await _call(server, "stream_open")
             assert len(sessions) == 2
+            players = [sess.player for sess in sessions.values()]
             r = await _call(server, "stop")
         assert "stopped 2" in r
         assert sessions == {}
+        assert all(p.stopped for p in players)
 
     @pytest.mark.asyncio
     async def test_stop_when_empty_returns_zero(self):
@@ -580,37 +629,12 @@ async def _drain_cleanup_tasks():
     await asyncio.gather(*list(_mcp._cleanup_tasks))
 
 
-class _FakePlayer:
-    """StreamingAudioPlayer stand-in: no thread, optional real player process."""
-
-    process = None
-
-    def __init__(self, show_gui=False):
-        self.chunks = []
-
-    def start(self):
-        pass
-
-    def add_chunk(self, path, chunk_index=None):
-        self.chunks.append(path)
-
-    def finish_generation(self):
-        pass
-
-    def wait_for_completion(self):
-        pass
-
-    def stop(self):
-        pass
-
-
 class TestTmpDirCleanup:
     @pytest.mark.asyncio
     async def test_stream_close_removes_dir_after_playback(self):
         sessions = {}
         server = build_server(sessions=sessions)
-        with patch("TTS_ka.mcp_server.StreamingAudioPlayer", _FakePlayer), \
-             patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte):
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte):
             sid = await _call(server, "stream_open", lang="en")
             tmp_dir = sessions[sid].tmp_dir
             await _call(server, "stream_append", session_id=sid, text="One. Two. ")
@@ -626,8 +650,7 @@ class TestTmpDirCleanup:
         server = build_server(sessions=sessions)
         proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(0.3)"])
         try:
-            with patch("TTS_ka.mcp_server.StreamingAudioPlayer", _FakePlayer), \
-                 patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte):
+            with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte):
                 sid = await _call(server, "stream_open", lang="en")
                 sess = sessions[sid]
                 sess.player.process = proc
@@ -673,8 +696,7 @@ class TestTmpDirCleanup:
     async def test_sweep_removes_unclosed_session_and_no_player_clip(self):
         sessions = {}
         server = build_server(sessions=sessions)
-        with patch("TTS_ka.mcp_server.StreamingAudioPlayer", _FakePlayer), \
-             patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte), \
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte), \
              patch("TTS_ka.mcp_server.play_audio", return_value=False):
             sid = await _call(server, "stream_open", lang="en")
             r = await _call(server, "speak", text="Hello there", lang="en")

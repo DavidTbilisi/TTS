@@ -26,11 +26,16 @@ HARD_TIMEOUT = 15.0  # seconds — any test exceeding this is presumed hung
 
 
 @pytest.fixture
-def server_env():
+def server_env(tmp_path):
     env = os.environ.copy()
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = SRC + (os.pathsep + existing if existing else "")
     env["PYTHONIOENCODING"] = "utf-8"
+    # Empty PATH dir: stream_open starts a StreamingAudioPlayer, and with a
+    # player on PATH every run would launch a real mpv/VLC. The server is
+    # started via sys.executable and these tests never synthesize, so it
+    # needs nothing else from PATH.
+    env["PATH"] = str(tmp_path / "no-players")
     return env
 
 
