@@ -34,6 +34,7 @@ from typing import AsyncIterator, Callable, List, Optional, Tuple
 
 from .fast_audio import fast_generate_audio, generation_failed
 from .not_reading import replace_not_readable
+from .stream_keys import KeyControls
 from .streaming_player import StreamingAudioPlayer
 
 DEFAULT_IDLE_FLUSH_MS = 800
@@ -292,6 +293,7 @@ async def live_loop(
     prosody=None,
     idle_flush_ms: int = DEFAULT_IDLE_FLUSH_MS,
     show_player_gui: bool = False,
+    key_controls: bool = False,
     sanitize: bool = True,
     max_concurrent: int = DEFAULT_MAX_CONCURRENT,
     input_reader: Optional[InputReader] = None,
@@ -364,6 +366,8 @@ async def live_loop(
 
         input_reader = _iter()  # type: ignore[assignment]
 
+    # Keys stay live until playback has drained, not just until input ends.
+    controls = KeyControls(player).start() if key_controls else None
     interrupted = False
     try:
         async for chunk in input_reader:
@@ -406,6 +410,8 @@ async def live_loop(
                 await asyncio.to_thread(player.wait_until_released)
             except Exception:
                 pass
+        if controls is not None:
+            controls.close()
         if owns_tmp:
             try:
                 import shutil

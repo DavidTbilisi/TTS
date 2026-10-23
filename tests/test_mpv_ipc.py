@@ -204,11 +204,13 @@ class TestCommands:
         ipc.pause()
         ipc.resume()
         ipc.skip()
+        ipc.set_speed(1.5)
         ipc.stop()
         assert mpv.commands[1:] == [
             ["set_property", "pause", True],
             ["set_property", "pause", False],
             ["playlist-next", "force"],
+            ["set_property", "speed", 1.5],
             ["stop"],
         ]
         ipc.close()

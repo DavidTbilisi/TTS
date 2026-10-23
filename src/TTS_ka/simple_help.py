@@ -34,6 +34,8 @@ def show_simple_help():
     print("  --parallel 6           Multiple workers (-j 6)")
     print("  --stream               Play while generating (chunked) (-s)")
     print("  --player mpv           Preferred streaming player (vlc, mpv, ffplay, mplayer)")
+    print("  While streaming (headless mpv): space pause, n next, +/- speed, q quit")
+    print("  --no-keys              Don't read those keys from the terminal")
     print()
 
     print("VOICE AND PROSODY:")

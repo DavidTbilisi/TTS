@@ -20,7 +20,7 @@ _LONG_FLAGS: List[str] = [
     "--json", "--title", "--author", "--album", "--cover", "--chapters",
     "--srt", "--vtt", "--help-full", "--print-completion",
     "--chunk-seconds", "--parallel", "--live", "--live-idle-ms",
-    "--doctor", "--config", "--no-cache", "--clear-cache", "--pages",
+    "--doctor", "--config", "--no-cache", "--clear-cache", "--pages", "--no-keys",
 ]
 _SHORT_FLAGS: List[str] = ["-h", "-V", "-o", "-l", "-c", "-j", "-n", "-s", "-H"]
 

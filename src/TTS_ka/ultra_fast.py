@@ -19,6 +19,7 @@ from .fast_audio import (
 )
 from .not_reading import replace_not_readable
 from .rich_progress import cprint as _cprint, create_progress_display
+from .stream_keys import KeyControls
 from .streaming_player import StreamingAudioPlayer, stop_active_streaming_player
 from .constants import (
     MAX_PARALLEL_WORKERS,
@@ -286,8 +287,13 @@ async def smart_generate_long_text(
     prosody=None,
     cancel_event: Optional[threading.Event] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
+    key_controls: bool = False,
 ) -> None:
-    """Smart generation with dynamic optimization, optional voice/prosody, cancel, and progress."""
+    """Smart generation with dynamic optimization, optional voice/prosody, cancel, and progress.
+
+    *key_controls* reads playback keys from the terminal while streaming
+    (``stream_keys``); only the CLI turns it on.
+    """
     text = replace_not_readable(text)
     if not text.strip():
         raise EmptyInputError("No readable text after filtering — input empty or only symbols/URLs/code.")
@@ -361,6 +367,9 @@ async def smart_generate_long_text(
         else:
             _cprint("  [green]🔊[/green]  [bold]Streaming enabled[/bold]  [dim]· audio starts immediately[/dim]")
     
+    controls = (KeyControls(streaming_player).start()
+                if streaming_player and key_controls else None)
+
     # Generate chunks in parallel
     work_dir = _make_run_dir()
     released = True
@@ -391,6 +400,9 @@ async def smart_generate_long_text(
     except BaseException:
         _interrupt_streaming_cleanup(streaming_player, work_dir)
         raise
+    finally:
+        if controls is not None:
+            controls.close()
 
     # A player that outlives this call without saying it is done (a GUI window
     # fed a stdin playlist) may still open queued parts, so deleting them now

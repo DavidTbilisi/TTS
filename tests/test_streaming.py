@@ -1169,6 +1169,20 @@ class TestControls:
         player._ipc = MagicMock(pause=MagicMock(side_effect=MpvIpcError("gone")))
         assert player.pause() is False
 
+    def test_change_speed_steps_and_clamps(self):
+        player = StreamingAudioPlayer()
+        player._ipc = MagicMock()
+        assert player.change_speed(0.1) == 1.1
+        player._ipc.set_speed.assert_called_with(1.1)
+        assert player.change_speed(5) == 2.5
+        assert player.change_speed(-5) == 0.5
+
+    def test_change_speed_without_ipc_keeps_speed(self):
+        player = StreamingAudioPlayer()
+        assert player.change_speed(0.1) is None
+        player._ipc = MagicMock()
+        assert player.change_speed(0.1) == 1.1
+
 
 class TestPlayerSelection:
     def test_preferred_player_is_honoured(self):
