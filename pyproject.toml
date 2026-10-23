@@ -89,7 +89,9 @@ mcp = [
     "mcp>=2.0.0",
 ]
 study = [
-    "pygame>=2.5.0",
+    # pygame-ce, not pygame: pygame 2.6.1 (2024) ships no Python 3.14 wheels
+    # and fails to build without SDL headers. Same `import pygame` API.
+    "pygame-ce>=2.5.0",
 ]
 test = [
     "pytest>=7.0.0",
