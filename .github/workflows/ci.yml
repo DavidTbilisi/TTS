@@ -14,6 +14,10 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Tests take ~10 s; fail fast instead of GitHub's 6 h default if a step stalls.
+    timeout-minutes: 10
+    # No ffmpeg install: the non-slow tests mock every ffmpeg/pydub call, and
+    # `apt-get install ffmpeg` (~70 packages) took up to 8 min on slow mirrors.
     strategy:
       fail-fast: false
       matrix:
@@ -34,9 +38,6 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: pyproject.toml
-
-      - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Install package and test deps
         run: pip install -U pip && pip install -e ".[${{ matrix.extras }}]"
