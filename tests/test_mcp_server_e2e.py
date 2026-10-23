@@ -122,8 +122,67 @@ async def test_e2e_unknown_session_errors(server_env):
     await asyncio.wait_for(_exercise_unknown_session(server_env), timeout=HARD_TIMEOUT)
 
 
+# Server whose extra `noisy` tool prints from Python and from a child process.
+_NOISY_SERVER = """
+import subprocess, sys
+import TTS_ka.mcp_server as m
+
+_build = m.build_server
+
+def build_server(**kw):
+    server = _build(**kw)
+
+    @server.tool()
+    def noisy() -> str:
+        print("PY-PRINT")
+        subprocess.run([sys.executable, "-c", "print('CHILD-PRINT')"])
+        return "ok"
+
+    return server
+
+m.build_server = build_server
+m.main()
+"""
+
+
+async def _exercise_stray_output(server_env, errlog):
+    from mcp import ClientSession
+    from mcp.client.stdio import StdioServerParameters, stdio_client
+
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-c", _NOISY_SERVER],
+        env=server_env,
+        cwd=str(REPO_ROOT),
+    )
+    async with stdio_client(params, errlog=errlog) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            r = await session.call_tool("noisy", {})
+            assert _unwrap(r) == "ok"
+
+
+@pytest.mark.slow
+@pytest.mark.asyncio
+async def test_e2e_stray_output_goes_to_stderr(server_env, tmp_path):
+    """print() and child output must land on stderr, never on the JSON-RPC pipe.
+
+    Covers the shutdown case too: a print still in sys.stdout's buffer when the
+    transport restores fd 1 would otherwise be flushed onto the wire.
+    """
+    with open(tmp_path / "stderr.txt", "w+", encoding="utf-8") as errlog:
+        await asyncio.wait_for(
+            _exercise_stray_output(server_env, errlog), timeout=HARD_TIMEOUT
+        )
+        errlog.seek(0)
+        err = errlog.read()
+    assert "PY-PRINT" in err
+    assert "CHILD-PRINT" in err
+    assert "Invalid JSON" not in err
+
+
 def _unwrap(call_result):
-    sc = call_result.structuredContent
+    sc = call_result.structured_content
     if isinstance(sc, dict) and list(sc.keys()) == ["result"]:
         return sc["result"]
     return sc
