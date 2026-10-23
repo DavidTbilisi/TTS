@@ -16,7 +16,9 @@ When the ``TTS_API_TOKEN`` env var is set, every request must carry a
 matching ``Authorization: Bearer <token>`` header or receive HTTP 401.
 """
 
-from __future__ import annotations
+# No ``from __future__ import annotations`` here: FastAPI resolves endpoint
+# annotations at decoration time, and ``Request`` is imported locally inside
+# ``create_app`` — a stringified annotation would be treated as a query param.
 
 import asyncio
 import os
@@ -24,7 +26,7 @@ import tempfile
 from dataclasses import asdict
 from typing import Optional
 
-from .constants import MAX_PARALLEL_WORKERS
+from .constants import MAX_PARALLEL_WORKERS, VOICE_MAP
 from . import voices as _voices
 
 
@@ -99,7 +101,7 @@ def create_app(token: Optional[str] = None):
         voice = body.get("voice")
         if not text:
             raise HTTPException(status_code=400, detail="missing 'text'")
-        if lang not in {"ka", "ru", "en"}:
+        if lang not in VOICE_MAP:
             raise HTTPException(status_code=400, detail=f"invalid lang {lang!r}")
         if voice and _voices.get_voice(voice) is None:
             raise HTTPException(status_code=400, detail=f"unknown voice {voice!r}")

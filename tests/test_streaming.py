@@ -291,7 +291,7 @@ class TestStreamingAudioPlayer:
 
     @patch('subprocess.Popen')
     def test_unix_mpv_uses_stdin_playlist(self, mock_popen, temp_dir):
-        """On Unix, _play_mpv uses stdin playlist (doesn't wait for all chunks)."""
+        """On Unix, the mpv path uses stdin playlist (doesn't wait for all chunks)."""
         mock_stdin = MagicMock()
         mock_proc = MagicMock()
         mock_proc.wait.return_value = 0
@@ -309,7 +309,7 @@ class TestStreamingAudioPlayer:
         player.chunk_queue.put(chunk2)
         player.chunk_queue.put(None)
 
-        player._play_mpv("mpv")
+        player._play_mpv_stdin_playlist("mpv")
 
         assert mock_popen.call_count == 1
         argv = mock_popen.call_args[0][0]
@@ -319,6 +319,22 @@ class TestStreamingAudioPlayer:
         )
         assert os.path.basename(chunk1).encode() in written
         assert os.path.basename(chunk2).encode() in written
+
+    @patch('subprocess.Popen')
+    def test_unix_vlc_single_process_all_chunks(self, mock_popen, temp_dir):
+        """On Unix, VLC is launched once with every chunk (no overlapping second instance)."""
+        chunks = [os.path.join(temp_dir, f"c{i}.mp3") for i in range(3)]
+        player = StreamingAudioPlayer(show_gui=False)
+        for c in chunks:
+            player.chunk_queue.put(c)
+        player.chunk_queue.put(None)
+
+        player._play_vlc_unix("vlc")
+
+        assert mock_popen.call_count == 1
+        argv = mock_popen.call_args[0][0]
+        assert argv[:4] == ["vlc", "--intf", "dummy", "--play-and-exit"]
+        assert argv[4:] == [os.path.abspath(c) for c in chunks]
 
     @patch('subprocess.Popen')
     def test_unix_ffplay_sequential_chunks(self, mock_popen, temp_dir):
@@ -716,7 +732,7 @@ class TestStreamingEdgeCases:
         assert player.finished_generating is True
 
 
-class TestStreamingPerformance:
+class TestStreamingQueuePerformance:
     """Test streaming performance characteristics."""
     
     @pytest.mark.slow

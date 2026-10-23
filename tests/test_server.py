@@ -145,3 +145,30 @@ class TestSemaphore:
         a = server._generation_semaphore()
         b = server._generation_semaphore()
         assert a is b
+
+
+class TestSynthesizeLangValidation:
+    """/synthesize accepts every VOICE_MAP language (incl. ka-m) and rejects others."""
+
+    @pytest.fixture
+    def client(self):
+        testclient = pytest.importorskip("fastapi.testclient")
+
+        async def fake_generate(text, lang, out_path, **kwargs):
+            with open(out_path, "wb") as f:
+                f.write(b"ID3")
+            return True
+
+        # create_app() imports fast_generate_audio locally, so patch before building it.
+        with patch("TTS_ka.fast_audio.fast_generate_audio", new=fake_generate):
+            yield testclient.TestClient(server.create_app(token=""))
+
+    @pytest.mark.parametrize("lang", ["ka", "ka-m", "ru", "en", "en-US"])
+    def test_known_lang_accepted(self, client, lang):
+        resp = client.post("/synthesize", json={"text": "hi", "lang": lang})
+        assert resp.status_code == 200
+        assert resp.content == b"ID3"
+
+    def test_unknown_lang_rejected(self, client):
+        resp = client.post("/synthesize", json={"text": "hi", "lang": "xx"})
+        assert resp.status_code == 400
