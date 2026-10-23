@@ -46,6 +46,7 @@ class _StubPlayer:
         self.process = None
         self.started = False
         self.finished = False
+        self.playback_error = None
         self.stopped = False
         type(self).instances.append(self)
 
@@ -952,6 +953,19 @@ class TestSpeakThroughStreamingPlayer:
             r = await _call(server, "speak", text="Hello there", lang="en", blocking=True)
         assert r.startswith("played in")
         mwait.assert_called_once()
+        assert not [d for d in _mcp._tmp_dirs if "ttska-mcp-one-" in d]
+
+    async def test_blocking_reports_a_clip_the_player_could_not_play(self):
+        """mpv said it couldn't play the clip: speak must not answer "played in …"."""
+        def fail_release(self, timeout=None):
+            self.playback_error = "audio output initialization failed"
+            return True
+
+        server = build_server(sessions={})
+        with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=_write_one_byte), \
+             patch.object(_StubPlayer, "wait_until_released", fail_release):
+            with pytest.raises(ToolError, match="playback failed: audio output initialization failed"):
+                await _call(server, "speak", text="Hello there", lang="en", blocking=True)
         assert not [d for d in _mcp._tmp_dirs if "ttska-mcp-one-" in d]
 
     async def test_clip_can_be_paused_while_playing(self):
