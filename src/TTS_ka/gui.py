@@ -22,6 +22,7 @@ from .fast_audio import (
     generation_failed,
     play_audio,
 )
+from .streaming_player import any_streaming_player_running, stop_all_streaming_players
 from .ultra_fast import (
     OPTIMAL_WORKERS,
     EmptyInputError,
@@ -359,6 +360,8 @@ class TTSSpeakApp:
 
         self._hotkey_mgr = NativeHotkeyManager() if sys.platform == "win32" else None
         self._speak_cancel = threading.Event()
+        self._speak_streaming = False
+        self._watch_run = 0  # bumped to end a _watch_player_window poll
         self._pip_install_busy = False
         self.hk_native_var = tk.BooleanVar(value=False)
         self._hk_row_vars: list[tuple[Any, Any]] = []
@@ -1150,11 +1153,51 @@ class TTSSpeakApp:
         t = max(int(total), 1)
         d = min(max(int(done), 0), t)
         self.speak_progress.configure(maximum=t, value=d)
-        self.status.set(f"Generating… chunk {d} / {t}")
+        if d == t and self._speak_streaming:
+            self.status.set("Playing…")  # every chunk is ready; the player is still reading them
+        else:
+            self.status.set(f"Generating… chunk {d} / {t}")
 
     def _on_stop_speak(self) -> None:
-        self._speak_cancel.set()
-        self.status.set("Stopping after current work units finish…")
+        if self._worker is not None and self._worker.is_alive():
+            # The run stops its player too, whether it is still generating or only playing.
+            self._speak_cancel.set()
+            self.status.set("Stopping…")
+            return
+        # The run is over but its player window is still open (see _watch_player_window).
+        self._watch_run += 1
+        self.stop_speak_btn.configure(state=self._tk.DISABLED)
+        self.status.set("Stopping…")
+
+        # Stopping can wait seconds for the player to exit; keep the window responsive.
+        stopper = threading.Thread(target=stop_all_streaming_players, daemon=True)
+        stopper.start()
+
+        def check() -> None:
+            if stopper.is_alive():
+                self.root.after(100, check)
+            else:
+                self.status.set("Stopped.")
+
+        self.root.after(100, check)
+
+    def _watch_player_window(self, out: str) -> None:
+        """Keep Stop enabled while a player window the run opened is still open."""
+        self._watch_run += 1
+        run = self._watch_run
+        self.stop_speak_btn.configure(state=self._tk.NORMAL)
+        self.status.set("Playing in the player window. Stop closes it.")
+
+        def poll() -> None:
+            if run != self._watch_run:
+                return  # Stop was pressed, or a new Speak took over
+            if any_streaming_player_running():
+                self.root.after(500, poll)
+                return
+            self.stop_speak_btn.configure(state=self._tk.DISABLED)
+            self.status.set(f"Done. Output: {out}")
+
+        self.root.after(500, poll)
 
     def _set_busy(self, busy: bool) -> None:
         state = self._tk.DISABLED if busy else self._tk.NORMAL
@@ -1307,6 +1350,8 @@ class TTSSpeakApp:
         no_play = bool(self.no_play.get())
 
         self._speak_cancel.clear()
+        self._speak_streaming = stream
+        self._watch_run += 1
         self._set_busy(True)
         self.status.set("Generating…")
         self._apply_speak_progress(0, 1)
@@ -1349,13 +1394,15 @@ class TTSSpeakApp:
 
                 self._set_busy(False)
                 if err == "Cancelled.":
-                    self.status.set("Generation cancelled.")
+                    self.status.set("Stopped.")
                     return
                 if err:
                     self.status.set("Error - see dialog.")
                     messagebox.showerror("TTS_ka", err[:4000])
                 elif not played:
                     self.status.set(f"Done. Saved {out}, but no audio player opened it.")
+                elif any_streaming_player_running():
+                    self._watch_player_window(out)
                 else:
                     self.status.set(f"Done. Output: {out}")
 

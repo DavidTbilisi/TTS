@@ -189,3 +189,73 @@ def test_no_tab_cuts_off_text_at_the_minimum_window() -> None:
             assert not cut, cut
         finally:
             app.root.destroy()
+
+
+def _app_or_skip(defs):
+    tk = pytest.importorskip("tkinter")
+    try:
+        probe = tk.Tk()
+        probe.destroy()
+    except tk.TclError:
+        pytest.skip("no display available")
+
+    from TTS_ka import gui
+
+    with patch("TTS_ka.deps.collect_dep_rows", return_value=[]), \
+         patch("TTS_ka.deps.format_dep_report", return_value="ok"), \
+         patch("TTS_ka.native_hotkeys.NativeHotkeyManager", MagicMock()), \
+         patch.object(gui.TTSSpeakApp, "_run_setup_check_async"):
+        return gui, gui.TTSSpeakApp(defs)
+
+
+def _pump_until(app, cond, timeout=3.0):
+    import time
+
+    deadline = time.monotonic() + timeout
+    while not cond() and time.monotonic() < deadline:
+        app.root.update()
+        time.sleep(0.02)
+    return cond()
+
+
+def test_stop_closes_a_player_window_left_open_after_the_run() -> None:
+    gui, app = _app_or_skip({"lang": "en"})
+    try:
+        with patch.object(gui, "any_streaming_player_running", return_value=True), \
+             patch.object(gui, "stop_all_streaming_players") as mstop:
+            app._watch_player_window("/tmp/out.mp3")
+            assert app.stop_speak_btn.instate(["!disabled"]), "Stop stays usable while the window plays"
+            app._on_stop_speak()
+            assert _pump_until(app, lambda: app.status.get() == "Stopped.")
+        mstop.assert_called_once()
+        assert app.stop_speak_btn.instate(["disabled"])
+    finally:
+        app.root.destroy()
+
+
+def test_stop_disables_once_the_player_window_is_closed() -> None:
+    gui, app = _app_or_skip({"lang": "en"})
+    try:
+        with patch.object(gui, "any_streaming_player_running", return_value=False):
+            app._watch_player_window("/tmp/out.mp3")
+            assert _pump_until(app, lambda: app.stop_speak_btn.instate(["disabled"]))
+        assert app.status.get() == "Done. Output: /tmp/out.mp3"
+    finally:
+        app.root.destroy()
+
+
+def test_stop_during_a_run_cancels_it() -> None:
+    import threading
+
+    gui, app = _app_or_skip({"lang": "en"})
+    release = threading.Event()
+    app._worker = threading.Thread(target=release.wait, daemon=True)
+    app._worker.start()
+    try:
+        with patch.object(gui, "stop_all_streaming_players") as mstop:
+            app._on_stop_speak()
+        assert app._speak_cancel.is_set()
+        mstop.assert_not_called()  # the run stops its own player
+    finally:
+        release.set()
+        app.root.destroy()

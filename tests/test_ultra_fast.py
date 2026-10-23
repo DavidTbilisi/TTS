@@ -505,6 +505,32 @@ class TestRunDirs:
         assert not run_dir.exists()
         mstop.assert_called_once()
 
+    async def test_stop_during_playback_stops_the_player(self, tmp_path):
+        """Stop pressed after generation finished cuts playback short, not just synthesis."""
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        cancel = threading.Event()
+        player = MagicMock()
+
+        def playing(timeout=None, cancel_event=None):
+            assert cancel_event is cancel
+            cancel.set()  # the user presses Stop mid-playback
+            return False
+
+        player.wait_until_released.side_effect = playing
+        with patch('TTS_ka.ultra_fast._make_run_dir', return_value=str(run_dir)), \
+             patch('TTS_ka.ultra_fast.fast_generate_audio', new=self._fake_generate), \
+             patch('TTS_ka.streaming_player.PlayerDetector.find', return_value="mpv"), \
+             patch('TTS_ka.ultra_fast.StreamingAudioPlayer', return_value=player), \
+             patch('TTS_ka.ultra_fast.stop_active_streaming_player') as mstop:
+            with pytest.raises(GenerationCancelled):
+                await smart_generate_long_text("word " * 300, "en", chunk_seconds=20,
+                                               parallel=2, output_path=str(tmp_path / "out.mp3"),
+                                               enable_streaming=True, show_gui=False,
+                                               cancel_event=cancel)
+        mstop.assert_called_once()
+        assert not run_dir.exists()
+
     async def test_keep_parts_keeps_run_dir(self, tmp_path):
         run_dir = tmp_path / "run"
         run_dir.mkdir()

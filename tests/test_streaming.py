@@ -1309,6 +1309,39 @@ class TestWaitUntilReleased:
         player.process = proc
         assert player.wait_until_released(timeout=0.1) is False
 
+    def test_cancel_while_the_process_plays_returns_false(self):
+        import threading
+
+        player = StreamingAudioPlayer(show_gui=False)
+        proc = MagicMock()
+        proc.poll.return_value = None
+        cancel = threading.Event()
+
+        def still_playing(timeout=None):
+            cancel.set()
+            raise subprocess.TimeoutExpired("vlc", timeout)
+
+        proc.wait.side_effect = still_playing
+        player.process = proc
+        assert player.wait_until_released(cancel_event=cancel) is False
+        proc.wait.assert_called_once_with(timeout=0.25)
+
+    def test_cancel_while_the_worker_plays_returns_false(self):
+        import threading
+
+        player = StreamingAudioPlayer(show_gui=False)
+        done = threading.Event()
+        player.playback_thread = threading.Thread(target=done.wait, daemon=True)
+        player.playback_thread.start()
+        cancel = threading.Event()
+        cancel.set()
+        try:
+            start = time.monotonic()
+            assert player.wait_until_released(cancel_event=cancel) is False
+            assert time.monotonic() - start < 1
+        finally:
+            done.set()
+
     def test_gui_process_left_open_is_not_released(self):
         player = StreamingAudioPlayer(show_gui=True)
         proc = MagicMock()
@@ -1316,3 +1349,56 @@ class TestWaitUntilReleased:
         player.process = proc
         assert player.wait_until_released(timeout=1) is False
         proc.wait.assert_not_called()
+
+
+class TestPlayerWindowLeftOpen:
+    """A GUI window outlives the playback worker; Stop must still reach it."""
+
+    def _window_player(self):
+        player = StreamingAudioPlayer(show_gui=True)
+        proc = MagicMock()
+        proc.poll.return_value = None
+        player.process = proc
+        return player, proc
+
+    def test_worker_end_keeps_an_open_window_registered(self):
+        from TTS_ka import streaming_player as sp
+
+        player, proc = self._window_player()
+        player.chunk_queue.put(None)
+        with patch.object(player, "_playback_worker_unix"), \
+             patch.object(player, "_playback_worker_windows"):
+            player.start()
+            player.playback_thread.join(timeout=2)
+        try:
+            assert player.running()
+            assert sp.any_streaming_player_running()
+            proc.poll.return_value = 0  # the user closed the window
+            assert not player.running()
+            assert not sp.any_streaming_player_running()
+        finally:
+            sp.unregister_active_streaming_player(player)
+
+    def test_stop_closes_the_window_and_unregisters(self):
+        from TTS_ka import streaming_player as sp
+
+        player, proc = self._window_player()
+        sp.register_active_streaming_player(player)
+        with patch("TTS_ka.streaming_player._terminate_process_quietly") as mterm:
+            sp.stop_all_streaming_players()
+        mterm.assert_called_once_with(proc)
+        assert not player.running()
+        assert player not in sp._active_streaming_players
+
+    def test_headless_player_unregisters_when_its_worker_ends(self):
+        from TTS_ka import streaming_player as sp
+
+        player = StreamingAudioPlayer(show_gui=False)
+        player.process = MagicMock()
+        player.process.poll.return_value = None
+        with patch.object(player, "_playback_worker_unix"), \
+             patch.object(player, "_playback_worker_windows"):
+            player.start()
+            player.playback_thread.join(timeout=2)
+        assert player not in sp._active_streaming_players
+        assert not player.running()
