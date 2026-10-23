@@ -135,3 +135,23 @@ class TestWriteUserConfig:
         assert cfg["chunk_seconds"] == 30
         assert cfg["parallel"] == 2
         assert cfg["no_play"] is True
+
+
+class TestCacheEnvFromConfig:
+    def test_cache_false_and_max_mb_set_env(self, monkeypatch):
+        from TTS_ka.user_config import apply_env_from_config
+        monkeypatch.delenv("TTS_KA_CACHE", raising=False)
+        monkeypatch.delenv("TTS_KA_CACHE_MAX_MB", raising=False)
+        apply_env_from_config({"cache": False, "cache_max_mb": 50})
+        import os
+        assert os.environ["TTS_KA_CACHE"] == "0"
+        assert os.environ["TTS_KA_CACHE_MAX_MB"] == "50"
+
+    def test_explicit_env_wins_and_bad_values_ignored(self, monkeypatch):
+        from TTS_ka.user_config import apply_env_from_config
+        monkeypatch.setenv("TTS_KA_CACHE", "1")
+        monkeypatch.delenv("TTS_KA_CACHE_MAX_MB", raising=False)
+        apply_env_from_config({"cache": False, "cache_max_mb": "lots"})
+        import os
+        assert os.environ["TTS_KA_CACHE"] == "1"
+        assert "TTS_KA_CACHE_MAX_MB" not in os.environ

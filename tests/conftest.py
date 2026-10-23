@@ -26,6 +26,17 @@ def _isolated_tempdir(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_chunk_cache(monkeypatch):
+    """Synthesis mocks must not be served from (or written to) the user's cache."""
+    from TTS_ka import chunk_cache
+
+    monkeypatch.setenv("TTS_KA_CACHE", "0")
+    chunk_cache.configure()
+    yield
+    chunk_cache.configure()
+
+
+@pytest.fixture(autouse=True)
 def _no_mpv_ipc(monkeypatch):
     """Keep StreamingAudioPlayer on the stubbable stdin-playlist path; IPC tests opt back in."""
     monkeypatch.setenv("TTS_KA_MPV_IPC", "0")

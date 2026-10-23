@@ -534,3 +534,69 @@ class TestRunDirs:
             _sweep_stale_run_dirs()
         assert not stale.exists()
         assert fresh.exists() and other.exists()
+
+
+class TestFailFastAndResume:
+    async def test_first_failure_cancels_remaining_chunks(self, tmp_path):
+        release = asyncio.Event()
+        cancelled = []
+
+        async def gen(text, lang, output, quiet=False, **kwargs):
+            if text == "bad":
+                return False
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cancelled.append(text)
+                raise
+            return True
+
+        with patch('TTS_ka.ultra_fast.fast_generate_audio', new=gen), \
+             patch('TTS_ka.ultra_fast.create_progress_display', return_value=MagicMock()):
+            with pytest.raises(GenerationFailed, match="1 of 3 chunks failed"):
+                await asyncio.wait_for(ultra_fast_parallel_generation(
+                    ["slow one", "bad", "slow two"], "en", parallel=3,
+                    output_path=str(tmp_path / "o.mp3"), work_dir=str(tmp_path)), timeout=2)
+        assert sorted(cancelled) == ["slow one", "slow two"]
+
+    async def test_rerun_after_failure_only_synthesizes_missing_chunks(self, tmp_path, monkeypatch):
+        """Finished chunks land in the cache, so a re-run resumes instead of starting over."""
+        from TTS_ka import chunk_cache
+        monkeypatch.setenv("TTS_KA_CACHE", "1")
+        monkeypatch.setenv("TTS_KA_CACHE_DIR", str(tmp_path / "cache"))
+        chunk_cache.configure()
+        synthesized = []
+        fail_on = {"chunk two"}
+
+        class FakeCommunicate:
+            def __init__(self, text, voice, **kwargs):
+                self.text = text
+
+            async def save(self, path):
+                if self.text in fail_on:
+                    raise ValueError("service hiccup")
+                synthesized.append(self.text)
+                with open(path, "wb") as f:
+                    f.write(b"\xff\xf3" + self.text.encode())
+
+        chunks = ["chunk one", "chunk two", "chunk three"]
+        (tmp_path / "run1").mkdir()
+        with patch.dict('sys.modules', {'edge_tts': MagicMock(Communicate=FakeCommunicate)}), \
+             patch('TTS_ka.ultra_fast.create_progress_display', return_value=MagicMock()):
+            with pytest.raises(GenerationFailed):
+                await ultra_fast_parallel_generation(chunks, "en", parallel=1,
+                                                     work_dir=str(tmp_path / "run1"))
+            first = list(synthesized)
+            fail_on.clear()
+            synthesized.clear()
+            (tmp_path / "run2").mkdir()
+            parts = await ultra_fast_parallel_generation(chunks, "en", parallel=1,
+                                                         work_dir=str(tmp_path / "run2"))
+        assert "chunk one" in first
+        assert "chunk one" not in synthesized              # served from cache
+        assert "chunk two" in synthesized
+        assert [open(p, "rb").read()[2:].decode() for p in parts] == chunks
+
+    def test_worker_cap_is_fixed_not_cpu_scaled(self):
+        from TTS_ka.constants import MAX_PARALLEL_WORKERS
+        assert OPTIMAL_WORKERS == MAX_PARALLEL_WORKERS == 6

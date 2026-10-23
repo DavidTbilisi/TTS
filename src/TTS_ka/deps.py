@@ -144,6 +144,19 @@ def check_soundfile() -> DepRow:
     return _check_module("soundfile", "soundfile")
 
 
+def check_chunk_cache() -> DepRow:
+    """Report where synthesized chunks are cached and how much space they use."""
+    from . import chunk_cache
+
+    cache = chunk_cache.get_cache()
+    if cache is None:
+        return DepRow("chunk cache", False, "disabled (TTS_KA_CACHE=0 or config \"cache\": false)")
+    files, size = cache.usage()
+    cap = cache.max_bytes / 1_048_576
+    return DepRow("chunk cache", True,
+                  f"{cache.root}  ({files} files, {size / 1_048_576:.1f} of {cap:.0f} MB)")
+
+
 def collect_dep_rows() -> List[DepRow]:
     rows: List[DepRow] = []
     rows.append(_check_module("edge-tts", "edge_tts"))
@@ -152,10 +165,11 @@ def collect_dep_rows() -> List[DepRow]:
     rows.append(check_ffmpeg())
     rows.append(check_streaming_player())
     rows.append(check_clipboard())
+    rows.append(check_chunk_cache())
     return rows
 
 
-_OPTIONAL_NAMES = frozenset({"soundfile", "streaming player", "clipboard"})
+_OPTIONAL_NAMES = frozenset({"soundfile", "streaming player", "clipboard", "chunk cache"})
 
 
 def format_dep_report(rows: Optional[List[DepRow]] = None) -> str:
