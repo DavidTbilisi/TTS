@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-import pytest
 
 PKG_ROOT = Path(__file__).resolve().parent.parent / "src" / "TTS_ka"
 
@@ -37,7 +36,7 @@ def test_no_os_system_calls_in_package():
         if hits:
             offending.append((path, hits))
     assert offending == [], (
-        f"os.system(...) calls found (BUG-4): "
+        "os.system(...) calls found (BUG-4): "
         + ", ".join(f"{p}:{lines}" for p, lines in offending)
     )
 

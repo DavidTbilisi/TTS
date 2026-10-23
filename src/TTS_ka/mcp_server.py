@@ -403,7 +403,6 @@ async def _run_with_preserved_stdout(server) -> None:
     HTTP-fallback notices, etc.) lands on the user's stderr — never on the
     protocol stream.
     """
-    import os
     from io import TextIOWrapper
     import anyio
     from mcp.server.stdio import stdio_server

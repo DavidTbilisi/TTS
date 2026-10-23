@@ -6,19 +6,13 @@ SentenceBuffer is tested directly. live_loop is tested with injected fakes
 
 from __future__ import annotations
 
-import asyncio
-import os
-import sys
 import time
 from typing import AsyncIterator, List, Optional
 from unittest.mock import MagicMock
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-
-from TTS_ka.live_stream import (  # noqa: E402
-    DEFAULT_IDLE_FLUSH_MS,
+from TTS_ka.live_stream import (
     SentenceBuffer,
     live_loop,
 )

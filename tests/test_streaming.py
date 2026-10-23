@@ -1,16 +1,10 @@
 """Tests for streaming audio playback functionality."""
 
 import os
-import sys
 import time
 import pytest
 import asyncio
-import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock, patch, Mock, call
-
-# Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+from unittest.mock import MagicMock, patch
 
 from TTS_ka.streaming_player import StreamingAudioPlayer
 
@@ -94,8 +88,7 @@ class TestStreamingAudioPlayer:
         
         # Create an empty file
         chunk_path = os.path.join(temp_dir, "empty_chunk.mp3")
-        with open(chunk_path, 'wb') as f:
-            pass  # Empty file
+        open(chunk_path, 'wb').close()  # empty file
         
         # Add chunk
         player.add_chunk(chunk_path)
@@ -848,21 +841,6 @@ class TestStreamingFileHandling:
         assert not os.path.exists(part_files[0])  # part_0 - removed
         assert os.path.exists(part_files[1])      # part_1 - locked, remains
         assert not os.path.exists(part_files[2])  # part_2 - removed
-    
-    def test_alternative_filename_generation(self):
-        """Test alternative filename generation for locked files."""
-        # This simulates the logic in ultra_fast_parallel_generation
-        import time
-        
-        base_name = ".part_3.mp3"
-        timestamp = int(time.time() * 1000)
-        alternative_name = f".part_3_{timestamp}.mp3"
-        
-        # Alternative name should be unique and valid
-        assert alternative_name != base_name
-        assert alternative_name.startswith(".part_3_")
-        assert alternative_name.endswith(".mp3")
-        assert str(timestamp) in alternative_name
 
 
 class TestStreamingIntegrationWithMainSystem:
@@ -1018,8 +996,7 @@ class TestStreamingPlayerRobustness:
         
         # Create empty file
         empty_file = os.path.join(temp_dir, "empty.mp3")
-        with open(empty_file, 'wb') as f:
-            pass  # Create empty file
+        open(empty_file, 'wb').close()
         
         player.add_chunk(empty_file)
         

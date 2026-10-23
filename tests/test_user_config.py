@@ -4,7 +4,6 @@ import json
 import os
 from unittest.mock import patch
 
-import pytest
 
 from TTS_ka.user_config import (
     apply_env_from_config,

@@ -1,6 +1,5 @@
 """Tests for simple_help module."""
 
-import pytest
 from unittest.mock import patch
 from TTS_ka.simple_help import show_simple_help, show_troubleshooting
 
@@ -9,7 +8,7 @@ class TestShowSimpleHelp:
     """Tests for show_simple_help()."""
 
     def _get_output(self):
-        import io, sys
+        import io
         buf = io.StringIO()
         with patch('builtins.print', side_effect=lambda *a, **kw: buf.write((' '.join(str(x) for x in a)) + '\n')):
             show_simple_help()
@@ -97,14 +96,13 @@ class TestShowTroubleshooting:
 
     def test_contains_troubleshooting(self):
         out = self._get_output()
-        assert "TROUBLESHOOTING" in out.upper() or "troubleshoot" in out.lower() or len(out) > 0
+        assert "TROUBLESHOOTING" in out
 
     def test_prints_something(self, capsys):
         show_troubleshooting()
         out = capsys.readouterr().out
         assert len(out) > 0
 
-    def test_contains_audio_or_error(self):
+    def test_mentions_slow_generation(self):
         out = self._get_output()
-        has_content = any(kw in out.lower() for kw in ["audio", "error", "slow", "install", "network", "ffmpeg"])
-        assert has_content or len(out) > 10
+        assert "slow generation" in out.lower()

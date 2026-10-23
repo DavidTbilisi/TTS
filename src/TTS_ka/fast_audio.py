@@ -2,8 +2,7 @@
 
 Design
 ------
-``AudioGenerator`` (Protocol) decouples callers from the concrete TTS
-back-end.  Two implementations are provided:
+Two TTS back-ends are provided:
 
 * ``HttpAudioGenerator``  — direct Azure Cognitive Services call (fastest).
 * ``EdgeTTSGenerator``    — edge-tts library fallback.
@@ -14,7 +13,7 @@ back-end.  Two implementations are provided:
 * ``PydubMerger``     — PyDub (reliable pure-Python MP3 handling).
 * ``FFmpegMerger``    — subprocess ffmpeg (always available when installed).
 
-``MergerFactory.create()`` picks the best available merger at runtime.
+``fast_merge_audio_files`` tries them in that order until one succeeds.
 
 The module-level ``fast_generate_audio`` / ``fast_merge_audio_files`` /
 ``play_audio`` functions are the public API used by the rest of the package.
@@ -33,7 +32,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from typing import TYPE_CHECKING, List, Optional, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, List, Optional, Protocol
 
 if TYPE_CHECKING:  # httpx is imported lazily at runtime (only for the HTTP path)
     import httpx
@@ -71,19 +70,6 @@ from .subtitles import WordEvent
 
 
 # ── Protocols ─────────────────────────────────────────────────────────────────
-
-@runtime_checkable
-class AudioGenerator(Protocol):
-    """Interface for a single-chunk TTS generator."""
-
-    async def generate(self, text: str, language: str, output_path: str,
-                       quiet: bool = False) -> bool:
-        """Generate audio from *text* and write it to *output_path*.
-
-        Returns ``True`` on success, ``False`` on failure.
-        """
-        ...
-
 
 class AudioMerger(Protocol):
     """Interface for merging multiple audio part-files into one output file."""
@@ -377,18 +363,6 @@ class FFmpegMerger:
                 pass
 
 
-class MergerFactory:
-    """Returns the fastest ``AudioMerger`` supported by the current environment."""
-
-    @staticmethod
-    def create() -> AudioMerger:
-        if HAS_SOUNDFILE:
-            return SoundFileMerger()
-        if HAS_PYDUB:
-            return PydubMerger()
-        return FFmpegMerger()
-
-
 # ── Public API ────────────────────────────────────────────────────────────────
 
 async def fast_generate_audio(text: str, language: str, output_path: str,
@@ -426,16 +400,6 @@ async def fast_generate_audio(text: str, language: str, output_path: str,
 
     if _env_truthy("TTS_KA_VERBOSE") and not quiet:
         print("Notice: Bing HTTP TTS unavailable; using edge-tts.", flush=True)
-    return await EdgeTTSGenerator().generate(text, language, output_path,
-                                              quiet, voice=voice,
-                                              prosody=prosody)
-
-
-async def fallback_generate_audio(text: str, language: str, output_path: str,
-                                   quiet: bool = False,
-                                   voice: Optional[str] = None,
-                                   prosody: Optional[ProsodyOpts] = None) -> bool:
-    """Generate audio using edge-tts directly (skips the HTTP attempt)."""
     return await EdgeTTSGenerator().generate(text, language, output_path,
                                               quiet, voice=voice,
                                               prosody=prosody)

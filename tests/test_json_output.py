@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import io
 import json
-import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 
 def _stub_main(argv, stdin_text=None, isatty=True):

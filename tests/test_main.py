@@ -44,6 +44,16 @@ class TestGetInputText:
         result = get_input_text("nonexistent_xyz.txt")
         assert result == "nonexistent_xyz.txt"
 
+    def test_directory_path_returned_as_is(self, tmp_path):
+        assert get_input_text(str(tmp_path)) == str(tmp_path)
+
+    def test_unicode_file(self, tmp_path):
+        f = tmp_path / "unicode.txt"
+        f.write_text("გამარჯობა\nПривет\nHello", encoding="utf-8")
+        result = get_input_text(str(f))
+        assert "გამარჯობა" in result
+        assert "Привет" in result
+
 
 class TestResolvePositionalTextSource:
     """Clipboard keyword shorthands (cb / clip / paste)."""
@@ -157,6 +167,28 @@ class TestMain:
         msl.assert_called_once()
         _, kwargs = msl.call_args
         assert kwargs.get('enable_streaming') is True
+
+    @pytest.mark.parametrize("flag, value, key", [
+        ("--chunk-seconds", "25", "chunk_seconds"),
+        ("--parallel", "6", "parallel"),
+    ])
+    def test_stream_passes_chunk_and_parallel_flags(self, flag, value, key):
+        """--chunk-seconds / --parallel reach smart_generate_long_text unchanged."""
+        long_text = "Test text. " * 150
+        with patch('sys.argv', ['TTS_ka', long_text, '--lang', 'en', '--stream', flag, value, '--no-play']):
+            with patch('TTS_ka.main.smart_generate_long_text', new=AsyncMock()) as msl, \
+                 patch('TTS_ka.main.cleanup_http', new=AsyncMock()):
+                from TTS_ka.main import main
+                main()
+        _, kwargs = msl.call_args
+        assert kwargs.get('enable_streaming') is True
+        assert kwargs.get(key) == int(value)
+
+    def test_help_flag_exits(self):
+        with patch('sys.argv', ['TTS_ka', '--help']):
+            from TTS_ka.main import main
+            with pytest.raises(SystemExit):
+                main()
 
     def test_no_play_skips_play_audio(self):
         """play_audio is NOT called when --no-play is used."""

@@ -5,7 +5,6 @@ import sys
 import tempfile
 import shutil
 import pytest
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 # Add src to Python path for imports
@@ -75,85 +74,3 @@ def temp_dir():
     temp_path = tempfile.mkdtemp()
     yield temp_path
     shutil.rmtree(temp_path, ignore_errors=True)
-
-
-@pytest.fixture
-def sample_text():
-    """Sample text for testing."""
-    return "Hello world, this is a test."
-
-
-@pytest.fixture
-def sample_georgian_text():
-    """Sample Georgian text for testing."""
-    return "გამარჯობა მსოფლიო"
-
-
-@pytest.fixture
-def sample_russian_text():
-    """Sample Russian text for testing."""
-    return "Привет мир"
-
-
-@pytest.fixture
-def sample_long_text():
-    """Long text for chunking tests."""
-    return "This is a very long text that should be split into multiple chunks. " * 50
-
-
-@pytest.fixture
-def sample_text_file(temp_dir, sample_text):
-    """Create a temporary text file."""
-    file_path = os.path.join(temp_dir, "test.txt")
-    with open(file_path, "w", encoding="utf-8") as f:
-        f.write(sample_text)
-    return file_path
-
-
-@pytest.fixture
-def mock_audio_response():
-    """Mock audio response for edge-tts."""
-    return b"fake_audio_data" * 1000
-
-
-@pytest.fixture
-def mock_communicate():
-    """Mock edge-tts communicate (injected via sys.modules to avoid null-byte SyntaxError)."""
-    mock_instance = MagicMock()
-    mock_edge = MagicMock()
-    mock_edge.Communicate = MagicMock(return_value=mock_instance)
-    with patch.dict('sys.modules', {'edge_tts': mock_edge}):
-        yield mock_instance
-
-
-@pytest.fixture
-def mock_httpx_client():
-    """Mock httpx client for fast audio."""
-    with patch('httpx.AsyncClient') as mock:
-        mock_client = MagicMock()
-        mock.return_value.__aenter__.return_value = mock_client
-        mock_client.get.return_value.status_code = 200
-        mock_client.get.return_value.content = b"fake_audio_data"
-        yield mock_client
-
-
-@pytest.fixture
-def mock_soundfile():
-    """Mock soundfile for audio processing."""
-    with patch('soundfile.write') as mock:
-        yield mock
-
-
-@pytest.fixture
-def mock_pygame():
-    """Mock pygame for audio playback."""
-    with patch.dict('sys.modules', {'pygame': MagicMock()}):
-        yield
-
-
-@pytest.fixture
-def mock_clipboard():
-    """Mock the stdlib clipboard reader for clipboard operations."""
-    with patch('TTS_ka.main._read_clipboard') as mock:
-        mock.return_value = "clipboard text"
-        yield mock

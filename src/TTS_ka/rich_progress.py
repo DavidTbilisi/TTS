@@ -44,7 +44,6 @@ class ProgressStats:
     start_time: float = 0.0
     chunks_per_second: float = 0.0
     words_per_second: float = 0.0
-    time_remaining: float = 0.0
 
 
 class RichProgressDisplay:
@@ -110,9 +109,6 @@ class RichProgressDisplay:
             self.stats.chunks_per_second = self.stats.completed_chunks / elapsed
             if self.stats.total_words > 0:
                 self.stats.words_per_second = self.stats.processed_words / elapsed
-        if self.stats.chunks_per_second > 0:
-            remaining = self.stats.total_chunks - self.stats.completed_chunks
-            self.stats.time_remaining = remaining / self.stats.chunks_per_second
 
         if HAS_RICH and self._progress is not None and self._task_id is not None:
             rate = f"⚡{self.stats.chunks_per_second:.1f} ch/s"
@@ -168,7 +164,7 @@ class RichProgressDisplay:
             if success:
                 print(f"\n  ✅  Completed in {total_time:.2f}s", file=sys.stderr)
             else:
-                print(f"\n  ❌  Generation failed", file=sys.stderr)
+                print("\n  ❌  Generation failed", file=sys.stderr)
 
 
 def create_progress_display(chunks: list, language: str = "en") -> RichProgressDisplay:

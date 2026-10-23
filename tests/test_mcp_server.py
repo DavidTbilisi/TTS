@@ -7,13 +7,10 @@ to verify the wiring, session lifecycle, and stdout safety.
 
 from __future__ import annotations
 
-import os
-import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 pytest.importorskip("mcp", reason="mcp extra not installed")
 
@@ -268,8 +265,8 @@ class TestStopTool:
                 f.write(b"x")
 
         with patch("TTS_ka.mcp_server.fast_generate_audio", side_effect=fake):
-            sid1 = await _call(server, "stream_open")
-            sid2 = await _call(server, "stream_open")
+            await _call(server, "stream_open")
+            await _call(server, "stream_open")
             assert len(sessions) == 2
             r = await _call(server, "stop")
         assert "stopped 2" in r

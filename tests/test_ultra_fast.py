@@ -166,7 +166,7 @@ class TestUltraFastParallelGeneration:
 
         with patch('TTS_ka.ultra_fast.fast_generate_audio', new=AsyncMock(side_effect=Exception("oops"))), \
              patch('TTS_ka.ultra_fast.create_progress_display', return_value=MagicMock()):
-            parts = await ultra_fast_parallel_generation(chunks, "en", parallel=1, output_path=output_path)
+            await ultra_fast_parallel_generation(chunks, "en", parallel=1, output_path=output_path)
 
         # Error is caught, warning is printed (goes to stderr via rich console)
         captured = capsys.readouterr()
@@ -192,7 +192,7 @@ class TestSmartGenerateLongText:
         text = "word " * 300
 
         with patch('TTS_ka.ultra_fast.ultra_fast_parallel_generation', new=AsyncMock(return_value=[output_path])) as mupg, \
-             patch('TTS_ka.ultra_fast.fast_merge_audio_files') as mmaf, \
+             patch('TTS_ka.ultra_fast.fast_merge_audio_files'), \
              patch('TTS_ka.ultra_fast.create_progress_display', return_value=MagicMock()):
             await smart_generate_long_text(text, "en", chunk_seconds=20, parallel=2, output_path=output_path)
 

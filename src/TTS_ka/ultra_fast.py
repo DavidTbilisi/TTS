@@ -19,7 +19,6 @@ from .rich_progress import console, create_progress_display, HAS_RICH
 from .streaming_player import StreamingAudioPlayer, stop_active_streaming_player
 from .constants import (
     MAX_PARALLEL_WORKERS,
-    STREAMING_CHUNK_SECONDS,
     STREAMING_FIRST_CHUNK_SECONDS,
 )
 
@@ -115,7 +114,7 @@ async def ultra_fast_parallel_generation(
             if os.path.exists(part_name):
                 try:
                     os.remove(part_name)
-                except (PermissionError, OSError) as e:
+                except (PermissionError, OSError):
                     # File might be locked by media player - try alternative name
                     import time
                     timestamp = int(time.time() * 1000)
@@ -413,7 +412,6 @@ async def smart_generate_long_text(
 def get_optimal_settings(text: str) -> dict:
     """Calculate optimal settings based on text characteristics."""
     word_count = len(text.split())
-    char_count = len(text)
     
     # Dynamic optimization
     if word_count < 100:

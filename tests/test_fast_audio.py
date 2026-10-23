@@ -5,7 +5,6 @@ import os
 from unittest.mock import MagicMock, patch, AsyncMock
 from TTS_ka.fast_audio import (
     fast_generate_audio,
-    fallback_generate_audio,
     fast_merge_audio_files,
     play_audio,
     get_http_client,
@@ -145,17 +144,17 @@ class TestFastGenerateAudio:
 
 
 # ---------------------------------------------------------------------------
-# fallback_generate_audio
+# EdgeTTSGenerator
 # ---------------------------------------------------------------------------
 
-class TestFallbackGenerateAudio:
+class TestEdgeTTSGenerator:
     async def test_success(self, temp_dir):
         out = os.path.join(temp_dir, "out.mp3")
         mock_comm_inst = AsyncMock()
         mock_edge = MagicMock()
         mock_edge.Communicate = MagicMock(return_value=mock_comm_inst)
         with patch.dict('sys.modules', {'edge_tts': mock_edge}):
-            result = await fallback_generate_audio("Hello world", "en", out, quiet=True)
+            result = await EdgeTTSGenerator().generate("Hello world", "en", out, quiet=True)
         assert result is True
         mock_comm_inst.save.assert_called_once_with(out)
 
@@ -164,7 +163,7 @@ class TestFallbackGenerateAudio:
         mock_edge = MagicMock()
         mock_edge.Communicate = MagicMock(return_value=AsyncMock())
         with patch.dict('sys.modules', {'edge_tts': mock_edge}):
-            await fallback_generate_audio("Hello", "en", out, quiet=False)
+            await EdgeTTSGenerator().generate("Hello", "en", out, quiet=False)
         assert capsys.readouterr().out != ""
 
     async def test_failure_returns_false(self, temp_dir):
@@ -172,12 +171,12 @@ class TestFallbackGenerateAudio:
         mock_edge = MagicMock()
         mock_edge.Communicate = MagicMock(side_effect=Exception("fail"))
         with patch.dict('sys.modules', {'edge_tts': mock_edge}):
-            result = await fallback_generate_audio("Hello", "en", out, quiet=True)
+            result = await EdgeTTSGenerator().generate("Hello", "en", out, quiet=True)
         assert result is False
 
     async def test_invalid_language_returns_false(self, temp_dir):
         out = os.path.join(temp_dir, "out.mp3")
-        result = await fallback_generate_audio("Hello", "zz", out, quiet=True)
+        result = await EdgeTTSGenerator().generate("Hello", "zz", out, quiet=True)
         assert result is False
 
     @pytest.mark.parametrize("lang", ["ka", "ka-m", "ru", "en"])
@@ -186,8 +185,9 @@ class TestFallbackGenerateAudio:
         mock_edge = MagicMock()
         mock_edge.Communicate = MagicMock(return_value=AsyncMock())
         with patch.dict('sys.modules', {'edge_tts': mock_edge}):
-            result = await fallback_generate_audio("Test", lang, out, quiet=True)
+            result = await EdgeTTSGenerator().generate("Test", lang, out, quiet=True)
         assert result is True
+        assert mock_edge.Communicate.call_args[0][1] == VOICE_MAP[lang]
 
 
 # ---------------------------------------------------------------------------
@@ -314,32 +314,6 @@ class TestFastPlayAudio:
         with patch('sys.platform', 'linux'), \
              patch('TTS_ka.fast_audio.shutil.which', return_value=None):
             assert play_audio(f) is False
-
-
-# ---------------------------------------------------------------------------
-# MergerFactory
-# ---------------------------------------------------------------------------
-
-class TestMergerFactory:
-    def test_creates_ffmpeg_when_no_optional_deps(self):
-        from TTS_ka.fast_audio import MergerFactory, FFmpegMerger
-        with patch('TTS_ka.fast_audio.HAS_SOUNDFILE', False), \
-             patch('TTS_ka.fast_audio.HAS_PYDUB', False):
-            merger = MergerFactory.create()
-        assert isinstance(merger, FFmpegMerger)
-
-    def test_creates_pydub_when_available(self):
-        from TTS_ka.fast_audio import MergerFactory, PydubMerger
-        with patch('TTS_ka.fast_audio.HAS_SOUNDFILE', False), \
-             patch('TTS_ka.fast_audio.HAS_PYDUB', True):
-            merger = MergerFactory.create()
-        assert isinstance(merger, PydubMerger)
-
-    def test_creates_soundfile_when_available(self):
-        from TTS_ka.fast_audio import MergerFactory, SoundFileMerger
-        with patch('TTS_ka.fast_audio.HAS_SOUNDFILE', True):
-            merger = MergerFactory.create()
-        assert isinstance(merger, SoundFileMerger)
 
 
 # ---------------------------------------------------------------------------
