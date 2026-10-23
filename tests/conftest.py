@@ -37,6 +37,16 @@ def _no_chunk_cache(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _restore_sigterm_handler():
+    """``main()`` installs a SIGTERM handler; keep it out of the pytest process."""
+    import signal
+
+    saved = signal.getsignal(signal.SIGTERM)
+    yield
+    signal.signal(signal.SIGTERM, saved)
+
+
+@pytest.fixture(autouse=True)
 def _no_mpv_ipc(monkeypatch):
     """Keep StreamingAudioPlayer on the stubbable stdin-playlist path; IPC tests opt back in."""
     monkeypatch.setenv("TTS_KA_MPV_IPC", "0")

@@ -246,6 +246,54 @@ class TestMain:
         captured = capsys.readouterr()
         assert "cancelled" in (captured.out + captured.err).lower()
 
+    def test_sigterm_stops_player_and_exits_143(self, capsys):
+        """SIGTERM gets the Ctrl+C cleanup (player stopped) instead of dying on the spot."""
+        import os
+        import signal
+
+        def terminated_during_run(coro):
+            if hasattr(coro, "close"):
+                coro.close()
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        with patch('sys.argv', ['TTS_ka', 'hi', '--lang', 'en', '--no-play']):
+            with patch('asyncio.run', side_effect=terminated_during_run), \
+                 patch('TTS_ka.main.stop_active_streaming_player') as stop:
+                from TTS_ka.main import main
+                with pytest.raises(SystemExit) as exc:
+                    main()
+        assert exc.value.code == 143
+        stop.assert_called_once()
+        assert "cancelled" in capsys.readouterr().err.lower()
+
+    def test_sigterm_handler_respects_an_ignored_sigterm(self):
+        """A parent that set SIGTERM to SIG_IGN keeps it that way."""
+        import signal
+
+        from TTS_ka.main import _install_sigterm_handler
+
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        _install_sigterm_handler()
+        assert signal.getsignal(signal.SIGTERM) is signal.SIG_IGN
+
+    def test_live_sigterm_exits_143(self):
+        import os
+        import signal
+
+        def terminated_during_run(coro):
+            if hasattr(coro, "close"):
+                coro.close()
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        with patch('sys.argv', ['TTS_ka', '--live', '--lang', 'en']):
+            with patch('asyncio.run', side_effect=terminated_during_run), \
+                 patch('TTS_ka.main.stop_active_streaming_player') as stop:
+                from TTS_ka.main import main
+                with pytest.raises(SystemExit) as exc:
+                    main()
+        assert exc.value.code == 143
+        stop.assert_called_once()
+
     @pytest.mark.parametrize("lang", ["ka", "ka-m", "ru", "en"])
     def test_valid_languages_accepted(self, lang):
         """Parser accepts ka, ru, en."""
