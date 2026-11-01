@@ -102,7 +102,7 @@ def write_user_config(path: str | os.PathLike[str], data: Mapping[str, Any]) -> 
 
 
 def apply_env_from_config(cfg: Mapping[str, Any]) -> None:
-    """Apply ``vlc_rc`` / ``cache`` / ``cache_max_mb`` to the process environment if not already set."""
+    """Apply ``vlc_rc`` / ``cache`` / ``cache_max_mb`` / ``notify`` to the process environment if not already set."""
     if not cfg:
         return
 
@@ -115,6 +115,8 @@ def apply_env_from_config(cfg: Mapping[str, Any]) -> None:
         set_if_unset("TTS_KA_VLC_RC", "0")
     if cfg.get("cache") is False:
         set_if_unset("TTS_KA_CACHE", "0")
+    if cfg.get("notify") is False:
+        set_if_unset("TTS_KA_NOTIFY", "0")
     max_mb = cfg.get("cache_max_mb")
     if isinstance(max_mb, int) and not isinstance(max_mb, bool) and max_mb >= 0:
         set_if_unset("TTS_KA_CACHE_MAX_MB", str(max_mb))

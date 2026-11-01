@@ -21,6 +21,7 @@ _LONG_FLAGS: List[str] = [
     "--srt", "--vtt", "--help-full", "--print-completion",
     "--chunk-seconds", "--parallel", "--live", "--live-idle-ms",
     "--doctor", "--config", "--no-cache", "--clear-cache", "--pages", "--no-keys",
+    "--no-notify",
 ]
 _SHORT_FLAGS: List[str] = ["-h", "-V", "-o", "-l", "-c", "-j", "-n", "-s", "-H"]
 

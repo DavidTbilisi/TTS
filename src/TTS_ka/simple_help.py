@@ -36,6 +36,7 @@ def show_simple_help():
     print("  --player mpv           Preferred streaming player (vlc, mpv, ffplay, mplayer)")
     print("  While streaming (headless mpv): space pause, n next, +/- speed, q quit")
     print("  --no-keys              Don't read those keys from the terminal")
+    print("  --no-notify            Linux: no \"Reading ~N min\" desktop notification")
     print()
 
     print("VOICE AND PROSODY:")
