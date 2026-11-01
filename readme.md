@@ -404,6 +404,7 @@ tts-ka-hotkeys    # background hotkey listener (Windows, [hotkeys] extra)
 | `--no-gui` | With `--stream`, run VLC headless |
 | `--player NAME` | Preferred streaming player (vlc, mpv, ffplay, mplayer) |
 | `--no-keys` | Don't read playback keys (space, n, +/-, q) from the terminal while streaming |
+| `--no-notify` | Linux: don't show the start notification with the estimated reading time ("🔊 Reading ~7 min · done ≈ 14:32") |
 | `--no-turbo`, `--legacy` | Disable auto-optimization |
 
 ### Prosody
@@ -482,6 +483,7 @@ All keys are optional. Real, supported schema:
 
   "vlc_rc":        true,
   "cache":         true,
+  "notify":        true,
   "cache_max_mb":  500,
 
   "hotkeys": {
@@ -495,7 +497,7 @@ All keys are optional. Real, supported schema:
 
 `rate` / `pitch` / `volume` are signed strings in the same form `--rate` / `--pitch` / `--volume` accept on the CLI. They become the default for **every** invocation — CLI, GUI, REST server, and MCP server. Pass them per-call on `mcp__tts-ka__speak` / `stream_open` to override for one call; pass `--rate` etc. on the CLI to override one run.
 
-`"vlc_rc": false` sets `TTS_KA_VLC_RC=0` for the process (unless that variable is already set), so you don't have to export it in every shell. Likewise `"cache": false` → `TTS_KA_CACHE=0` and `"cache_max_mb"` → `TTS_KA_CACHE_MAX_MB`.
+`"vlc_rc": false` sets `TTS_KA_VLC_RC=0` for the process (unless that variable is already set), so you don't have to export it in every shell. Likewise `"cache": false` → `TTS_KA_CACHE=0`, `"notify": false` → `TTS_KA_NOTIFY=0` and `"cache_max_mb"` → `TTS_KA_CACHE_MAX_MB`.
 
 `hotkeys`: pynput combo strings → `--lang` codes. JSON `null` removes a default.
 
@@ -507,6 +509,7 @@ All keys are optional. Real, supported schema:
 | `TTS_KA_VLC_RC` | `0` → disable VLC remote-control mode (one VLC per chunk instead) |
 | `TTS_KA_MPV_IPC` | `0` → don't drive headless mpv over JSON IPC (falls back to a stdin playlist; no pause/skip) |
 | `TTS_KA_CACHE` | `0` → disable the chunk cache |
+| `TTS_KA_NOTIFY` | `0` → no desktop notification (Linux, `notify-send`) when a read starts |
 | `TTS_KA_CACHE_DIR` | Chunk cache location (default `$XDG_CACHE_HOME/tts-ka`, `~/Library/Caches/tts-ka`, `%LOCALAPPDATA%\tts-ka\Cache`) |
 | `TTS_KA_CACHE_MAX_MB` | Chunk cache size cap, least-recently-used pruned (default `500`, ≈ 23 h of speech) |
 | `TTS_KA_GUI_THEME` | `tts-ka-gui` theme: `light`, `dark`, `system` (default, needs the `[gui]` extra) or `classic` (plain Tk) |

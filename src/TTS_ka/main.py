@@ -81,6 +81,8 @@ from . import metadata as _metadata
 from . import subtitles as _subtitles
 from . import completion as _completion
 from . import chunk_cache as _chunk_cache
+from . import notify as _notify
+from .not_reading import replace_not_readable
 
 
 def format_cli_version_info() -> str:
@@ -500,6 +502,12 @@ For comprehensive help with examples: %(prog)s --help-full
              "from the terminal while streaming",
     )
     parser.add_argument(
+        "--no-notify",
+        action="store_true",
+        help="Linux: don't show the desktop notification with the estimated reading time "
+             "(also TTS_KA_NOTIFY=0 or \"notify\": false in the config)",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Overwrite output file if it already exists",
@@ -817,6 +825,10 @@ For comprehensive help with examples: %(prog)s --help-full
 
     chunk_seconds = args.chunk_seconds
     parallel = args.parallel
+    prosody_opts = _prosody.build_opts(args.rate, args.pitch, args.volume)
+    # Estimate on what will actually be spoken (code blocks / URLs are dropped).
+    spoken_text = replace_not_readable(text)
+    speech_seconds = _notify.estimate_speech_seconds(spoken_text, args.lang, prosody_opts.rate)
 
     if not no_turbo:
         optimal = get_optimal_settings(text)
@@ -836,7 +848,8 @@ For comprehensive help with examples: %(prog)s --help-full
         word_count = len(text.split())
         _cprint(
             f"\n  {flag}  [bold]{lang_name}[/bold]"
-            f"  [dim]·  {optimal['method']}  ·  {parallel} workers  ·  {word_count:,} words[/dim]\n"
+            f"  [dim]·  {optimal['method']}  ·  {parallel} workers  ·  {word_count:,} words"
+            f"  ·  ~{_notify.format_duration(speech_seconds)}[/dim]\n"
         )
 
     if parallel == 0:
@@ -846,8 +859,10 @@ For comprehensive help with examples: %(prog)s --help-full
                 "(more parallel requests only get throttled)[/dim]")
         parallel = OPTIMAL_WORKERS
 
-    prosody_opts = _prosody.build_opts(args.rate, args.pitch, args.volume)
-    emit({"event": "start", "words": len(text.split()), "lang": args.lang})
+    emit({"event": "start", "words": len(text.split()), "lang": args.lang,
+          "estimated_seconds": round(speech_seconds, 1)})
+    if (stream or not no_play) and not args.no_notify:
+        _notify.notify_reading_started(spoken_text, args.lang, prosody_opts.rate)
 
     async def run_generation() -> None:
         run_start = time.perf_counter()

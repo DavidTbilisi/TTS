@@ -37,6 +37,12 @@ def _no_chunk_cache(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_desktop_notifications(monkeypatch):
+    """CLI tests must not pop real notify-send bubbles; test_notify opts back in."""
+    monkeypatch.setenv("TTS_KA_NOTIFY", "0")
+
+
+@pytest.fixture(autouse=True)
 def _restore_sigterm_handler():
     """``main()`` installs a SIGTERM handler; keep it out of the pytest process."""
     import signal

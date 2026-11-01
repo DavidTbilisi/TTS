@@ -52,6 +52,7 @@ Environment variables (see `readme.md`):
 - `TTS_KA_CONFIG` — alternate JSON config path (default `~/.tts_config.json`, loaded by `user_config.py`).
 - `TTS_KA_VLC_RC=0` — Windows: disable the single-VLC TCP remote-control playlist.
 - `TTS_API_TOKEN` — bearer token required by `tts-ka serve`.
+- `TTS_KA_NOTIFY=0` — Linux: no start-of-read desktop notification.
 
 ### Module map
 
@@ -63,6 +64,7 @@ Environment variables (see `readme.md`):
 | `chunk_cache.py` | Content-addressed cache of synthesized chunks (+ word-timing sidecars): key = sha256(version, format, sanitized text, voice, rate, pitch, volume); atomic writes, LRU prune to `TTS_KA_CACHE_MAX_MB` |
 | `streaming_player.py` | `PlayerDetector` + queue-based background playback thread |
 | `mpv_ipc.py` | `MpvIpc`: headless mpv over its JSON-IPC Unix socket (`--idle`, `loadfile append-play`, `end-file` / `idle-active` → `wait_done`, pause/resume/skip/stop). POSIX only. `--load-scripts=no`; `wait_done` raises if nothing starts within `START_TIMEOUT`; `kill_process_group` |
+| `notify.py` | Linux start-of-read desktop notification via `notify-send` ("🔊 Reading ~7 min · done ≈ 14:32"). `SPEECH_WPM` is measured per language (en 180, ru 130, ka 115 — `constants.WPM` is only for chunk sizing), scaled by `--rate`. Sent by `main` only when audio will play; off with `--no-notify`, `TTS_KA_NOTIFY=0`, config `"notify": false`. Tests disable it globally (`conftest._no_desktop_notifications`) |
 | `stream_keys.py` | `KeyControls`: single-key playback control while the CLI streams (space pause, n next, +/- speed, q = SIGINT). Reads `/dev/tty` in cbreak mode, restores it on close; inactive on Windows, without a terminal, or in a background process group (tcsetattr there would SIGTTOU) |
 | `live_stream.py` | `--live` mode: read stdin incrementally, speak each sentence as it lands (for piping LLM output) |
 | `mcp_server.py` | MCP server (`tts-ka-mcp`): `speak`, `stream_open` / `stream_append` / `stream_close`, `session_status`, `list_sessions`, `pause` / `resume` / `skip`, `stop`, `list_voices` over stdio |

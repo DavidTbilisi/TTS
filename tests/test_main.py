@@ -230,6 +230,26 @@ class TestMain:
                 main()
         mpa.assert_not_called()
 
+    @pytest.mark.parametrize("extra, expected", [
+        ([], True),
+        (["--stream"], True),
+        (["--no-play"], False),
+        (["--no-notify"], False),
+    ])
+    def test_start_notification(self, extra, expected):
+        """A playing run announces its estimated length; --no-play/--no-notify don't."""
+        with patch('sys.argv', ['TTS_ka', 'hi there', '--lang', 'ka', *extra]):
+            with patch('TTS_ka.main.fast_generate_audio', new=AsyncMock(return_value=True)), \
+                 patch('TTS_ka.main.smart_generate_long_text', new=AsyncMock()), \
+                 patch('TTS_ka.main.play_audio', return_value=True), \
+                 patch('TTS_ka.main._notify.notify_reading_started') as mn, \
+                 patch('TTS_ka.main.get_optimal_settings', return_value={'method': 'direct', 'chunk_seconds': 0, 'parallel': 1}):
+                from TTS_ka.main import main
+                main()
+        assert mn.called is expected
+        if expected:
+            assert mn.call_args.args[:2] == ("hi there", "ka")
+
     def test_keyboard_interrupt_handled(self, capsys):
         """KeyboardInterrupt during asyncio.run is reported and exits 130 (SIGINT convention)."""
         def interrupt_before_run(coro):
